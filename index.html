@@ -11,11 +11,74 @@
     <script type="module" src="https://pyscript.net/releases/2024.11.1/core.js"></script>
     <style>
       :root {
+        color-scheme: light;
         --bg: #eff3f9;
+        --bg-gradient-start: #eaf0f8;
+        --bg-gradient-end: #f6f9fd;
         --card: #ffffff;
+        --surface: #f8fbff;
         --line: #d3dce8;
+        --line-soft: #e5eaf2;
         --text: #1f2937;
+        --text-muted: #4b5563;
         --accent: #0d6efd;
+        --accent-contrast: #ffffff;
+        --button-secondary: #4b5563;
+        --file-button-bg: #1f2937;
+        --file-button-text: #ffffff;
+        --color-border: #9fb2cc;
+        --swatch-border: #9ca3af;
+        --error-border: #f1c5c5;
+        --error-bg: #fff6f6;
+        --error-text: #7f1d1d;
+        --status-ok: #1f2937;
+        --status-error: #b91c1c;
+        --table-header-bg: #f7f9fd;
+        --table-skipped-bg: #f3f4f6;
+        --table-skipped-text: #6b7280;
+        --table-rownum-bg: #f9fafb;
+        --table-rownum-text: #6b7280;
+        --series-item-bg: #f8fbff;
+        --chip-border: #d1d5db;
+        --chip-active: #111827;
+        --chip-active-ring: #11182722;
+        --shadow-lg: 0 8px 20px rgba(15, 23, 42, 0.15);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --bg: #0b1220;
+          --bg-gradient-start: #0b1220;
+          --bg-gradient-end: #111827;
+          --card: #111827;
+          --surface: #162235;
+          --line: #334155;
+          --line-soft: #374151;
+          --text: #e5e7eb;
+          --text-muted: #94a3b8;
+          --accent: #3b82f6;
+          --accent-contrast: #ffffff;
+          --button-secondary: #475569;
+          --file-button-bg: #334155;
+          --file-button-text: #f8fafc;
+          --color-border: #64748b;
+          --swatch-border: #94a3b8;
+          --error-border: #7f1d1d;
+          --error-bg: #3f1d1d;
+          --error-text: #fecaca;
+          --status-ok: #e5e7eb;
+          --status-error: #fca5a5;
+          --table-header-bg: #1e293b;
+          --table-skipped-bg: #1f2937;
+          --table-skipped-text: #94a3b8;
+          --table-rownum-bg: #172033;
+          --table-rownum-text: #94a3b8;
+          --series-item-bg: #162235;
+          --chip-border: #64748b;
+          --chip-active: #e5e7eb;
+          --chip-active-ring: #e5e7eb33;
+          --shadow-lg: 0 10px 24px rgba(2, 6, 23, 0.45);
+        }
       }
       * {
         box-sizing: border-box;
@@ -28,7 +91,7 @@
         margin: 0;
         color: var(--text);
         font-family: "Noto Sans JP", "Hiragino Sans", "Yu Gothic", sans-serif;
-        background: linear-gradient(180deg, #eaf0f8 0%, #f6f9fd 100%);
+        background: linear-gradient(180deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
         overflow: hidden;
       }
       .layout {
@@ -78,19 +141,20 @@
         border-radius: 8px;
         border: 1px solid var(--line);
         font-size: 14px;
-        background: #fff;
+        background: var(--card);
+        color: var(--text);
       }
       input[type="file"] {
         padding: 6px;
-        background: #f8fbff;
+        background: var(--surface);
       }
       input[type="file"]::file-selector-button {
         border: none;
         border-radius: 6px;
         padding: 8px 12px;
         margin-right: 10px;
-        background: #1f2937;
-        color: #fff;
+        background: var(--file-button-bg);
+        color: var(--file-button-text);
         font-weight: 700;
         cursor: pointer;
       }
@@ -99,17 +163,17 @@
         border-radius: 6px;
         padding: 8px 12px;
         margin-right: 10px;
-        background: #1f2937;
-        color: #fff;
+        background: var(--file-button-bg);
+        color: var(--file-button-text);
         font-weight: 700;
         cursor: pointer;
       }
       input[type="color"] {
         height: 42px;
         padding: 2px;
-        border: 2px solid #9fb2cc;
+        border: 2px solid var(--color-border);
         border-radius: 10px;
-        background: #fff;
+        background: var(--card);
       }
       input[type="color"]::-webkit-color-swatch-wrapper {
         padding: 0;
@@ -126,7 +190,7 @@
         margin-top: 6px;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         font-size: 12px;
-        color: #374151;
+        color: var(--text-muted);
       }
       .inline {
         display: flex;
@@ -144,12 +208,12 @@
       button {
         cursor: pointer;
         border: none;
-        color: #fff;
+        color: var(--accent-contrast);
         background: var(--accent);
         font-weight: 700;
       }
       button.secondary {
-        background: #4b5563;
+        background: var(--button-secondary);
       }
       .status {
         margin-top: 10px;
@@ -158,9 +222,9 @@
       }
       .status-detail-wrap {
         margin-top: 8px;
-        border: 1px solid #f1c5c5;
+        border: 1px solid var(--error-border);
         border-radius: 8px;
-        background: #fff6f6;
+        background: var(--error-bg);
       }
       .status-detail-wrap.hidden {
         display: none;
@@ -170,7 +234,7 @@
         cursor: pointer;
         font-size: 12px;
         font-weight: 700;
-        color: #7f1d1d;
+        color: var(--error-text);
       }
       .status-detail {
         margin: 0;
@@ -179,10 +243,10 @@
         word-break: break-word;
         font-size: 12px;
         line-height: 1.45;
-        color: #7f1d1d;
+        color: var(--error-text);
       }
       .canvas-wrap {
-        background: #fff;
+        background: var(--card);
         border: 1px solid var(--line);
         border-radius: 12px;
         padding: 12px;
@@ -199,14 +263,14 @@
         padding: 8px 12px;
         border: 1px solid var(--line);
         border-radius: 999px;
-        background: #fff;
+        background: var(--card);
         color: var(--text);
         font-weight: 700;
         cursor: pointer;
       }
       .tab-btn.active {
         background: var(--accent);
-        color: #fff;
+        color: var(--accent-contrast);
         border-color: var(--accent);
       }
       .tab-panel.hidden {
@@ -237,6 +301,7 @@
         max-height: none;
         min-height: 0;
         flex: 1;
+        background: var(--card);
         border: 1px solid var(--line);
         border-radius: 10px;
       }
@@ -247,7 +312,7 @@
       }
       .table-wrap th,
       .table-wrap td {
-        border: 1px solid #e5eaf2;
+        border: 1px solid var(--line-soft);
         padding: 6px 8px;
         white-space: nowrap;
         text-align: left;
@@ -255,16 +320,16 @@
       .table-wrap thead th {
         position: sticky;
         top: 0;
-        background: #f7f9fd;
+        background: var(--table-header-bg);
         z-index: 1;
       }
       .table-wrap tbody tr.skipped-row td {
-        background: #f3f4f6;
-        color: #6b7280;
+        background: var(--table-skipped-bg);
+        color: var(--table-skipped-text);
       }
       .table-wrap .row-number {
-        background: #f9fafb;
-        color: #6b7280;
+        background: var(--table-rownum-bg);
+        color: var(--table-rownum-text);
         text-align: right;
         width: 68px;
       }
@@ -275,7 +340,7 @@
       .help-text {
         margin-top: 6px;
         font-size: 12px;
-        color: #4b5563;
+        color: var(--text-muted);
       }
       .section-header {
         margin: 14px 0 10px;
@@ -291,7 +356,7 @@
         font-size: 12px;
         font-weight: 700;
         letter-spacing: 0.06em;
-        color: #4b5563;
+        color: var(--text-muted);
       }
       .series-toolbar {
         display: flex;
@@ -309,7 +374,7 @@
         font-size: 12px;
       }
       button.ghost-btn {
-        background: #6b7280;
+        background: var(--button-secondary);
       }
       .series-list {
         display: flex;
@@ -320,7 +385,7 @@
         border: 1px solid var(--line);
         border-radius: 10px;
         padding: 10px;
-        background: #f8fbff;
+        background: var(--series-item-bg);
       }
       .series-item-header {
         display: flex;
@@ -350,7 +415,7 @@
         padding: 8px 10px;
         border: 1px solid var(--line);
         border-radius: 8px;
-        background: #fff;
+        background: var(--card);
         color: var(--text);
         font-weight: 600;
       }
@@ -358,7 +423,7 @@
         width: 16px;
         height: 16px;
         border-radius: 4px;
-        border: 1px solid #9ca3af;
+        border: 1px solid var(--swatch-border);
         flex: 0 0 auto;
       }
       .series-color-panel {
@@ -370,8 +435,8 @@
         padding: 8px;
         border: 1px solid var(--line);
         border-radius: 8px;
-        background: #fff;
-        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.15);
+        background: var(--card);
+        box-shadow: var(--shadow-lg);
       }
       .series-color-panel.hidden {
         display: none;
@@ -386,13 +451,13 @@
         width: 30px;
         height: 30px;
         padding: 0;
-        border: 2px solid #d1d5db;
+        border: 2px solid var(--chip-border);
         border-radius: 6px;
         color: transparent;
       }
       button.series-color-chip.active {
-        border-color: #111827;
-        box-shadow: 0 0 0 2px #11182722;
+        border-color: var(--chip-active);
+        box-shadow: 0 0 0 2px var(--chip-active-ring);
       }
       .series-color-custom-toggle {
         margin-top: 8px;
@@ -695,7 +760,7 @@
           const status = document.getElementById("status");
           if (status) {
             status.textContent = message || "";
-            status.style.color = isError ? "#b91c1c" : "#1f2937";
+            status.style.color = isError ? "var(--status-error)" : "var(--status-ok)";
           }
 
           const detailWrap = document.getElementById("statusDetailWrap");
@@ -1336,7 +1401,7 @@ def set_status(message: str, is_error: bool = False, detail: str = "") -> None:
     status = document.getElementById("status")
     if status is not None:
         status.textContent = message or ""
-        status.style.color = "#b91c1c" if is_error else "#1f2937"
+        status.style.color = "var(--status-error)" if is_error else "var(--status-ok)"
 
     detail_wrap = document.getElementById("statusDetailWrap")
     detail_area = document.getElementById("statusDetail")
