@@ -143,6 +143,31 @@
         min-height: 22px;
         font-size: 13px;
       }
+      .status-detail-wrap {
+        margin-top: 8px;
+        border: 1px solid #f1c5c5;
+        border-radius: 8px;
+        background: #fff6f6;
+      }
+      .status-detail-wrap.hidden {
+        display: none;
+      }
+      .status-detail-wrap summary {
+        padding: 8px 10px;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 700;
+        color: #7f1d1d;
+      }
+      .status-detail {
+        margin: 0;
+        padding: 0 10px 10px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 12px;
+        line-height: 1.45;
+        color: #7f1d1d;
+      }
       .canvas-wrap {
         background: #fff;
         border: 1px solid var(--line);
@@ -449,6 +474,64 @@
         </div>
 
         <div class="group">
+          <label for="xScale">X軸スケール</label>
+          <select id="xScale">
+            <option value="linear">linear</option>
+            <option value="log">log</option>
+          </select>
+        </div>
+
+        <div class="row group">
+          <div>
+            <label for="xMin">X軸最小値</label>
+            <input id="xMin" type="number" step="any" placeholder="空欄で自動" />
+          </div>
+          <div>
+            <label for="xMax">X軸最大値</label>
+            <input id="xMax" type="number" step="any" placeholder="空欄で自動" />
+          </div>
+        </div>
+
+        <div class="group">
+          <label for="yScale">Y軸スケール</label>
+          <select id="yScale">
+            <option value="linear">linear</option>
+            <option value="log">log</option>
+          </select>
+        </div>
+
+        <div class="row group">
+          <div>
+            <label for="yMin">Y軸最小値</label>
+            <input id="yMin" type="number" step="any" placeholder="空欄で自動" />
+          </div>
+          <div>
+            <label for="yMax">Y軸最大値</label>
+            <input id="yMax" type="number" step="any" placeholder="空欄で自動" />
+          </div>
+        </div>
+
+        <div id="y2AxisSettingsGroup" class="group" style="display: none">
+          <div class="group">
+            <label for="y2Scale">第2Y軸スケール</label>
+            <select id="y2Scale">
+              <option value="linear">linear</option>
+              <option value="log">log</option>
+            </select>
+          </div>
+          <div class="row group">
+            <div>
+              <label for="y2Min">最小値</label>
+              <input id="y2Min" type="number" step="any" placeholder="空欄で自動" />
+            </div>
+            <div>
+              <label for="y2Max">最大値</label>
+              <input id="y2Max" type="number" step="any" placeholder="空欄で自動" />
+            </div>
+          </div>
+        </div>
+
+        <div class="group">
           <label for="fontSize">フォントサイズ</label>
           <input id="fontSize" type="number" step="1" value="15" />
         </div>
@@ -518,6 +601,10 @@
         </div>
 
         <div id="status" class="status"></div>
+        <details id="statusDetailWrap" class="status-detail-wrap hidden">
+          <summary>内部エラー詳細</summary>
+          <pre id="statusDetail" class="status-detail"></pre>
+        </details>
       </aside>
 
       <main class="viewer">
@@ -540,20 +627,50 @@
           typeof msg === "string" &&
           (msg.includes("parentNode") || msg.includes("'NoneType' object has no attribute 'parentNode'"));
 
-        const setStatus = (message, isError = false) => {
-          const status = document.getElementById("status");
-          if (!status) return;
-          status.textContent = message || "";
-          status.style.color = isError ? "#b91c1c" : "#1f2937";
+        const buildJsErrorDetail = (source, msg, stack = "", extras = []) => {
+          const lines = [`source: ${source}`];
+          if (msg) lines.push(`message: ${msg}`);
+          for (const extra of extras) {
+            if (extra) lines.push(extra);
+          }
+          const normalizedStack = typeof stack === "string" ? stack.trim() : "";
+          if (normalizedStack) {
+            lines.push("");
+            lines.push("stack:");
+            lines.push(normalizedStack);
+          }
+          return lines.join("\n");
         };
 
-        const notify = () => {
+        const setStatus = (message, isError = false, detail = "") => {
+          const status = document.getElementById("status");
+          if (status) {
+            status.textContent = message || "";
+            status.style.color = isError ? "#b91c1c" : "#1f2937";
+          }
+
+          const detailWrap = document.getElementById("statusDetailWrap");
+          const detailEl = document.getElementById("statusDetail");
+          if (!detailWrap || !detailEl) return;
+          const normalized = typeof detail === "string" ? detail.trim() : "";
+          if (normalized) {
+            detailEl.textContent = normalized;
+            detailWrap.classList.remove("hidden");
+            detailWrap.open = true;
+          } else {
+            detailEl.textContent = "";
+            detailWrap.classList.add("hidden");
+            detailWrap.open = false;
+          }
+        };
+
+        const notify = (detail = "") => {
           const plotArea = document.getElementById("plotArea");
           const hasPlot = !!(plotArea && plotArea.querySelector("img"));
           if (hasPlot) {
             setStatus("描画に成功しました。");
           } else {
-            setStatus("内部エラーを自動回避しました。もう一度操作してください。", true);
+            setStatus("内部エラーを自動回避しました。もう一度操作してください。", true, detail);
           }
         };
 
@@ -561,7 +678,13 @@
           const msg = event?.message || "";
           if (isTargetError(msg)) {
             event.preventDefault();
-            notify();
+            const stack = event?.error?.stack || "";
+            const extras = [
+              event?.filename ? `file: ${event.filename}` : "",
+              event?.lineno ? `line: ${event.lineno}` : "",
+              event?.colno ? `column: ${event.colno}` : "",
+            ];
+            notify(buildJsErrorDetail("window.error", msg, stack, extras));
           }
         });
 
@@ -570,7 +693,8 @@
           const msg = (reason && (reason.message || String(reason))) || "";
           if (isTargetError(msg)) {
             event.preventDefault();
-            notify();
+            const stack = reason?.stack || "";
+            notify(buildJsErrorDetail("window.unhandledrejection", msg, stack));
           }
         });
 
@@ -578,7 +702,7 @@
         console.error = (...args) => {
           const msg = args.map((x) => String(x)).join(" ");
           if (isTargetError(msg)) {
-            notify();
+            notify(buildJsErrorDetail("console.error", msg));
             return;
           }
           originalConsoleError(...args);
@@ -621,6 +745,7 @@
         const globalXGroup = document.getElementById("globalXGroup");
         const xColumnSelect = document.getElementById("xColumn");
         const y2LabelGroup = document.getElementById("y2LabelGroup");
+        const y2AxisSettingsGroup = document.getElementById("y2AxisSettingsGroup");
         let lastPlotType = plotTypeSelect ? plotTypeSelect.value : "line";
 
         let renderTimer = null;
@@ -817,9 +942,14 @@
         };
 
         const syncY2LabelUI = () => {
-          if (!seriesList || !y2LabelGroup) return;
+          if (!seriesList) return;
           const hasSecondary = !!seriesList.querySelector(".series-use-y2:checked");
-          y2LabelGroup.style.display = hasSecondary ? "" : "none";
+          if (y2LabelGroup) {
+            y2LabelGroup.style.display = hasSecondary ? "" : "none";
+          }
+          if (y2AxisSettingsGroup) {
+            y2AxisSettingsGroup.style.display = hasSecondary ? "" : "none";
+          }
         };
 
         const renumberSeries = () => {
@@ -992,6 +1122,15 @@
           "xLabel",
           "yLabel",
           "y2Label",
+          "xScale",
+          "yScale",
+          "xMin",
+          "xMax",
+          "yMin",
+          "yMax",
+          "y2Scale",
+          "y2Min",
+          "y2Max",
           "fontSize",
           "showMajorGrid",
           "showMinorGrid",
@@ -1043,6 +1182,7 @@
 import io
 import base64
 import asyncio
+import traceback
 import warnings
 from pathlib import Path
 
@@ -1112,15 +1252,57 @@ async def _ensure_japanese_font() -> None:
         return
 
 
-def set_status(message: str, is_error: bool = False) -> None:
+def set_status(message: str, is_error: bool = False, detail: str = "") -> None:
     status = document.getElementById("status")
-    status.textContent = message or ""
-    status.style.color = "#b91c1c" if is_error else "#1f2937"
+    if status is not None:
+        status.textContent = message or ""
+        status.style.color = "#b91c1c" if is_error else "#1f2937"
+
+    detail_wrap = document.getElementById("statusDetailWrap")
+    detail_area = document.getElementById("statusDetail")
+    if detail_wrap is None or detail_area is None:
+        return
+
+    detail_text = str(detail or "").strip()
+    if detail_text:
+        detail_area.textContent = detail_text
+        detail_wrap.classList.remove("hidden")
+        detail_wrap.open = True
+    else:
+        detail_area.textContent = ""
+        detail_wrap.classList.add("hidden")
+        detail_wrap.open = False
+
+
+def _format_internal_error_detail(exc: Exception, context: str) -> str:
+    lines = [
+        f"context: {context}",
+        f"type: {type(exc).__name__}",
+        f"message: {exc}",
+    ]
+    trace = traceback.format_exc().strip()
+    if trace and trace != "NoneType: None":
+        lines.append("")
+        lines.append("traceback:")
+        lines.append(trace)
+    return "\n".join(lines)
 
 
 def _is_parentnode_error(exc: Exception) -> bool:
     text = str(exc)
     return ("parentNode" in text) or ("NoneType" in text and "parentNode" in text)
+
+
+def _safe_close_figure(fig) -> None:
+    if fig is None:
+        return
+    try:
+        plt.close(fig)
+    except Exception as exc:
+        # Pyodide/ブラウザ描画バックエンドの後処理競合は無視する
+        if _is_parentnode_error(exc):
+            return
+        raise
 
 
 def _switch_tab(tab_name: str) -> None:
@@ -1153,7 +1335,8 @@ def _spawn_task(coro) -> None:
                     if _has_rendered_plot():
                         set_status("描画に成功しました。")
                     else:
-                        set_status("内部エラーを自動回避しました。もう一度操作してください。", True)
+                        detail = _format_internal_error_detail(exc, "async task callback")
+                        set_status("内部エラーを自動回避しました。もう一度操作してください。", True, detail)
                 except Exception:
                     pass
             else:
@@ -1179,6 +1362,48 @@ def _set_data_ready(ready: bool) -> None:
             window.setMatplotDataReady(bool(ready))
     except Exception:
         pass
+
+
+def _get_optional_float_value(element_id: str, label: str) -> float | None:
+    element = document.getElementById(element_id)
+    raw = element.value.strip() if element is not None else ""
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except Exception:
+        raise ValueError(f"{label}は数値で指定してください。")
+
+
+def _apply_axis_scale_and_limits(
+    target_ax,
+    axis_kind: str,
+    axis_label: str,
+    scale: str,
+    min_value: float | None,
+    max_value: float | None,
+) -> None:
+    if scale not in {"linear", "log"}:
+        raise ValueError(f"{axis_label}軸スケールが不正です。")
+    if min_value is not None and max_value is not None and min_value >= max_value:
+        raise ValueError(f"{axis_label}軸の範囲は最小値 < 最大値で指定してください。")
+    if scale == "log":
+        if (min_value is not None and min_value <= 0) or (max_value is not None and max_value <= 0):
+            raise ValueError(f"{axis_label}軸を対数にする場合、範囲は0より大きい値で指定してください。")
+
+    try:
+        if axis_kind == "x":
+            target_ax.set_xscale(scale)
+            if min_value is not None or max_value is not None:
+                target_ax.set_xlim(left=min_value, right=max_value)
+        elif axis_kind == "y":
+            target_ax.set_yscale(scale)
+            if min_value is not None or max_value is not None:
+                target_ax.set_ylim(bottom=min_value, top=max_value)
+        else:
+            raise ValueError(f"軸種別が不正です: {axis_kind}")
+    except Exception as exc:
+        raise ValueError(f"{axis_label}軸設定の適用に失敗しました: {exc}")
 
 
 def _get_skip_rows_for_preview() -> int:
@@ -1531,7 +1756,8 @@ async def on_load_columns(event=None):
         CURRENT_DF = None
         _set_data_ready(False)
         if _is_parentnode_error(exc):
-            set_status("内部エラーを自動回避しました。もう一度同じ操作を実行してください。", True)
+            detail = _format_internal_error_detail(exc, "on_load_columns")
+            set_status("内部エラーを自動回避しました。もう一度同じ操作を実行してください。", True, detail)
             return
         set_status(str(exc), True)
 
@@ -1551,6 +1777,15 @@ def _create_plot_figure() -> tuple[object, int, int]:
     x_label_override = document.getElementById("xLabel").value.strip()
     y_label_override = document.getElementById("yLabel").value.strip()
     y2_label_override = document.getElementById("y2Label").value.strip()
+    x_scale = (document.getElementById("xScale").value or "linear").strip()
+    y_scale = (document.getElementById("yScale").value or "linear").strip()
+    y2_scale = (document.getElementById("y2Scale").value or "linear").strip()
+    x_min = _get_optional_float_value("xMin", "X最小値")
+    x_max = _get_optional_float_value("xMax", "X最大値")
+    y_min = _get_optional_float_value("yMin", "Y最小値")
+    y_max = _get_optional_float_value("yMax", "Y最大値")
+    y2_min = _get_optional_float_value("y2Min", "第2Y最小値")
+    y2_max = _get_optional_float_value("y2Max", "第2Y最大値")
     show_major_grid = bool(document.getElementById("showMajorGrid").checked)
     show_minor_grid = bool(document.getElementById("showMinorGrid").checked)
     legend_location = document.getElementById("legendLocation").value
@@ -1705,6 +1940,11 @@ def _create_plot_figure() -> tuple[object, int, int]:
         right_default = secondary_labels[0] if len(secondary_labels) == 1 else "values"
         ax2.set_ylabel(y2_label_override or right_default, fontsize=font_size)
 
+    _apply_axis_scale_and_limits(ax, "x", "X", x_scale, x_min, x_max)
+    _apply_axis_scale_and_limits(ax, "y", "Y", y_scale, y_min, y_max)
+    if ax2 is not None:
+        _apply_axis_scale_and_limits(ax2, "y", "第2Y", y2_scale, y2_min, y2_max)
+
     ax.tick_params(
         axis="x",
         which="both",
@@ -1819,12 +2059,12 @@ async def on_render(event=None):
             if _has_rendered_plot():
                 set_status("描画に成功しました。")
             else:
-                set_status("内部エラーを自動回避しました。もう一度描画を実行してください。", True)
+                detail = _format_internal_error_detail(exc, "on_render")
+                set_status("内部エラーを自動回避しました。もう一度描画を実行してください。", True, detail)
             return
         set_status(str(exc), True)
     finally:
-        if fig is not None:
-            plt.close(fig)
+        _safe_close_figure(fig)
 
 
 async def on_save_plot(event=None):
@@ -1849,12 +2089,12 @@ async def on_save_plot(event=None):
         set_status(f"描画データを保存しました: {filename}")
     except Exception as exc:
         if _is_parentnode_error(exc):
-            set_status("内部エラーを自動回避しました。もう一度保存を実行してください。", True)
+            detail = _format_internal_error_detail(exc, "on_save_plot")
+            set_status("内部エラーを自動回避しました。もう一度保存を実行してください。", True, detail)
             return
         set_status(str(exc), True)
     finally:
-        if fig is not None:
-            plt.close(fig)
+        _safe_close_figure(fig)
 
 
 def _bind_click(element_id: str, handler, is_async: bool = False) -> None:
@@ -1905,7 +2145,8 @@ try:
     _bind_events()
 except Exception as exc:
     if _is_parentnode_error(exc):
-        set_status("内部エラーを自動回避しました。ページを再読み込みして再試行してください。", True)
+        detail = _format_internal_error_detail(exc, "initialization")
+        set_status("内部エラーを自動回避しました。ページを再読み込みして再試行してください。", True, detail)
     else:
         set_status(f"初期化エラー: {exc}", True)
     </py-script>
