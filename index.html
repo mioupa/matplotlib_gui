@@ -1,0 +1,1913 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Matplotlib PyScript GUI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://pyscript.net/releases/2024.11.1/core.css" />
+    <script type="module" src="https://pyscript.net/releases/2024.11.1/core.js"></script>
+    <style>
+      :root {
+        --bg: #eff3f9;
+        --card: #ffffff;
+        --line: #d3dce8;
+        --text: #1f2937;
+        --accent: #0d6efd;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        color: var(--text);
+        font-family: "Noto Sans JP", "Hiragino Sans", "Yu Gothic", sans-serif;
+        background: linear-gradient(180deg, #eaf0f8 0%, #f6f9fd 100%);
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 360px 1fr;
+        min-height: 100vh;
+      }
+      .panel {
+        padding: 20px;
+        background: var(--card);
+        border-right: 1px solid var(--line);
+      }
+      .viewer {
+        padding: 20px;
+      }
+      h1 {
+        margin: 0 0 16px;
+        font-size: 20px;
+      }
+      .group {
+        margin-bottom: 12px;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      input,
+      select,
+      button {
+        width: 100%;
+        padding: 9px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        font-size: 14px;
+        background: #fff;
+      }
+      input[type="file"] {
+        padding: 6px;
+        background: #f8fbff;
+      }
+      input[type="file"]::file-selector-button {
+        border: none;
+        border-radius: 6px;
+        padding: 8px 12px;
+        margin-right: 10px;
+        background: #1f2937;
+        color: #fff;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      input[type="file"]::-webkit-file-upload-button {
+        border: none;
+        border-radius: 6px;
+        padding: 8px 12px;
+        margin-right: 10px;
+        background: #1f2937;
+        color: #fff;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      input[type="color"] {
+        height: 42px;
+        padding: 2px;
+        border: 2px solid #9fb2cc;
+        border-radius: 10px;
+        background: #fff;
+      }
+      input[type="color"]::-webkit-color-swatch-wrapper {
+        padding: 0;
+      }
+      input[type="color"]::-webkit-color-swatch {
+        border: none;
+        border-radius: 7px;
+      }
+      input[type="color"]::-moz-color-swatch {
+        border: none;
+        border-radius: 7px;
+      }
+      .color-value {
+        margin-top: 6px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        color: #374151;
+      }
+      .inline {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+      }
+      .inline input {
+        width: auto;
+      }
+      .inline label {
+        margin: 0;
+        font-weight: 500;
+      }
+      button {
+        cursor: pointer;
+        border: none;
+        color: #fff;
+        background: var(--accent);
+        font-weight: 700;
+      }
+      button.secondary {
+        background: #4b5563;
+      }
+      .status {
+        margin-top: 10px;
+        min-height: 22px;
+        font-size: 13px;
+      }
+      .canvas-wrap {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px;
+        min-height: 420px;
+      }
+      .tabs {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .tab-btn {
+        width: auto;
+        min-width: 120px;
+        padding: 8px 12px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: #fff;
+        color: var(--text);
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .tab-btn.active {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+      }
+      .tab-panel.hidden {
+        display: none;
+      }
+      #plotArea {
+        width: 100%;
+      }
+      #plotArea img,
+      #plotArea svg,
+      #plotArea canvas {
+        max-width: 100%;
+        height: auto;
+      }
+      .table-wrap {
+        width: 100%;
+        overflow: auto;
+        max-height: 520px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+      }
+      .table-wrap table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 13px;
+      }
+      .table-wrap th,
+      .table-wrap td {
+        border: 1px solid #e5eaf2;
+        padding: 6px 8px;
+        white-space: nowrap;
+        text-align: left;
+      }
+      .table-wrap thead th {
+        position: sticky;
+        top: 0;
+        background: #f7f9fd;
+        z-index: 1;
+      }
+      .table-wrap tbody tr.skipped-row td {
+        background: #f3f4f6;
+        color: #6b7280;
+      }
+      .table-wrap .row-number {
+        background: #f9fafb;
+        color: #6b7280;
+        text-align: right;
+        width: 68px;
+      }
+      .data-meta {
+        margin-bottom: 8px;
+        font-size: 13px;
+      }
+      .help-text {
+        margin-top: 6px;
+        font-size: 12px;
+        color: #4b5563;
+      }
+      .section-header {
+        margin: 14px 0 10px;
+        padding-top: 10px;
+        border-top: 1px solid var(--line);
+      }
+      .section-header:first-of-type {
+        margin-top: 4px;
+        padding-top: 0;
+        border-top: none;
+      }
+      .section-title {
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        color: #4b5563;
+      }
+      .series-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .series-toolbar label {
+        margin: 0;
+      }
+      button.small-btn {
+        width: auto;
+        padding: 7px 10px;
+        font-size: 12px;
+      }
+      button.ghost-btn {
+        background: #6b7280;
+      }
+      .series-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .series-item {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px;
+        background: #f8fbff;
+      }
+      .series-item-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .series-item-title {
+        font-size: 13px;
+        font-weight: 700;
+      }
+      .series-item .group {
+        margin-bottom: 8px;
+      }
+      .series-item .group:last-child {
+        margin-bottom: 0;
+      }
+      .series-color-picker {
+        position: relative;
+      }
+      .series-color-trigger {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        color: var(--text);
+        font-weight: 600;
+      }
+      .series-color-swatch-inline {
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        border: 1px solid #9ca3af;
+        flex: 0 0 auto;
+      }
+      .series-color-panel {
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 0;
+        z-index: 30;
+        min-width: 244px;
+        padding: 8px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.15);
+      }
+      .series-color-panel.hidden {
+        display: none;
+      }
+      .series-color-grid {
+        display: grid;
+        grid-template-columns: repeat(6, 30px);
+        gap: 6px;
+        justify-content: start;
+      }
+      button.series-color-chip {
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        border: 2px solid #d1d5db;
+        border-radius: 6px;
+        color: transparent;
+      }
+      button.series-color-chip.active {
+        border-color: #111827;
+        box-shadow: 0 0 0 2px #11182722;
+      }
+      .series-color-custom-toggle {
+        margin-top: 8px;
+      }
+      .series-color-custom.hidden {
+        display: none;
+      }
+      .series-x-wrap {
+        display: none;
+      }
+      @media (max-width: 960px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+        .panel {
+          border-right: none;
+          border-bottom: 1px solid var(--line);
+        }
+      }
+    </style>
+    <py-config>
+      packages = ["pandas", "matplotlib", "openpyxl"]
+    </py-config>
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="panel">
+        <h1>Matplotlib GUI (PyScript)</h1>
+
+        <div class="section-header">
+          <div class="section-title">データ読み込み</div>
+        </div>
+
+        <div class="group">
+          <label for="fileInput">入力ファイル (.xlsx/.csv/.txt)</label>
+          <input id="fileInput" type="file" accept=".xlsx,.csv,.txt" />
+        </div>
+
+        <div class="group">
+          <label for="delimiter">区切り文字（任意）</label>
+          <input id="delimiter" placeholder=", / \t / ;" />
+        </div>
+
+        <div class="group inline">
+          <input id="hasHeader" type="checkbox" checked />
+          <label for="hasHeader">先頭行をヘッダとして扱う</label>
+        </div>
+
+        <div class="section-header">
+          <div class="section-title">描画設定</div>
+        </div>
+
+        <div class="group">
+          <label for="plotType">プロット種別</label>
+          <select id="plotType">
+            <option value="line">line</option>
+            <option value="scatter">scatter</option>
+            <option value="bar">bar</option>
+          </select>
+        </div>
+
+        <div class="group">
+          <label for="skipRows">描画設定: 先頭からスキップする行数</label>
+          <input id="skipRows" type="number" min="0" step="1" value="0" />
+        </div>
+
+        <div class="row group">
+          <div id="globalXGroup">
+            <label for="xColumn">X列</label>
+            <select id="xColumn">
+              <option value="">(index)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="series-toolbar">
+            <label>描画系列</label>
+            <button id="addSeriesBtn" class="small-btn secondary" type="button">+ 系列を追加</button>
+          </div>
+          <div id="seriesList" class="series-list"></div>
+          <div class="help-text">系列ごとにX/Y列・色・線幅・線種・点サイズ・第2軸使用を設定できます。</div>
+        </div>
+
+        <div class="group">
+          <label for="title">タイトル</label>
+          <input id="title" placeholder="空欄でタイトルなし" />
+        </div>
+
+        <div class="row group">
+          <div>
+            <label for="xLabel">Xラベル</label>
+            <input id="xLabel" placeholder="自動" />
+          </div>
+          <div>
+            <label for="yLabel">Yラベル</label>
+            <input id="yLabel" placeholder="自動" />
+          </div>
+        </div>
+
+        <div id="y2LabelGroup" class="group" style="display: none">
+          <label for="y2Label">第2Yラベル</label>
+          <input id="y2Label" placeholder="第2軸を使う系列があるときに有効" />
+        </div>
+
+        <div class="group">
+          <label for="fontSize">フォントサイズ</label>
+          <input id="fontSize" type="number" step="1" value="15" />
+        </div>
+
+        <div class="row group">
+          <div class="group inline">
+            <input id="showMajorGrid" type="checkbox" checked />
+            <label for="showMajorGrid">major目盛線を表示</label>
+          </div>
+          <div class="group inline">
+            <input id="showMinorGrid" type="checkbox" />
+            <label for="showMinorGrid">minor目盛線を表示</label>
+          </div>
+        </div>
+
+        <div class="group">
+          <label for="legendLocation">凡例位置</label>
+          <select id="legendLocation">
+            <option value="best">自動（最適）</option>
+            <option value="upper right">右上</option>
+            <option value="upper left">左上</option>
+            <option value="lower right">右下</option>
+            <option value="lower left">左下</option>
+            <option value="upper center">上中央</option>
+            <option value="lower center">下中央</option>
+            <option value="center right">右中央</option>
+            <option value="center left">左中央</option>
+            <option value="center">中央</option>
+            <option value="none">表示しない</option>
+          </select>
+        </div>
+
+        <div class="row group">
+          <div>
+            <label for="figWidth">図幅(inch)</label>
+            <input id="figWidth" type="number" step="0.1" value="8" />
+          </div>
+          <div>
+            <label for="figHeight">図高さ(inch)</label>
+            <input id="figHeight" type="number" step="0.1" value="6" />
+          </div>
+        </div>
+
+        <div class="section-header">
+          <div class="section-title">保存設定</div>
+        </div>
+
+        <div class="group">
+          <label for="saveFilename">保存ファイル名</label>
+          <input id="saveFilename" placeholder="plot（拡張子は形式に合わせて自動設定）" />
+        </div>
+
+        <div class="row group">
+          <div>
+            <label for="saveFormat">保存形式</label>
+            <select id="saveFormat">
+              <option value="png">png</option>
+              <option value="jpg">jpg</option>
+              <option value="svg">svg</option>
+              <option value="pdf">pdf</option>
+            </select>
+          </div>
+          <div>
+            <label for="savePlotBtn">描画データ保存</label>
+            <button id="savePlotBtn" class="secondary" type="button">保存する</button>
+          </div>
+        </div>
+
+        <div id="status" class="status"></div>
+      </aside>
+
+      <main class="viewer">
+        <div class="tabs">
+          <button id="tabPlotBtn" class="tab-btn active" type="button">プロット</button>
+          <button id="tabDataBtn" class="tab-btn" type="button">データ確認</button>
+        </div>
+        <div id="plotPanel" class="canvas-wrap tab-panel">
+          <div id="plotArea"></div>
+        </div>
+        <div id="dataPanel" class="canvas-wrap tab-panel hidden">
+          <div id="dataArea"></div>
+        </div>
+      </main>
+    </div>
+
+    <script>
+      (() => {
+        const isTargetError = (msg) =>
+          typeof msg === "string" &&
+          (msg.includes("parentNode") || msg.includes("'NoneType' object has no attribute 'parentNode'"));
+
+        const setStatus = (message, isError = false) => {
+          const status = document.getElementById("status");
+          if (!status) return;
+          status.textContent = message || "";
+          status.style.color = isError ? "#b91c1c" : "#1f2937";
+        };
+
+        const notify = () => {
+          const plotArea = document.getElementById("plotArea");
+          const hasPlot = !!(plotArea && plotArea.querySelector("img"));
+          if (hasPlot) {
+            setStatus("描画に成功しました。");
+          } else {
+            setStatus("内部エラーを自動回避しました。もう一度操作してください。", true);
+          }
+        };
+
+        window.addEventListener("error", (event) => {
+          const msg = event?.message || "";
+          if (isTargetError(msg)) {
+            event.preventDefault();
+            notify();
+          }
+        });
+
+        window.addEventListener("unhandledrejection", (event) => {
+          const reason = event?.reason;
+          const msg = (reason && (reason.message || String(reason))) || "";
+          if (isTargetError(msg)) {
+            event.preventDefault();
+            notify();
+          }
+        });
+
+        const originalConsoleError = console.error.bind(console);
+        console.error = (...args) => {
+          const msg = args.map((x) => String(x)).join(" ");
+          if (isTargetError(msg)) {
+            notify();
+            return;
+          }
+          originalConsoleError(...args);
+        };
+
+        window.__matplotDataReady = false;
+        window.setMatplotDataReady = (ready) => {
+          window.__matplotDataReady = !!ready;
+        };
+        window.downloadDataUri = (filename, dataUri) => {
+          if (!filename || !dataUri) return;
+          const link = document.createElement("a");
+          link.href = dataUri;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+        };
+
+        const SERIES_COLORS = [
+          "#FF4B00",
+          "#005AFF",
+          "#03AF7A",
+          "#4DC4FF",
+          "#F6AA00",
+          "#FFF100",
+          "#990099",
+          "#84919E",
+          "#000000",
+          "#804000",
+          "#FF8082",
+        ];
+
+        const seriesList = document.getElementById("seriesList");
+        const addSeriesBtn = document.getElementById("addSeriesBtn");
+        const fileInput = document.getElementById("fileInput");
+        const delimiterInput = document.getElementById("delimiter");
+        const hasHeaderInput = document.getElementById("hasHeader");
+        const plotTypeSelect = document.getElementById("plotType");
+        const globalXGroup = document.getElementById("globalXGroup");
+        const xColumnSelect = document.getElementById("xColumn");
+        const y2LabelGroup = document.getElementById("y2LabelGroup");
+        let lastPlotType = plotTypeSelect ? plotTypeSelect.value : "line";
+
+        let renderTimer = null;
+        let loadTimer = null;
+
+        const hasSelectedFile = () => !!(fileInput && fileInput.files && fileInput.files.length > 0);
+        const canAutoRender = () => !!window.__matplotDataReady;
+        const runPyAction = (name) => {
+          const fn = window[name];
+          if (typeof fn === "function") {
+            fn();
+            return true;
+          }
+          return false;
+        };
+
+        const scheduleRender = (delay = 250) => {
+          if (renderTimer) window.clearTimeout(renderTimer);
+          renderTimer = window.setTimeout(() => {
+            renderTimer = null;
+            if (canAutoRender()) {
+              runPyAction("requestRender");
+            }
+          }, delay);
+        };
+
+        const scheduleLoad = (delay = 350) => {
+          if (!hasSelectedFile()) return;
+          if (loadTimer) window.clearTimeout(loadTimer);
+          loadTimer = window.setTimeout(() => {
+            loadTimer = null;
+            window.setMatplotDataReady(false);
+            runPyAction("requestLoadColumns");
+          }, delay);
+        };
+
+        const getColumnOptions = (includeIndex = false) => {
+          const xColumn = document.getElementById("xColumn");
+          if (!xColumn) return [];
+          const options = [];
+          for (const opt of xColumn.options) {
+            if (!includeIndex && !opt.value) continue;
+            options.push({ value: opt.value, label: opt.textContent || opt.value });
+          }
+          return options;
+        };
+
+        const fillSeriesYSelect = (selectEl, selectedValue = "") => {
+          if (!selectEl) return;
+          const columns = getColumnOptions(false);
+          selectEl.innerHTML = "";
+
+          const autoOption = document.createElement("option");
+          autoOption.value = "";
+          autoOption.textContent = "(自動)";
+          selectEl.appendChild(autoOption);
+
+          for (const col of columns) {
+            const opt = document.createElement("option");
+            opt.value = col.value;
+            opt.textContent = col.label;
+            selectEl.appendChild(opt);
+          }
+
+          if (selectedValue && Array.from(selectEl.options).some((opt) => opt.value === selectedValue)) {
+            selectEl.value = selectedValue;
+          }
+        };
+
+        const fillSeriesXSelect = (selectEl, selectedValue = "") => {
+          if (!selectEl) return;
+          const columns = getColumnOptions(true);
+          selectEl.innerHTML = "";
+          for (const col of columns) {
+            const opt = document.createElement("option");
+            opt.value = col.value;
+            opt.textContent = col.label;
+            selectEl.appendChild(opt);
+          }
+          if (Array.from(selectEl.options).some((opt) => opt.value === selectedValue)) {
+            selectEl.value = selectedValue;
+          } else {
+            selectEl.value = "";
+          }
+        };
+
+        const bindSeriesColorControls = (item) => {
+          const trigger = item.querySelector(".series-color-trigger");
+          const panel = item.querySelector(".series-color-panel");
+          const grid = item.querySelector(".series-color-grid");
+          const customToggle = item.querySelector(".series-color-custom-toggle");
+          const colorInput = item.querySelector(".series-color");
+          const swatch = item.querySelector(".series-color-swatch-inline");
+          const valueLabel = item.querySelector(".series-color-value");
+          if (!trigger || !panel || !grid || !customToggle || !colorInput || !swatch || !valueLabel) return;
+
+          const closeAllColorPanels = (exceptPanel = null) => {
+            if (!seriesList) return;
+            const panels = seriesList.querySelectorAll(".series-color-panel");
+            for (const p of panels) {
+              if (exceptPanel && p === exceptPanel) continue;
+              p.classList.add("hidden");
+            }
+          };
+
+          const normalizeColor = (value) => String(value || "").trim().toUpperCase();
+
+          const syncSeriesColorView = () => {
+            const current = normalizeColor(colorInput.value);
+            swatch.style.backgroundColor = current || "#000000";
+            valueLabel.textContent = current || "#000000";
+
+            const isPaletteColor = SERIES_COLORS.some((c) => normalizeColor(c) === current);
+            colorInput.classList.toggle("hidden", isPaletteColor);
+            const chips = grid.querySelectorAll(".series-color-chip");
+            for (const chip of chips) {
+              const chipColor = normalizeColor(chip.dataset.color);
+              chip.classList.toggle("active", chipColor === current);
+            }
+          };
+
+          grid.innerHTML = "";
+          for (const color of SERIES_COLORS) {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "series-color-chip";
+            chip.dataset.color = color;
+            chip.style.backgroundColor = color;
+            chip.title = color;
+            chip.addEventListener("click", () => {
+              colorInput.value = color;
+              syncSeriesColorView();
+              panel.classList.add("hidden");
+              scheduleRender();
+            });
+            grid.appendChild(chip);
+          }
+
+          trigger.addEventListener("click", () => {
+            const willOpen = panel.classList.contains("hidden");
+            closeAllColorPanels(panel);
+            panel.classList.toggle("hidden", !willOpen);
+          });
+
+          customToggle.addEventListener("click", () => {
+            colorInput.classList.remove("hidden");
+            if (typeof colorInput.showPicker === "function") {
+              colorInput.showPicker();
+            } else {
+              colorInput.click();
+            }
+          });
+
+          colorInput.addEventListener("input", () => {
+            syncSeriesColorView();
+          });
+
+          syncSeriesColorView();
+        };
+
+        const syncPlotTypeUI = () => {
+          const type = plotTypeSelect ? plotTypeSelect.value : "line";
+          const usePerSeriesX = type === "line" || type === "scatter";
+          if (globalXGroup) {
+            globalXGroup.style.display = usePerSeriesX ? "none" : "";
+          }
+          if (!seriesList) return;
+          const xGroups = seriesList.querySelectorAll(".series-x-wrap");
+          for (const group of xGroups) {
+            group.style.display = usePerSeriesX ? "block" : "none";
+          }
+        };
+
+        const syncMarkerSizeForPlotType = () => {
+          if (!seriesList || !plotTypeSelect) return;
+          const currentType = plotTypeSelect.value;
+          const markerInputs = seriesList.querySelectorAll(".series-marker-size");
+          if (currentType === "scatter") {
+            for (const input of markerInputs) {
+              const current = Number(input.value);
+              if (!Number.isFinite(current) || current <= 0) {
+                input.value = "24";
+              }
+            }
+          } else if (currentType === "line" && lastPlotType === "scatter") {
+            for (const input of markerInputs) {
+              const current = Number(input.value);
+              if (Number.isFinite(current) && current === 24) {
+                input.value = "0";
+              }
+            }
+          }
+          lastPlotType = currentType;
+        };
+
+        const syncY2LabelUI = () => {
+          if (!seriesList || !y2LabelGroup) return;
+          const hasSecondary = !!seriesList.querySelector(".series-use-y2:checked");
+          y2LabelGroup.style.display = hasSecondary ? "" : "none";
+        };
+
+        const renumberSeries = () => {
+          if (!seriesList) return;
+          const items = Array.from(seriesList.querySelectorAll(".series-item"));
+          items.forEach((item, idx) => {
+            const title = item.querySelector(".series-item-title");
+            if (title) title.textContent = `系列 ${idx + 1}`;
+          });
+          const disableRemove = items.length <= 1;
+          items.forEach((item) => {
+            const removeBtn = item.querySelector(".remove-series");
+            if (removeBtn) {
+              removeBtn.disabled = disableRemove;
+              removeBtn.style.opacity = disableRemove ? "0.5" : "1";
+              removeBtn.style.cursor = disableRemove ? "not-allowed" : "pointer";
+            }
+          });
+        };
+
+        const addSeriesItem = (preset = {}) => {
+          if (!seriesList) return;
+          const item = document.createElement("div");
+          item.className = "series-item";
+          const color = preset.color || SERIES_COLORS[seriesList.children.length % SERIES_COLORS.length];
+          const defaultMarkerSize = Object.prototype.hasOwnProperty.call(preset, "markerSize")
+            ? preset.markerSize
+            : plotTypeSelect && plotTypeSelect.value === "line"
+              ? 0
+              : 24;
+          item.innerHTML = `
+            <div class="series-item-header">
+              <div class="series-item-title">系列</div>
+              <button type="button" class="small-btn ghost-btn remove-series">削除</button>
+            </div>
+            <div class="row group">
+              <div class="series-x-wrap">
+                <label>X列</label>
+                <select class="series-x"></select>
+              </div>
+              <div>
+                <label>Y列</label>
+                <select class="series-y"></select>
+              </div>
+            </div>
+            <div class="row group">
+              <div>
+                <label>色</label>
+                <div class="series-color-picker">
+                  <button type="button" class="series-color-trigger">
+                    <span class="series-color-swatch-inline"></span>
+                    <span>色を選択</span>
+                  </button>
+                  <div class="series-color-panel hidden">
+                    <div class="series-color-grid"></div>
+                    <button type="button" class="small-btn ghost-btn series-color-custom-toggle">カスタム</button>
+                    <input class="series-color series-color-custom hidden" type="color" value="${color}" />
+                  </div>
+                </div>
+                <div class="color-value series-color-value">${color}</div>
+              </div>
+              <div>
+                <label>線幅</label>
+                <input class="series-line-width" type="number" step="0.1" value="${preset.lineWidth || 2.0}" />
+              </div>
+            </div>
+            <div class="row group">
+              <div>
+                <label>線種</label>
+                <select class="series-line-style">
+                  <option value="solid">solid</option>
+                  <option value="dashed">dashed</option>
+                  <option value="dashdot">dashdot</option>
+                  <option value="dotted">dotted</option>
+                </select>
+              </div>
+              <div>
+                <label>点サイズ</label>
+                <input class="series-marker-size" type="number" step="1" value="${defaultMarkerSize}" />
+              </div>
+            </div>
+            <div class="group">
+              <label>凡例名（任意）</label>
+              <input class="series-legend-name" type="text" value="${preset.legendName || ""}" placeholder="未入力なら列名を使用" />
+            </div>
+            <div class="group inline">
+              <input class="series-use-y2" type="checkbox" ${preset.useSecondaryAxis ? "checked" : ""} />
+              <label>第2軸を使用</label>
+            </div>
+          `;
+
+          seriesList.appendChild(item);
+          const ySelect = item.querySelector(".series-y");
+          fillSeriesYSelect(ySelect, preset.yRequest || "");
+          const xSelect = item.querySelector(".series-x");
+          fillSeriesXSelect(xSelect, preset.xRequest || (xColumnSelect ? xColumnSelect.value : ""));
+          bindSeriesColorControls(item);
+
+          const lineStyleSelect = item.querySelector(".series-line-style");
+          if (lineStyleSelect) {
+            lineStyleSelect.value = preset.lineStyle || "solid";
+          }
+
+          const removeBtn = item.querySelector(".remove-series");
+          if (removeBtn) {
+            removeBtn.addEventListener("click", () => {
+              if (seriesList.children.length <= 1) return;
+              item.remove();
+              renumberSeries();
+              syncY2LabelUI();
+              scheduleRender();
+            });
+          }
+
+          syncPlotTypeUI();
+          syncY2LabelUI();
+          renumberSeries();
+        };
+
+        window.refreshSeriesColumnOptions = () => {
+          if (!seriesList) return;
+          const ySelects = seriesList.querySelectorAll(".series-y");
+          for (const selectEl of ySelects) {
+            fillSeriesYSelect(selectEl, selectEl.value);
+          }
+          const xSelects = seriesList.querySelectorAll(".series-x");
+          for (const selectEl of xSelects) {
+            fillSeriesXSelect(selectEl, selectEl.value);
+          }
+        };
+
+        window.ensureSeriesItems = () => {
+          if (!seriesList) return;
+          if (seriesList.children.length === 0) {
+            addSeriesItem();
+          } else {
+            renumberSeries();
+          }
+          syncPlotTypeUI();
+          syncY2LabelUI();
+        };
+
+        if (addSeriesBtn) {
+          addSeriesBtn.addEventListener("click", () => {
+            addSeriesItem();
+            scheduleRender();
+          });
+        }
+
+        if (fileInput) {
+          fileInput.addEventListener("change", () => scheduleLoad(0));
+        }
+        if (delimiterInput) {
+          delimiterInput.addEventListener("input", () => scheduleLoad(450));
+        }
+        if (hasHeaderInput) {
+          hasHeaderInput.addEventListener("change", () => scheduleLoad(0));
+        }
+        if (plotTypeSelect) {
+          plotTypeSelect.addEventListener("change", () => {
+            syncPlotTypeUI();
+            syncMarkerSizeForPlotType();
+            scheduleRender();
+          });
+        }
+
+        const autoRenderIds = [
+          "xColumn",
+          "title",
+          "xLabel",
+          "yLabel",
+          "y2Label",
+          "fontSize",
+          "showMajorGrid",
+          "showMinorGrid",
+          "legendLocation",
+          "figWidth",
+          "figHeight",
+          "skipRows",
+        ];
+        for (const id of autoRenderIds) {
+          const el = document.getElementById(id);
+          if (!el) continue;
+          el.addEventListener("input", () => scheduleRender());
+          el.addEventListener("change", () => scheduleRender());
+        }
+
+        if (seriesList) {
+          const onSeriesInput = (event) => {
+            const target = event.target;
+            if (!target) return;
+            if (target.matches("input, select")) {
+              if (target.matches(".series-use-y2")) {
+                syncY2LabelUI();
+              }
+              scheduleRender();
+            }
+          };
+          seriesList.addEventListener("input", onSeriesInput);
+          seriesList.addEventListener("change", onSeriesInput);
+        }
+
+        document.addEventListener("click", (event) => {
+          if (!seriesList) return;
+          const target = event.target;
+          if (target && target.closest(".series-color-picker")) return;
+          const panels = seriesList.querySelectorAll(".series-color-panel");
+          for (const panel of panels) {
+            panel.classList.add("hidden");
+          }
+        });
+
+        window.ensureSeriesItems();
+        syncPlotTypeUI();
+        syncMarkerSizeForPlotType();
+        syncY2LabelUI();
+      })();
+    </script>
+
+    <py-script>
+import io
+import base64
+import asyncio
+import warnings
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+warnings.simplefilter("ignore", DeprecationWarning)
+warnings.filterwarnings(
+    "ignore",
+    message=".*Pyarrow will become a required dependency of pandas.*",
+    category=DeprecationWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=".*missing from current font.*",
+    category=UserWarning,
+)
+from matplotlib import font_manager
+import pandas as pd
+from js import Uint8Array, document, window, fetch
+from pyodide.ffi import create_proxy
+
+SUPPORTED = {".xlsx", ".csv", ".txt"}
+PREVIEW_ROWS = 100
+CURRENT_DF = None
+_EVENT_PROXIES = []
+JP_FONT_URL = "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf"
+JP_FONT_PATH = "/tmp/NotoSansCJKjp-Regular.otf"
+_JP_FONT_READY = False
+
+plt.rcParams["font.family"] = "sans-serif"
+plt.rcParams["font.sans-serif"] = [
+    "Noto Sans JP",
+    "Noto Sans CJK JP",
+    "IPAexGothic",
+    "Yu Gothic",
+    "Hiragino Sans",
+    "MS Gothic",
+    "DejaVu Sans",
+]
+plt.rcParams["axes.unicode_minus"] = False
+
+
+async def _ensure_japanese_font() -> None:
+    global _JP_FONT_READY
+    if _JP_FONT_READY:
+        return
+    try:
+        target = Path(JP_FONT_PATH)
+        if not target.exists():
+            response = await fetch(JP_FONT_URL)
+            if not bool(response.ok):
+                return
+            buffer = await response.arrayBuffer()
+            data = Uint8Array.new(buffer)
+            target.write_bytes(bytes(data.to_py()))
+
+        font_manager.fontManager.addfont(str(target))
+        preferred = ["Noto Sans CJK JP", "Noto Sans JP"]
+        current = list(plt.rcParams.get("font.sans-serif", []))
+        for name in reversed(preferred):
+            if name in current:
+                current.remove(name)
+            current.insert(0, name)
+        plt.rcParams["font.sans-serif"] = current
+        _JP_FONT_READY = True
+    except Exception:
+        # フォント取得に失敗しても描画処理は継続する
+        return
+
+
+def set_status(message: str, is_error: bool = False) -> None:
+    status = document.getElementById("status")
+    status.textContent = message or ""
+    status.style.color = "#b91c1c" if is_error else "#1f2937"
+
+
+def _is_parentnode_error(exc: Exception) -> bool:
+    text = str(exc)
+    return ("parentNode" in text) or ("NoneType" in text and "parentNode" in text)
+
+
+def _switch_tab(tab_name: str) -> None:
+    plot_btn = document.getElementById("tabPlotBtn")
+    data_btn = document.getElementById("tabDataBtn")
+    plot_panel = document.getElementById("plotPanel")
+    data_panel = document.getElementById("dataPanel")
+
+    if tab_name == "plot":
+        plot_btn.classList.add("active")
+        data_btn.classList.remove("active")
+        plot_panel.classList.remove("hidden")
+        data_panel.classList.add("hidden")
+    else:
+        data_btn.classList.add("active")
+        plot_btn.classList.remove("active")
+        data_panel.classList.remove("hidden")
+        plot_panel.classList.add("hidden")
+
+
+def _spawn_task(coro) -> None:
+    task = asyncio.create_task(coro)
+
+    def _consume_done(finished_task):
+        try:
+            finished_task.result()
+        except Exception as exc:
+            if _is_parentnode_error(exc):
+                try:
+                    if _has_rendered_plot():
+                        set_status("描画に成功しました。")
+                    else:
+                        set_status("内部エラーを自動回避しました。もう一度操作してください。", True)
+                except Exception:
+                    pass
+            else:
+                try:
+                    set_status(str(exc), True)
+                except Exception:
+                    pass
+
+    task.add_done_callback(_consume_done)
+
+
+def _decode_delimiter(delimiter: str, suffix: str) -> str:
+    if delimiter:
+        return bytes(delimiter, "utf-8").decode("unicode_escape")
+    if suffix == ".csv":
+        return ","
+    return r"\s+"
+
+
+def _set_data_ready(ready: bool) -> None:
+    try:
+        if hasattr(window, "setMatplotDataReady"):
+            window.setMatplotDataReady(bool(ready))
+    except Exception:
+        pass
+
+
+def _get_skip_rows_for_preview() -> int:
+    raw = document.getElementById("skipRows").value.strip()
+    if not raw:
+        return 0
+    try:
+        skip_rows = int(raw)
+    except Exception:
+        return 0
+    return max(skip_rows, 0)
+
+
+def _get_skip_rows() -> int:
+    raw = document.getElementById("skipRows").value.strip()
+    if not raw:
+        return 0
+    skip_rows = int(raw)
+    if skip_rows < 0:
+        raise ValueError("スキップ行数は0以上で指定してください。")
+    return skip_rows
+
+
+def _resolve_column(df: pd.DataFrame, requested: str):
+    if requested.startswith("__idx__"):
+        idx_text = requested.replace("__idx__", "", 1)
+        if not idx_text.isdigit():
+            raise ValueError(f"列指定が不正です: {requested}")
+        idx = int(idx_text)
+        if idx < 0 or idx >= len(df.columns):
+            raise ValueError(f"列インデックスが範囲外です: {idx}")
+        return df.columns[idx]
+
+    if requested in df.columns:
+        return requested
+    matched = [col for col in df.columns if str(col) == requested]
+    if len(matched) == 1:
+        return matched[0]
+    raise ValueError(f"列が見つかりません: {requested}")
+
+
+def _parse_column_index(requested: str) -> int | None:
+    if not requested.startswith("__idx__"):
+        return None
+    idx_text = requested.replace("__idx__", "", 1)
+    if not idx_text.isdigit():
+        return None
+    return int(idx_text)
+
+
+def _get_series_from_request(df: pd.DataFrame, requested: str) -> tuple[pd.Series, str, int]:
+    idx = _parse_column_index(requested)
+    if idx is not None:
+        if idx < 0 or idx >= len(df.columns):
+            raise ValueError(f"列インデックスが範囲外です: {idx}")
+        return df.iloc[:, idx], str(df.columns[idx]), idx
+
+    resolved = _resolve_column(df, requested)
+    found_idx = -1
+    for i, col in enumerate(df.columns):
+        if col == resolved:
+            found_idx = i
+            break
+    return df[resolved], str(resolved), found_idx
+
+
+async def _read_upload() -> tuple[bytes, str]:
+    file_input = document.getElementById("fileInput")
+    if file_input.files.length == 0:
+        raise ValueError("ファイルを選択してください。")
+
+    js_file = file_input.files.item(0)
+    buffer = await js_file.arrayBuffer()
+    data = Uint8Array.new(buffer)
+    return bytes(data.to_py()), str(js_file.name)
+
+
+def _load_dataframe(
+    file_bytes: bytes,
+    filename: str,
+    delimiter: str,
+    has_header: bool,
+) -> pd.DataFrame:
+    suffix = Path(filename).suffix.lower()
+    if suffix not in SUPPORTED:
+        raise ValueError("対応していない拡張子です。xlsx/csv/txtを選択してください。")
+
+    header = 0 if has_header else None
+    stream = io.BytesIO(file_bytes)
+
+    if suffix == ".xlsx":
+        df = pd.read_excel(stream, header=header)
+    else:
+        sep = _decode_delimiter(delimiter, suffix)
+        df = pd.read_csv(stream, sep=sep, header=header, engine="python")
+
+    if df.empty:
+        raise ValueError("データが空です。")
+
+    if not has_header:
+        df.columns = [f"column_{i}" for i in range(len(df.columns))]
+
+    return df
+
+
+def _collect_series_settings() -> list[dict]:
+    series_list = document.getElementById("seriesList")
+    if series_list is None:
+        raise ValueError("系列設定UIが見つかりません。")
+
+    rows = series_list.querySelectorAll(".series-item")
+    if rows.length == 0:
+        raise ValueError("描画系列を1つ以上追加してください。")
+
+    allowed_line_styles = {"solid", "dashed", "dashdot", "dotted"}
+    plot_type = document.getElementById("plotType").value
+    default_marker = "0" if plot_type == "line" else "24"
+    settings = []
+    for i in range(rows.length):
+        row = rows.item(i)
+        y_select = row.querySelector(".series-y")
+        x_select = row.querySelector(".series-x")
+        color_input = row.querySelector(".series-color")
+        line_width_input = row.querySelector(".series-line-width")
+        line_style_select = row.querySelector(".series-line-style")
+        marker_size_input = row.querySelector(".series-marker-size")
+        legend_name_input = row.querySelector(".series-legend-name")
+        use_y2_input = row.querySelector(".series-use-y2")
+
+        y_request = y_select.value.strip() if y_select is not None else ""
+        x_request = x_select.value.strip() if x_select is not None else ""
+        color = color_input.value.strip() if color_input is not None else "#FF4B00"
+        line_width_text = line_width_input.value.strip() if line_width_input is not None else "2.0"
+        line_style = line_style_select.value.strip() if line_style_select is not None else "solid"
+        marker_size_text = marker_size_input.value.strip() if marker_size_input is not None else default_marker
+        legend_name = legend_name_input.value.strip() if legend_name_input is not None else ""
+        use_secondary_axis = bool(use_y2_input.checked) if use_y2_input is not None else False
+
+        line_width = float(line_width_text or "2.0")
+        marker_size = float(marker_size_text or default_marker)
+
+        if plot_type == "scatter" and marker_size <= 0:
+            marker_size = 24.0
+
+        if line_width <= 0:
+            raise ValueError(f"{i + 1}番目の系列: 線幅は0より大きくしてください。")
+        if marker_size < 0:
+            raise ValueError(f"{i + 1}番目の系列: 点サイズは0以上で指定してください。")
+        if line_style not in allowed_line_styles:
+            raise ValueError(f"{i + 1}番目の系列: 線種が不正です。")
+
+        settings.append(
+            {
+                "y_request": y_request,
+                "x_request": x_request,
+                "color": color or "#FF4B00",
+                "line_width": line_width,
+                "line_style": line_style,
+                "marker_size": marker_size,
+                "legend_name": legend_name,
+                "use_secondary_axis": use_secondary_axis,
+            }
+        )
+
+    return settings
+
+
+def _resolve_series_requests(df: pd.DataFrame, settings: list[dict]) -> list[str]:
+    numeric_indices = [i for i, dtype in enumerate(df.dtypes) if pd.api.types.is_numeric_dtype(dtype)]
+    candidates = numeric_indices if numeric_indices else [0]
+    used_indices = set()
+    resolved = []
+
+    for setting in settings:
+        request = setting["y_request"]
+        if request:
+            idx = _parse_column_index(request)
+            if idx is not None:
+                used_indices.add(idx)
+            resolved.append(request)
+            continue
+
+        chosen = None
+        for idx in candidates:
+            if idx not in used_indices:
+                chosen = idx
+                break
+        if chosen is None:
+            chosen = candidates[0]
+        used_indices.add(chosen)
+        resolved.append(f"__idx__{chosen}")
+
+    return resolved
+
+
+def _get_plot_data(df: pd.DataFrame, series_settings: list[dict]) -> tuple[pd.Series, str, list[dict]]:
+    x_req = document.getElementById("xColumn").value.strip()
+    y_requests = _resolve_series_requests(df, series_settings)
+
+    if x_req:
+        x, x_label, _ = _get_series_from_request(df, x_req)
+    else:
+        x = pd.Series(df.index, name="index")
+        x_label = "index"
+
+    plot_df = pd.DataFrame({"x": x})
+    series_entries = []
+    for i, (setting, request) in enumerate(zip(series_settings, y_requests)):
+        y_series, y_name, y_idx = _get_series_from_request(df, request)
+        y_key = f"y_{i}"
+        label_suffix = f" [{y_idx}]" if y_idx >= 0 else ""
+        data_label = f"{y_name}{label_suffix}"
+        plot_df[y_key] = pd.to_numeric(y_series, errors="coerce")
+        entry = dict(setting)
+        entry["y_key"] = y_key
+        entry["data_label"] = data_label
+        entry["legend_label"] = setting.get("legend_name") or data_label
+        series_entries.append(entry)
+
+    y_keys = [entry["y_key"] for entry in series_entries]
+    plot_df = plot_df.dropna(subset=y_keys, how="all")
+    if plot_df.empty:
+        raise ValueError("描画可能な数値データがありません。")
+
+    for entry in series_entries:
+        entry["y_series"] = plot_df[entry["y_key"]]
+
+    return plot_df["x"], x_label, series_entries
+
+
+def _get_per_series_xy_data(df: pd.DataFrame, series_settings: list[dict]) -> tuple[list[dict], str]:
+    y_requests = _resolve_series_requests(df, series_settings)
+    entries = []
+    x_labels = []
+
+    for setting, y_request in zip(series_settings, y_requests):
+        x_request = setting.get("x_request", "").strip()
+        if x_request:
+            x_series, x_label, _ = _get_series_from_request(df, x_request)
+        else:
+            x_series = pd.Series(df.index, name="index")
+            x_label = "index"
+
+        y_series, y_name, y_idx = _get_series_from_request(df, y_request)
+        label_suffix = f" [{y_idx}]" if y_idx >= 0 else ""
+        data_label = f"{y_name}{label_suffix}"
+
+        entry = dict(setting)
+        entry["x_series"] = x_series.reset_index(drop=True)
+        entry["y_series"] = pd.to_numeric(y_series, errors="coerce").reset_index(drop=True)
+        entry["data_label"] = data_label
+        entry["legend_label"] = setting.get("legend_name") or data_label
+        entry["x_label"] = x_label
+        entries.append(entry)
+        x_labels.append(x_label)
+
+    has_points = False
+    for entry in entries:
+        mask = entry["y_series"].notna() & pd.notna(entry["x_series"])
+        if bool(mask.any()):
+            has_points = True
+            break
+    if not has_points:
+        raise ValueError("描画可能な数値データがありません。")
+
+    common_x_label = x_labels[0] if len(set(x_labels)) == 1 else "x"
+    return entries, common_x_label
+
+
+def _fill_columns(df: pd.DataFrame) -> None:
+    x_select = document.getElementById("xColumn")
+
+    x_select.innerHTML = ""
+
+    x_default = document.createElement("option")
+    x_default.value = ""
+    x_default.textContent = "(index)"
+    x_select.appendChild(x_default)
+
+    for idx, col in enumerate(df.columns):
+        text = str(col)
+        value = f"__idx__{idx}"
+        label = f"{text} [{idx}]"
+
+        x_opt = document.createElement("option")
+        x_opt.value = value
+        x_opt.textContent = label
+        x_select.appendChild(x_opt)
+
+    if hasattr(window, "refreshSeriesColumnOptions"):
+        window.refreshSeriesColumnOptions()
+
+
+def _render_data_preview(df: pd.DataFrame, skip_rows: int = 0) -> None:
+    data_area = document.getElementById("dataArea")
+    if data_area is None:
+        return
+
+    preview_df = df.head(PREVIEW_ROWS)
+    rows = len(df)
+    cols = len(df.columns)
+    truncated = "（先頭100行のみ表示）" if rows > PREVIEW_ROWS else ""
+    table_html = preview_df.to_html(index=False, border=0, classes=["data-table"])
+
+    data_area.innerHTML = (
+        f'<div class="data-meta">行数: {rows} / 列数: {cols} {truncated}</div>'
+        f'<div class="table-wrap">{table_html}</div>'
+    )
+
+
+def _render_plot_image(fig) -> None:
+    buffer = io.BytesIO()
+    fig.savefig(buffer, format="png", dpi=100)
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    plot_area = document.getElementById("plotArea")
+    plot_area.innerHTML = f'<img alt="plot" src="data:image/png;base64,{encoded}" />'
+
+
+def _has_rendered_plot() -> bool:
+    plot_area = document.getElementById("plotArea")
+    if plot_area is None:
+        return False
+    return plot_area.querySelector("img") is not None
+
+
+def on_tab_plot(event=None):
+    _switch_tab("plot")
+
+
+def on_tab_data(event=None):
+    _switch_tab("data")
+
+
+async def on_load_columns(event=None):
+    global CURRENT_DF
+    try:
+        _set_data_ready(False)
+        file_bytes, filename = await _read_upload()
+        delimiter = document.getElementById("delimiter").value
+        has_header = document.getElementById("hasHeader").checked
+
+        df = _load_dataframe(file_bytes, filename, delimiter, has_header)
+        CURRENT_DF = df
+        _fill_columns(df)
+        _render_data_preview(df, _get_skip_rows_for_preview())
+        _set_data_ready(True)
+        set_status("")
+        await on_render()
+    except Exception as exc:
+        CURRENT_DF = None
+        _set_data_ready(False)
+        if _is_parentnode_error(exc):
+            set_status("内部エラーを自動回避しました。もう一度同じ操作を実行してください。", True)
+            return
+        set_status(str(exc), True)
+
+
+def _create_plot_figure() -> tuple[object, int, int]:
+    if CURRENT_DF is None:
+        raise ValueError("先にファイルを読み込んでください。")
+
+    skip_rows = _get_skip_rows()
+    if skip_rows >= len(CURRENT_DF):
+        raise ValueError("スキップ行数がデータ行数以上です。")
+
+    df = CURRENT_DF.iloc[skip_rows:].reset_index(drop=True)
+    plot_type = document.getElementById("plotType").value
+
+    title = document.getElementById("title").value.strip()
+    x_label_override = document.getElementById("xLabel").value.strip()
+    y_label_override = document.getElementById("yLabel").value.strip()
+    y2_label_override = document.getElementById("y2Label").value.strip()
+    show_major_grid = bool(document.getElementById("showMajorGrid").checked)
+    show_minor_grid = bool(document.getElementById("showMinorGrid").checked)
+    legend_location = document.getElementById("legendLocation").value
+
+    series_settings = _collect_series_settings()
+    font_size = float(document.getElementById("fontSize").value or "15")
+    fig_width = float(document.getElementById("figWidth").value or "8")
+    fig_height = float(document.getElementById("figHeight").value or "6")
+    allowed_legend_locations = {
+        "best",
+        "upper right",
+        "upper left",
+        "lower right",
+        "lower left",
+        "upper center",
+        "lower center",
+        "center right",
+        "center left",
+        "center",
+        "none",
+    }
+
+    if fig_width <= 0 or fig_height <= 0:
+        raise ValueError("図幅・図高さは0より大きくしてください。")
+    if font_size <= 0:
+        raise ValueError("フォントサイズは0より大きくしてください。")
+    if plot_type not in {"line", "scatter", "bar"}:
+        raise ValueError("プロット種別が不正です。")
+    if legend_location not in allowed_legend_locations:
+        raise ValueError("凡例位置が不正です。")
+
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=100)
+    ax2 = None
+    plotted_labels = []
+    all_entries = []
+
+    if plot_type in {"line", "scatter"}:
+        per_series_entries, x_label = _get_per_series_xy_data(df, series_settings)
+        all_entries = per_series_entries
+        for entry in per_series_entries:
+            x_series = entry["x_series"]
+            y_series = entry["y_series"]
+            mask = y_series.notna() & pd.notna(x_series)
+            if not bool(mask.any()):
+                continue
+
+            target_ax = ax
+            if entry.get("use_secondary_axis", False):
+                if ax2 is None:
+                    ax2 = ax.twinx()
+                target_ax = ax2
+
+            if plot_type == "line":
+                marker = "o" if entry["marker_size"] > 0 else ""
+                marker_size_for_line = entry["marker_size"] ** 0.5 if entry["marker_size"] > 0 else 0
+                target_ax.plot(
+                    x_series[mask],
+                    y_series[mask],
+                    color=entry["color"],
+                    linewidth=entry["line_width"],
+                    linestyle=entry["line_style"],
+                    marker=marker,
+                    markersize=marker_size_for_line,
+                    label=entry["legend_label"],
+                )
+            else:
+                target_ax.scatter(
+                    x_series[mask],
+                    y_series[mask],
+                    color=entry["color"],
+                    s=entry["marker_size"],
+                    label=entry["legend_label"],
+                )
+            plotted_labels.append(entry["legend_label"])
+    else:
+        x, x_label, series_entries = _get_plot_data(df, series_settings)
+        all_entries = series_entries
+        if len(series_entries) == 1:
+            entry = series_entries[0]
+            y_series = entry["y_series"]
+            mask = y_series.notna() & pd.notna(x)
+            if bool(mask.any()):
+                target_ax = ax
+                if entry.get("use_secondary_axis", False):
+                    if ax2 is None:
+                        ax2 = ax.twinx()
+                    target_ax = ax2
+                target_ax.bar(
+                    x[mask],
+                    y_series[mask],
+                    color=entry["color"],
+                    linewidth=entry["line_width"],
+                    linestyle=entry["line_style"],
+                    label=entry["legend_label"],
+                )
+                plotted_labels.append(entry["legend_label"])
+        else:
+            x_labels = [str(v) for v in x.tolist()]
+            positions = list(range(len(x_labels)))
+            width = 0.8 / len(series_entries)
+
+            for i, entry in enumerate(series_entries):
+                y_series = entry["y_series"]
+                y_values = [float(v) if pd.notna(v) else 0.0 for v in y_series.tolist()]
+                offset = -0.4 + (width / 2.0) + (i * width)
+                x_positions = [p + offset for p in positions]
+
+                target_ax = ax
+                if entry.get("use_secondary_axis", False):
+                    if ax2 is None:
+                        ax2 = ax.twinx()
+                    target_ax = ax2
+                target_ax.bar(
+                    x_positions,
+                    y_values,
+                    width=width,
+                    color=entry["color"],
+                    linewidth=entry["line_width"],
+                    linestyle=entry["line_style"],
+                    label=entry["legend_label"],
+                )
+                plotted_labels.append(entry["legend_label"])
+
+            if positions:
+                if len(positions) > 25:
+                    step = max(1, len(positions) // 25)
+                    tick_positions = [positions[i] for i in range(0, len(positions), step)]
+                    tick_labels = [x_labels[i] for i in range(0, len(x_labels), step)]
+                else:
+                    tick_positions = positions
+                    tick_labels = x_labels
+                ax.set_xticks(tick_positions)
+                ax.set_xticklabels(tick_labels, rotation=45, ha="right")
+
+    if not plotted_labels:
+        raise ValueError("描画可能なデータがありません。")
+
+    primary_labels = [entry["data_label"] for entry in all_entries if not entry.get("use_secondary_axis", False)]
+    secondary_labels = [entry["data_label"] for entry in all_entries if entry.get("use_secondary_axis", False)]
+
+    if title:
+        ax.set_title(title, fontsize=font_size + 2)
+    ax.set_xlabel(x_label_override or x_label, fontsize=font_size)
+
+    if y_label_override:
+        ax.set_ylabel(y_label_override, fontsize=font_size)
+    else:
+        left_default = primary_labels[0] if len(primary_labels) == 1 else "values"
+        ax.set_ylabel(left_default, fontsize=font_size)
+
+    if ax2 is not None:
+        right_default = secondary_labels[0] if len(secondary_labels) == 1 else "values"
+        ax2.set_ylabel(y2_label_override or right_default, fontsize=font_size)
+
+    ax.tick_params(
+        axis="x",
+        which="both",
+        direction="in",
+        bottom=True,
+        top=False,
+        labelsize=max(font_size - 1, 1),
+    )
+    ax.tick_params(
+        axis="y",
+        which="both",
+        direction="in",
+        left=True,
+        right=False,
+        labelsize=max(font_size - 1, 1),
+    )
+    if ax2 is not None:
+        ax2.tick_params(
+            axis="y",
+            which="both",
+            direction="in",
+            left=False,
+            right=True,
+            labelsize=max(font_size - 1, 1),
+        )
+
+    if show_minor_grid:
+        ax.minorticks_on()
+        if ax2 is not None:
+            ax2.minorticks_on()
+    else:
+        ax.minorticks_off()
+        if ax2 is not None:
+            ax2.minorticks_off()
+
+    ax.grid(False, which="both", axis="both")
+    if show_major_grid:
+        ax.grid(True, which="major", axis="both", alpha=0.3)
+    if show_minor_grid:
+        ax.grid(True, which="minor", axis="both", alpha=0.2, linestyle=":")
+    if ax2 is not None:
+        ax2.grid(False, which="both", axis="y")
+        if show_major_grid:
+            ax2.grid(True, which="major", axis="y", alpha=0.3)
+        if show_minor_grid:
+            ax2.grid(True, which="minor", axis="y", alpha=0.2, linestyle=":")
+
+    if legend_location != "none" and len(plotted_labels) >= 1:
+        if ax2 is None:
+            ax.legend(loc=legend_location, fontsize=max(font_size - 1, 1))
+        else:
+            handles1, labels1 = ax.get_legend_handles_labels()
+            handles2, labels2 = ax2.get_legend_handles_labels()
+            merged_handles = handles1 + handles2
+            merged_labels = labels1 + labels2
+            if len(merged_labels) >= 1:
+                ax.legend(
+                    merged_handles,
+                    merged_labels,
+                    loc=legend_location,
+                    fontsize=max(font_size - 1, 1),
+                )
+    fig.tight_layout()
+    return fig, len(plotted_labels), skip_rows
+
+
+def _figure_to_data_uri(fig, file_format: str) -> tuple[str, str]:
+    fmt = (file_format or "").lower()
+    if fmt == "png":
+        save_format = "png"
+        mime = "image/png"
+        ext = "png"
+    elif fmt == "jpg":
+        save_format = "jpeg"
+        mime = "image/jpeg"
+        ext = "jpg"
+    elif fmt == "svg":
+        save_format = "svg"
+        mime = "image/svg+xml"
+        ext = "svg"
+    elif fmt == "pdf":
+        save_format = "pdf"
+        mime = "application/pdf"
+        ext = "pdf"
+    else:
+        raise ValueError("保存形式が不正です。")
+
+    buffer = io.BytesIO()
+    save_kwargs = {}
+    if save_format in {"png", "jpeg"}:
+        save_kwargs["dpi"] = 120
+    if save_format == "jpeg":
+        save_kwargs["facecolor"] = "white"
+
+    fig.savefig(buffer, format=save_format, **save_kwargs)
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:{mime};base64,{encoded}", ext
+
+
+async def on_render(event=None):
+    fig = None
+    try:
+        if CURRENT_DF is not None:
+            _render_data_preview(CURRENT_DF, _get_skip_rows_for_preview())
+        await _ensure_japanese_font()
+        fig, plotted_count, skip_rows = _create_plot_figure()
+        _render_plot_image(fig)
+        _set_data_ready(True)
+        set_status(f"描画に成功しました（{plotted_count}系列、スキップ{skip_rows}行）。")
+    except Exception as exc:
+        if _is_parentnode_error(exc):
+            if _has_rendered_plot():
+                set_status("描画に成功しました。")
+            else:
+                set_status("内部エラーを自動回避しました。もう一度描画を実行してください。", True)
+            return
+        set_status(str(exc), True)
+    finally:
+        if fig is not None:
+            plt.close(fig)
+
+
+async def on_save_plot(event=None):
+    fig = None
+    try:
+        await _ensure_japanese_font()
+        save_format = document.getElementById("saveFormat").value.strip().lower()
+        raw_filename = document.getElementById("saveFilename").value.strip()
+        fig, plotted_count, skip_rows = _create_plot_figure()
+        data_uri, ext = _figure_to_data_uri(fig, save_format)
+        if raw_filename:
+            filename_base = raw_filename.rstrip(".")
+            if "." in filename_base:
+                filename_base = filename_base.rsplit(".", 1)[0]
+            filename_base = filename_base.strip() or "plot"
+            filename = f"{filename_base}.{ext}"
+        else:
+            filename = f"plot.{ext}"
+        if not hasattr(window, "downloadDataUri"):
+            raise ValueError("ダウンロード機能の初期化に失敗しました。")
+        window.downloadDataUri(filename, data_uri)
+        set_status(f"描画データを保存しました: {filename}")
+    except Exception as exc:
+        if _is_parentnode_error(exc):
+            set_status("内部エラーを自動回避しました。もう一度保存を実行してください。", True)
+            return
+        set_status(str(exc), True)
+    finally:
+        if fig is not None:
+            plt.close(fig)
+
+
+def _bind_click(element_id: str, handler, is_async: bool = False) -> None:
+    element = document.getElementById(element_id)
+    if element is None:
+        raise ValueError(f"UI要素が見つかりません: {element_id}")
+
+    if is_async:
+        def wrapped(event):
+            _spawn_task(handler(event))
+    else:
+        def wrapped(event):
+            handler(event)
+
+    proxy = create_proxy(wrapped)
+    _EVENT_PROXIES.append(proxy)
+    element.addEventListener("click", proxy)
+
+
+def _bind_events() -> None:
+    _bind_click("tabPlotBtn", on_tab_plot)
+    _bind_click("tabDataBtn", on_tab_data)
+    _bind_click("savePlotBtn", on_save_plot, is_async=True)
+
+
+def _register_js_api() -> None:
+    def trigger_load(event=None):
+        _spawn_task(on_load_columns())
+
+    def trigger_render(event=None):
+        _spawn_task(on_render())
+
+    load_proxy = create_proxy(trigger_load)
+    render_proxy = create_proxy(trigger_render)
+    _EVENT_PROXIES.append(load_proxy)
+    _EVENT_PROXIES.append(render_proxy)
+    window.requestLoadColumns = load_proxy
+    window.requestRender = render_proxy
+
+
+set_status("")
+_set_data_ready(False)
+_switch_tab("plot")
+if hasattr(window, "ensureSeriesItems"):
+    window.ensureSeriesItems()
+try:
+    _register_js_api()
+    _bind_events()
+except Exception as exc:
+    if _is_parentnode_error(exc):
+        set_status("内部エラーを自動回避しました。ページを再読み込みして再試行してください。", True)
+    else:
+        set_status(f"初期化エラー: {exc}", True)
+    </py-script>
+  </body>
+</html>
