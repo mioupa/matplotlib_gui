@@ -498,22 +498,22 @@
 
         <div class="group">
           <label for="title">タイトル</label>
-          <input id="title" placeholder="空欄でタイトルなし" />
+          <input id="title" placeholder="タイトルなし" />
         </div>
 
         <div class="row group">
           <div>
-            <label for="xLabel">Xラベル</label>
+            <label for="xLabel">X軸ラベル</label>
             <input id="xLabel" placeholder="自動" />
           </div>
           <div>
-            <label for="yLabel">Yラベル</label>
+            <label for="yLabel">Y軸ラベル</label>
             <input id="yLabel" placeholder="自動" />
           </div>
         </div>
 
         <div id="y2LabelGroup" class="group" style="display: none">
-          <label for="y2Label">第2Yラベル</label>
+          <label for="y2Label">第2Y軸ラベル</label>
           <input id="y2Label" placeholder="第2軸を使う系列があるときに有効" />
         </div>
 
@@ -528,11 +528,11 @@
         <div class="row group">
           <div>
             <label for="xMin">X軸最小値</label>
-            <input id="xMin" type="number" step="any" placeholder="空欄で自動" />
+            <input id="xMin" type="number" step="any" placeholder="自動" />
           </div>
           <div>
             <label for="xMax">X軸最大値</label>
-            <input id="xMax" type="number" step="any" placeholder="空欄で自動" />
+            <input id="xMax" type="number" step="any" placeholder="自動" />
           </div>
         </div>
 
@@ -547,11 +547,11 @@
         <div class="row group">
           <div>
             <label for="yMin">Y軸最小値</label>
-            <input id="yMin" type="number" step="any" placeholder="空欄で自動" />
+            <input id="yMin" type="number" step="any" placeholder="自動" />
           </div>
           <div>
             <label for="yMax">Y軸最大値</label>
-            <input id="yMax" type="number" step="any" placeholder="空欄で自動" />
+            <input id="yMax" type="number" step="any" placeholder="自動" />
           </div>
         </div>
 
@@ -566,11 +566,11 @@
           <div class="row group">
             <div>
               <label for="y2Min">最小値</label>
-              <input id="y2Min" type="number" step="any" placeholder="空欄で自動" />
+              <input id="y2Min" type="number" step="any" placeholder="自動" />
             </div>
             <div>
               <label for="y2Max">最大値</label>
-              <input id="y2Max" type="number" step="any" placeholder="空欄で自動" />
+              <input id="y2Max" type="number" step="any" placeholder="自動" />
             </div>
           </div>
         </div>
@@ -583,11 +583,11 @@
         <div class="row group">
           <div class="group inline">
             <input id="showMajorGrid" type="checkbox" checked />
-            <label for="showMajorGrid">major目盛線を表示</label>
+            <label for="showMajorGrid">主目盛線を表示</label>
           </div>
           <div class="group inline">
             <input id="showMinorGrid" type="checkbox" />
-            <label for="showMinorGrid">minor目盛線を表示</label>
+            <label for="showMinorGrid">副目盛線を表示</label>
           </div>
         </div>
 
@@ -625,7 +625,7 @@
 
         <div class="group">
           <label for="saveFilename">保存ファイル名</label>
-          <input id="saveFilename" placeholder="plot（拡張子は形式に合わせて自動設定）" />
+          <input id="saveFilename" placeholder="plot" />
         </div>
 
         <div class="group inline">
@@ -1107,7 +1107,7 @@
             </div>
             <div class="group">
               <label>凡例名（任意）</label>
-              <input class="series-legend-name" type="text" value="${preset.legendName || ""}" placeholder="未入力なら列名を使用" />
+              <input class="series-legend-name" type="text" value="${preset.legendName || ""}" placeholder="自動" />
             </div>
             <div class="group inline">
               <input class="series-use-y2" type="checkbox" ${preset.useSecondaryAxis ? "checked" : ""} />
