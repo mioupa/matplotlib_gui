@@ -23,7 +23,16 @@
         --text-muted: #4b5563;
         --accent: #0d6efd;
         --accent-contrast: #ffffff;
-        --button-secondary: #4b5563;
+        --button-primary: #2563eb;
+        --button-primary-hover: #1d4ed8;
+        --button-secondary: #0f766e;
+        --button-secondary-hover: #0d5f57;
+        --button-ghost: #64748b;
+        --button-ghost-hover: #475569;
+        --button-reset: #b91c1c;
+        --button-reset-hover: #991b1b;
+        --button-text: #ffffff;
+        --checkbox-size: 20px;
         --file-button-bg: #1f2937;
         --file-button-text: #ffffff;
         --color-border: #9fb2cc;
@@ -42,6 +51,7 @@
         --chip-border: #d1d5db;
         --chip-active: #111827;
         --chip-active-ring: #11182722;
+        --plot-preview-bg: #ffffff;
         --shadow-lg: 0 8px 20px rgba(15, 23, 42, 0.15);
       }
       @media (prefers-color-scheme: dark) {
@@ -58,7 +68,15 @@
           --text-muted: #94a3b8;
           --accent: #3b82f6;
           --accent-contrast: #ffffff;
-          --button-secondary: #475569;
+          --button-primary: #3b82f6;
+          --button-primary-hover: #2563eb;
+          --button-secondary: #14b8a6;
+          --button-secondary-hover: #0d9488;
+          --button-ghost: #64748b;
+          --button-ghost-hover: #475569;
+          --button-reset: #ef4444;
+          --button-reset-hover: #dc2626;
+          --button-text: #ffffff;
           --file-button-bg: #334155;
           --file-button-text: #f8fafc;
           --color-border: #64748b;
@@ -77,6 +95,7 @@
           --chip-border: #64748b;
           --chip-active: #e5e7eb;
           --chip-active-ring: #e5e7eb33;
+          --plot-preview-bg: #f8fafc;
           --shadow-lg: 0 10px 24px rgba(2, 6, 23, 0.45);
         }
       }
@@ -195,8 +214,16 @@
       .inline {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 10px;
         font-size: 13px;
+      }
+      input[type="checkbox"] {
+        width: var(--checkbox-size);
+        height: var(--checkbox-size);
+        margin: 0;
+        flex: 0 0 var(--checkbox-size);
+        cursor: pointer;
+        accent-color: var(--accent);
       }
       .inline input {
         width: auto;
@@ -204,16 +231,33 @@
       .inline label {
         margin: 0;
         font-weight: 500;
+        cursor: pointer;
+        user-select: none;
+        padding: 4px 2px;
+      }
+      label.check-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        width: auto;
       }
       button {
         cursor: pointer;
         border: none;
-        color: var(--accent-contrast);
-        background: var(--accent);
+        color: var(--button-text);
+        background: var(--button-primary);
         font-weight: 700;
+        transition: background-color 0.15s ease;
+      }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.6;
       }
       button.secondary {
         background: var(--button-secondary);
+      }
+      button.secondary:hover {
+        background: var(--button-secondary-hover);
       }
       .status {
         margin-top: 10px;
@@ -282,6 +326,10 @@
       }
       #plotArea {
         width: 100%;
+        background: var(--plot-preview-bg);
+        border: 1px solid var(--line-soft);
+        border-radius: 10px;
+        padding: 8px;
       }
       #dataArea {
         display: flex;
@@ -337,6 +385,39 @@
         margin-bottom: 8px;
         font-size: 13px;
       }
+      .code-editor-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        height: 100%;
+        min-height: 0;
+      }
+      .code-toolbar {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .code-toolbar .inline {
+        margin-right: auto;
+      }
+      .code-toolbar button {
+        width: auto;
+      }
+      #customPyCode {
+        width: 100%;
+        height: 100%;
+        min-height: 360px;
+        resize: vertical;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px;
+        background: var(--surface);
+        color: var(--text);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px;
+        line-height: 1.5;
+      }
       .help-text {
         margin-top: 6px;
         font-size: 12px;
@@ -374,7 +455,22 @@
         font-size: 12px;
       }
       button.ghost-btn {
+        background: var(--button-ghost);
+      }
+      button.ghost-btn:hover {
+        background: var(--button-ghost-hover);
+      }
+      #applyCustomCodeBtn {
         background: var(--button-secondary);
+      }
+      #applyCustomCodeBtn:hover {
+        background: var(--button-secondary-hover);
+      }
+      #resetCustomCodeBtn {
+        background: var(--button-reset);
+      }
+      #resetCustomCodeBtn:hover {
+        background: var(--button-reset-hover);
       }
       .series-list {
         display: flex;
@@ -683,6 +779,26 @@
             <input id="figHeight" type="number" step="0.1" value="6" />
           </div>
         </div>
+        <div class="row group">
+          <div>
+            <label for="subplotLeft">余白 左(left)</label>
+            <input id="subplotLeft" type="number" min="0" max="1" step="any" placeholder="自動" />
+          </div>
+          <div>
+            <label for="subplotRight">余白 右(right)</label>
+            <input id="subplotRight" type="number" min="0" max="1" step="any" placeholder="自動" />
+          </div>
+        </div>
+        <div class="row group">
+          <div>
+            <label for="subplotBottom">余白 下(bottom)</label>
+            <input id="subplotBottom" type="number" min="0" max="1" step="any" placeholder="自動" />
+          </div>
+          <div>
+            <label for="subplotTop">余白 上(top)</label>
+            <input id="subplotTop" type="number" min="0" max="1" step="any" placeholder="自動" />
+          </div>
+        </div>
 
         <div class="section-header">
           <div class="section-title">保存設定</div>
@@ -725,12 +841,29 @@
         <div class="tabs">
           <button id="tabPlotBtn" class="tab-btn active" type="button">プロット</button>
           <button id="tabDataBtn" class="tab-btn" type="button">データ確認</button>
+          <button id="tabCodeBtn" class="tab-btn" type="button">Pythonコード</button>
         </div>
         <div id="plotPanel" class="canvas-wrap tab-panel">
           <div id="plotArea"></div>
         </div>
         <div id="dataPanel" class="canvas-wrap tab-panel hidden">
           <div id="dataArea"></div>
+        </div>
+        <div id="codePanel" class="canvas-wrap tab-panel hidden">
+          <div class="code-editor-wrap">
+            <div class="code-toolbar">
+              <div class="inline">
+                <input id="useCustomCode" type="checkbox" />
+                <label for="useCustomCode">カスタムコードを使用</label>
+              </div>
+              <button id="applyCustomCodeBtn" class="small-btn secondary" type="button">コードを反映して再描画</button>
+              <button id="resetCustomCodeBtn" class="small-btn ghost-btn" type="button">初期コードに戻す</button>
+            </div>
+            <textarea id="customPyCode" spellcheck="false"></textarea>
+            <div class="help-text">
+              有効時はこのコードで描画します。<code>df</code>・<code>settings</code>・<code>plt</code>・<code>pd</code> が利用可能です。<code>fig</code> を必ず生成してください。Ctrl/Cmd + Enter でも再描画できます。
+            </div>
+          </div>
         </div>
       </main>
     </div>
@@ -862,6 +995,10 @@
         const y2AxisSettingsGroup = document.getElementById("y2AxisSettingsGroup");
         const saveFormatSelect = document.getElementById("saveFormat");
         const saveTransparentInput = document.getElementById("saveTransparent");
+        const customCodeInput = document.getElementById("customPyCode");
+        const useCustomCodeInput = document.getElementById("useCustomCode");
+        const applyCustomCodeBtn = document.getElementById("applyCustomCodeBtn");
+        const resetCustomCodeBtn = document.getElementById("resetCustomCodeBtn");
         let lastPlotType = plotTypeSelect ? plotTypeSelect.value : "line";
 
         let renderTimer = null;
@@ -1174,9 +1311,11 @@
               <label>凡例名（任意）</label>
               <input class="series-legend-name" type="text" value="${preset.legendName || ""}" placeholder="自動" />
             </div>
-            <div class="group inline">
-              <input class="series-use-y2" type="checkbox" ${preset.useSecondaryAxis ? "checked" : ""} />
-              <label>第2軸を使用</label>
+            <div class="group">
+              <label class="inline check-label">
+                <input class="series-use-y2" type="checkbox" ${preset.useSecondaryAxis ? "checked" : ""} />
+                <span>第2軸を使用</span>
+              </label>
             </div>
           `;
 
@@ -1259,6 +1398,37 @@
             syncSaveFormatOptions();
           });
         }
+        if (useCustomCodeInput) {
+          useCustomCodeInput.addEventListener("change", () => scheduleRender(0));
+        }
+        if (applyCustomCodeBtn) {
+          applyCustomCodeBtn.addEventListener("click", () => {
+            if (canAutoRender()) {
+              runPyAction("requestRender");
+            }
+          });
+        }
+        if (resetCustomCodeBtn && customCodeInput) {
+          resetCustomCodeBtn.addEventListener("click", () => {
+            const defaultCode = customCodeInput.dataset.defaultCode || "";
+            customCodeInput.value = defaultCode;
+            if (useCustomCodeInput) {
+              useCustomCodeInput.checked = false;
+            }
+            if (canAutoRender()) {
+              runPyAction("requestRender");
+            }
+          });
+        }
+        if (customCodeInput) {
+          customCodeInput.addEventListener("keydown", (event) => {
+            if (!(event.ctrlKey || event.metaKey) || event.key !== "Enter") return;
+            event.preventDefault();
+            if (canAutoRender()) {
+              runPyAction("requestRender");
+            }
+          });
+        }
 
         const autoRenderIds = [
           "xColumn",
@@ -1281,6 +1451,10 @@
           "legendLocation",
           "figWidth",
           "figHeight",
+          "subplotLeft",
+          "subplotRight",
+          "subplotBottom",
+          "subplotTop",
           "skipRows",
         ];
         for (const id of autoRenderIds) {
@@ -1355,6 +1529,52 @@ _EVENT_PROXIES = []
 JP_FONT_URL = "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf"
 JP_FONT_PATH = "/tmp/NotoSansCJKjp-Regular.otf"
 _JP_FONT_READY = False
+DEFAULT_CUSTOM_PLOT_CODE = """# 利用可能オブジェクト:
+# - df: skipRows適用後のDataFrame
+# - current_df: 読み込み直後のDataFrame（skipRows未適用）
+# - settings: GUI設定(dict)
+# - plt, pd
+# 必須:
+# - fig に Figure を代入
+# 任意:
+# - plotted_count (int) を設定（未設定時は自動判定）
+
+fig, ax = plt.subplots(figsize=(settings["fig_width"], settings["fig_height"]), dpi=100)
+
+if df.shape[1] < 2:
+    raise ValueError("2列以上のデータが必要です。")
+
+x = pd.to_numeric(df.iloc[:, 0], errors="coerce")
+y = pd.to_numeric(df.iloc[:, 1], errors="coerce")
+mask = x.notna() & y.notna()
+if not bool(mask.any()):
+    raise ValueError("先頭2列に描画可能な数値データがありません。")
+
+series_settings = settings.get("series_settings", [])
+default_legend = ""
+if isinstance(series_settings, list) and len(series_settings) > 0:
+    default_legend = str(series_settings[0].get("legend_name", "") or "").strip()
+if not default_legend:
+    default_legend = str(df.columns[1])
+
+ax.plot(
+    x[mask],
+    y[mask],
+    color="#005AFF",
+    linewidth=2.0,
+    marker="o",
+    markersize=4,
+    label=default_legend,
+)
+ax.set_title(settings["title"])
+ax.set_xlabel(settings["x_label"] or str(df.columns[0]))
+ax.set_ylabel(settings["y_label"] or str(df.columns[1]))
+ax.grid(True, alpha=0.3)
+ax.legend(loc="best")
+fig.tight_layout()
+
+plotted_count = 1
+"""
 
 plt.rcParams["font.family"] = "sans-serif"
 plt.rcParams["font.sans-serif"] = [
@@ -1453,19 +1673,28 @@ def _safe_close_figure(fig) -> None:
 def _switch_tab(tab_name: str) -> None:
     plot_btn = document.getElementById("tabPlotBtn")
     data_btn = document.getElementById("tabDataBtn")
+    code_btn = document.getElementById("tabCodeBtn")
     plot_panel = document.getElementById("plotPanel")
     data_panel = document.getElementById("dataPanel")
+    code_panel = document.getElementById("codePanel")
 
-    if tab_name == "plot":
-        plot_btn.classList.add("active")
-        data_btn.classList.remove("active")
-        plot_panel.classList.remove("hidden")
-        data_panel.classList.add("hidden")
-    else:
-        data_btn.classList.add("active")
-        plot_btn.classList.remove("active")
-        data_panel.classList.remove("hidden")
-        plot_panel.classList.add("hidden")
+    selected = tab_name if tab_name in {"plot", "data", "code"} else "plot"
+    tab_items = [
+        ("plot", plot_btn, plot_panel),
+        ("data", data_btn, data_panel),
+        ("code", code_btn, code_panel),
+    ]
+    for name, btn, panel in tab_items:
+        if btn is not None:
+            if name == selected:
+                btn.classList.add("active")
+            else:
+                btn.classList.remove("active")
+        if panel is not None:
+            if name == selected:
+                panel.classList.remove("hidden")
+            else:
+                panel.classList.add("hidden")
 
 
 def _spawn_task(coro) -> None:
@@ -1509,6 +1738,45 @@ def _set_data_ready(ready: bool) -> None:
         pass
 
 
+def _init_custom_code_editor() -> None:
+    editor = document.getElementById("customPyCode")
+    if editor is None:
+        return
+    default_code = DEFAULT_CUSTOM_PLOT_CODE.strip() + "\n"
+    editor.dataset.defaultCode = default_code
+    current = str(editor.value or "").strip()
+    if not current:
+        editor.value = default_code
+
+
+def _is_custom_code_enabled() -> bool:
+    element = document.getElementById("useCustomCode")
+    return bool(element.checked) if element is not None else False
+
+
+def _set_custom_code_enabled(enabled: bool) -> bool:
+    element = document.getElementById("useCustomCode")
+    if element is None:
+        return False
+    before = bool(element.checked)
+    element.checked = bool(enabled)
+    return before != bool(enabled)
+
+
+def _get_custom_code_text() -> str:
+    element = document.getElementById("customPyCode")
+    if element is None:
+        return ""
+    return str(element.value or "")
+
+
+def _get_text_value(element_id: str, fallback: str = "") -> str:
+    element = document.getElementById(element_id)
+    if element is None:
+        return fallback
+    return str(element.value or "").strip()
+
+
 def _get_optional_float_value(element_id: str, label: str) -> float | None:
     element = document.getElementById(element_id)
     raw = element.value.strip() if element is not None else ""
@@ -1518,6 +1786,63 @@ def _get_optional_float_value(element_id: str, label: str) -> float | None:
         return float(raw)
     except Exception:
         raise ValueError(f"{label}は数値で指定してください。")
+
+
+def _get_subplot_margin_settings() -> dict:
+    left = _get_optional_float_value("subplotLeft", "余白 左(left)")
+    right = _get_optional_float_value("subplotRight", "余白 右(right)")
+    bottom = _get_optional_float_value("subplotBottom", "余白 下(bottom)")
+    top = _get_optional_float_value("subplotTop", "余白 上(top)")
+
+    for value, label in (
+        (left, "余白 左(left)"),
+        (right, "余白 右(right)"),
+        (bottom, "余白 下(bottom)"),
+        (top, "余白 上(top)"),
+    ):
+        if value is not None and (value < 0 or value > 1):
+            raise ValueError(f"{label}は0〜1で指定してください。")
+
+    if left is not None and right is not None and left >= right:
+        raise ValueError("余白は left < right になるように指定してください。")
+    if bottom is not None and top is not None and bottom >= top:
+        raise ValueError("余白は bottom < top になるように指定してください。")
+
+    return {
+        "left": left,
+        "right": right,
+        "bottom": bottom,
+        "top": top,
+    }
+
+
+def _apply_subplot_margin_settings(fig, margins: dict, use_tight_layout_if_auto: bool = False) -> None:
+    provided = {
+        key: value
+        for key, value in (margins or {}).items()
+        if value is not None
+    }
+    if provided:
+        if use_tight_layout_if_auto and len(provided) < 4:
+            try:
+                fig.tight_layout()
+                auto_margins = {
+                    "left": fig.subplotpars.left,
+                    "right": fig.subplotpars.right,
+                    "bottom": fig.subplotpars.bottom,
+                    "top": fig.subplotpars.top,
+                }
+                auto_margins.update(provided)
+                fig.subplots_adjust(**auto_margins)
+                return
+            except Exception:
+                pass
+        try:
+            fig.subplots_adjust(**provided)
+        except Exception as exc:
+            raise ValueError(f"余白設定の適用に失敗しました: {exc}")
+    elif use_tight_layout_if_auto:
+        fig.tight_layout()
 
 
 def _apply_axis_scale_and_limits(
@@ -1882,6 +2207,293 @@ def on_tab_data(event=None):
     _switch_tab("data")
 
 
+def on_tab_code(event=None):
+    _switch_tab("code")
+    _set_custom_code_enabled(True)
+
+
+def _figure_has_visible_artists(fig) -> bool:
+    if fig is None or not hasattr(fig, "axes"):
+        return False
+    for axis in fig.axes:
+        if len(axis.lines) > 0:
+            return True
+        if len(axis.collections) > 0:
+            return True
+        if len(axis.patches) > 0:
+            return True
+        if len(axis.images) > 0:
+            return True
+        if hasattr(axis, "containers") and len(axis.containers) > 0:
+            return True
+    return False
+
+
+def _collect_custom_plot_settings(skip_rows: int) -> dict:
+    font_size = float(_get_text_value("fontSize", "15") or "15")
+    fig_width = float(_get_text_value("figWidth", "8") or "8")
+    fig_height = float(_get_text_value("figHeight", "6") or "6")
+    subplot_margins = _get_subplot_margin_settings()
+    if fig_width <= 0 or fig_height <= 0:
+        raise ValueError("図幅・図高さは0より大きくしてください。")
+    if font_size <= 0:
+        raise ValueError("フォントサイズは0より大きくしてください。")
+
+    series_settings = []
+    series_settings_error = ""
+    try:
+        series_settings = _collect_series_settings()
+    except Exception as exc:
+        series_settings_error = str(exc)
+
+    return {
+        "skip_rows": skip_rows,
+        "plot_type": _get_text_value("plotType", "line") or "line",
+        "title": _get_text_value("title", ""),
+        "x_label": _get_text_value("xLabel", ""),
+        "y_label": _get_text_value("yLabel", ""),
+        "y2_label": _get_text_value("y2Label", ""),
+        "x_scale": _get_text_value("xScale", "linear") or "linear",
+        "y_scale": _get_text_value("yScale", "linear") or "linear",
+        "y2_scale": _get_text_value("y2Scale", "linear") or "linear",
+        "x_min": _get_optional_float_value("xMin", "X最小値"),
+        "x_max": _get_optional_float_value("xMax", "X最大値"),
+        "y_min": _get_optional_float_value("yMin", "Y最小値"),
+        "y_max": _get_optional_float_value("yMax", "Y最大値"),
+        "y2_min": _get_optional_float_value("y2Min", "第2Y最小値"),
+        "y2_max": _get_optional_float_value("y2Max", "第2Y最大値"),
+        "show_major_grid": bool(document.getElementById("showMajorGrid").checked),
+        "show_minor_grid": bool(document.getElementById("showMinorGrid").checked),
+        "legend_location": _get_text_value("legendLocation", "best") or "best",
+        "font_size": font_size,
+        "fig_width": fig_width,
+        "fig_height": fig_height,
+        "subplot_margins": subplot_margins,
+        "subplot_left": subplot_margins["left"],
+        "subplot_right": subplot_margins["right"],
+        "subplot_bottom": subplot_margins["bottom"],
+        "subplot_top": subplot_margins["top"],
+        "x_column_request": _get_text_value("xColumn", ""),
+        "series_settings": series_settings,
+        "series_settings_error": series_settings_error,
+    }
+
+
+def _create_plot_figure_with_custom_code() -> tuple[object, int, int]:
+    if CURRENT_DF is None:
+        raise ValueError("先にファイルを読み込んでください。")
+
+    skip_rows = _get_skip_rows()
+    if skip_rows >= len(CURRENT_DF):
+        raise ValueError("スキップ行数がデータ行数以上です。")
+
+    code = _get_custom_code_text()
+    if not code.strip():
+        raise ValueError("カスタムコードが空です。")
+
+    df = CURRENT_DF.iloc[skip_rows:].reset_index(drop=True)
+    settings = _collect_custom_plot_settings(skip_rows)
+    context = {
+        "df": df,
+        "current_df": CURRENT_DF,
+        "settings": settings,
+        "series_settings": settings.get("series_settings", []),
+        "helpers": {
+            "get_plot_data": _get_plot_data,
+            "get_per_series_xy_data": _get_per_series_xy_data,
+            "resolve_series_requests": _resolve_series_requests,
+        },
+    }
+
+    local_scope = {
+        "df": df.copy(),
+        "current_df": CURRENT_DF.copy(),
+        "settings": settings,
+        "ctx": context,
+        "series_settings": settings.get("series_settings", []),
+        "get_plot_data": _get_plot_data,
+        "get_per_series_xy_data": _get_per_series_xy_data,
+        "resolve_series_requests": _resolve_series_requests,
+        "plt": plt,
+        "pd": pd,
+        "fig": None,
+        "plotted_count": None,
+        "skip_rows": skip_rows,
+    }
+    global_scope = {
+        "__builtins__": __builtins__,
+        "plt": plt,
+        "pd": pd,
+    }
+    try:
+        exec(code, global_scope, local_scope)
+    except Exception as exc:
+        raise ValueError(f"カスタムコードの実行に失敗しました: {exc}") from exc
+
+    fig = local_scope.get("fig")
+    if fig is None:
+        raise ValueError("カスタムコードで fig を生成してください。")
+    if not hasattr(fig, "savefig"):
+        raise ValueError("fig には matplotlib.figure.Figure を設定してください。")
+    _apply_gui_overrides_to_custom_figure(fig, settings)
+    _apply_subplot_margin_settings(fig, settings.get("subplot_margins", {}), use_tight_layout_if_auto=True)
+
+    plotted_count_raw = local_scope.get("plotted_count")
+    if plotted_count_raw is None:
+        plotted_count = 1 if _figure_has_visible_artists(fig) else 0
+    else:
+        try:
+            plotted_count = int(plotted_count_raw)
+        except Exception:
+            raise ValueError("plotted_count は整数で指定してください。")
+
+    if plotted_count <= 0 and _figure_has_visible_artists(fig):
+        plotted_count = 1
+    if plotted_count <= 0:
+        raise ValueError("描画可能なデータがありません。")
+
+    custom_skip_rows = local_scope.get("skip_rows", skip_rows)
+    try:
+        custom_skip_rows = int(custom_skip_rows)
+    except Exception:
+        custom_skip_rows = skip_rows
+    if custom_skip_rows < 0:
+        custom_skip_rows = skip_rows
+
+    return fig, plotted_count, custom_skip_rows
+
+
+def _apply_gui_overrides_to_custom_figure(fig, settings: dict) -> None:
+    if fig is None or not hasattr(fig, "axes") or len(fig.axes) == 0:
+        return
+
+    ax = fig.axes[0]
+    ax2 = fig.axes[1] if len(fig.axes) >= 2 else None
+    font_size = float(settings.get("font_size", 15) or 15)
+    x_label_override = str(settings.get("x_label", "") or "").strip()
+    y_label_override = str(settings.get("y_label", "") or "").strip()
+    y2_label_override = str(settings.get("y2_label", "") or "").strip()
+    title = str(settings.get("title", "") or "").strip()
+    x_scale = str(settings.get("x_scale", "linear") or "linear").strip()
+    y_scale = str(settings.get("y_scale", "linear") or "linear").strip()
+    y2_scale = str(settings.get("y2_scale", "linear") or "linear").strip()
+    x_min = settings.get("x_min")
+    x_max = settings.get("x_max")
+    y_min = settings.get("y_min")
+    y_max = settings.get("y_max")
+    y2_min = settings.get("y2_min")
+    y2_max = settings.get("y2_max")
+    show_major_grid = bool(settings.get("show_major_grid", True))
+    show_minor_grid = bool(settings.get("show_minor_grid", False))
+    legend_location = str(settings.get("legend_location", "best") or "best").strip()
+    allowed_legend_locations = {
+        "best",
+        "upper right",
+        "upper left",
+        "lower right",
+        "lower left",
+        "upper center",
+        "lower center",
+        "center right",
+        "center left",
+        "center",
+        "none",
+    }
+    if legend_location not in allowed_legend_locations:
+        raise ValueError("凡例位置が不正です。")
+
+    if title:
+        ax.set_title(title, fontsize=font_size + 2)
+
+    current_x_label = ax.get_xlabel()
+    current_y_label = ax.get_ylabel()
+    ax.set_xlabel(x_label_override or current_x_label, fontsize=font_size)
+    ax.set_ylabel(y_label_override or current_y_label, fontsize=font_size)
+    if ax2 is not None:
+        current_y2_label = ax2.get_ylabel()
+        ax2.set_ylabel(y2_label_override or current_y2_label, fontsize=font_size)
+
+    _apply_axis_scale_and_limits(ax, "x", "X", x_scale, x_min, x_max)
+    _apply_axis_scale_and_limits(ax, "y", "Y", y_scale, y_min, y_max)
+    if ax2 is not None:
+        _apply_axis_scale_and_limits(ax2, "y", "第2Y", y2_scale, y2_min, y2_max)
+
+    ax.tick_params(
+        axis="x",
+        which="both",
+        direction="in",
+        bottom=True,
+        top=False,
+        labelsize=max(font_size - 1, 1),
+    )
+    ax.tick_params(
+        axis="y",
+        which="both",
+        direction="in",
+        left=True,
+        right=False,
+        labelsize=max(font_size - 1, 1),
+    )
+    if ax2 is not None:
+        ax2.tick_params(
+            axis="y",
+            which="both",
+            direction="in",
+            left=False,
+            right=True,
+            labelsize=max(font_size - 1, 1),
+        )
+
+    if show_minor_grid:
+        ax.minorticks_on()
+        if ax2 is not None:
+            ax2.minorticks_on()
+    else:
+        ax.minorticks_off()
+        if ax2 is not None:
+            ax2.minorticks_off()
+
+    ax.grid(False, which="both", axis="both")
+    if show_major_grid:
+        ax.grid(True, which="major", axis="both", alpha=0.3)
+    if show_minor_grid:
+        ax.grid(True, which="minor", axis="both", alpha=0.2, linestyle=":")
+    if ax2 is not None:
+        ax2.grid(False, which="both", axis="y")
+        if show_major_grid:
+            ax2.grid(True, which="major", axis="y", alpha=0.3)
+        if show_minor_grid:
+            ax2.grid(True, which="minor", axis="y", alpha=0.2, linestyle=":")
+
+    for axis in fig.axes:
+        existing_legend = axis.get_legend()
+        if existing_legend is not None:
+            existing_legend.remove()
+
+    if legend_location == "none":
+        return
+
+    handles = []
+    labels = []
+    for axis in fig.axes:
+        h, l = axis.get_legend_handles_labels()
+        handles.extend(h)
+        labels.extend(l)
+
+    if not labels:
+        return
+
+    series_settings = settings.get("series_settings", [])
+    for i, setting in enumerate(series_settings):
+        if i >= len(labels):
+            break
+        legend_name = str(setting.get("legend_name", "") or "").strip()
+        if legend_name:
+            labels[i] = legend_name
+
+    ax.legend(handles, labels, loc=legend_location, fontsize=max(font_size - 1, 1))
+
+
 async def on_load_columns(event=None):
     global CURRENT_DF
     try:
@@ -1908,6 +2520,9 @@ async def on_load_columns(event=None):
 
 
 def _create_plot_figure() -> tuple[object, int, int]:
+    if _is_custom_code_enabled():
+        return _create_plot_figure_with_custom_code()
+
     if CURRENT_DF is None:
         raise ValueError("先にファイルを読み込んでください。")
 
@@ -1939,6 +2554,7 @@ def _create_plot_figure() -> tuple[object, int, int]:
     font_size = float(document.getElementById("fontSize").value or "15")
     fig_width = float(document.getElementById("figWidth").value or "8")
     fig_height = float(document.getElementById("figHeight").value or "6")
+    subplot_margins = _get_subplot_margin_settings()
     allowed_legend_locations = {
         "best",
         "upper right",
@@ -2152,7 +2768,7 @@ def _create_plot_figure() -> tuple[object, int, int]:
                     loc=legend_location,
                     fontsize=max(font_size - 1, 1),
                 )
-    fig.tight_layout()
+    _apply_subplot_margin_settings(fig, subplot_margins, use_tight_layout_if_auto=True)
     return fig, len(plotted_labels), skip_rows
 
 
@@ -2268,6 +2884,7 @@ def _bind_click(element_id: str, handler, is_async: bool = False) -> None:
 def _bind_events() -> None:
     _bind_click("tabPlotBtn", on_tab_plot)
     _bind_click("tabDataBtn", on_tab_data)
+    _bind_click("tabCodeBtn", on_tab_code)
     _bind_click("savePlotBtn", on_save_plot, is_async=True)
 
 
@@ -2288,6 +2905,7 @@ def _register_js_api() -> None:
 
 set_status("")
 _set_data_ready(False)
+_init_custom_code_editor()
 _switch_tab("plot")
 if hasattr(window, "ensureSeriesItems"):
     window.ensureSeriesItems()
