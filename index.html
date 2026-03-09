@@ -744,7 +744,7 @@
 
         <div class="row group">
           <div class="group inline">
-            <input id="showMajorGrid" type="checkbox" checked />
+            <input id="showMajorGrid" type="checkbox" />
             <label for="showMajorGrid">主目盛線を表示</label>
           </div>
           <div class="group inline">
@@ -2374,7 +2374,7 @@ def _apply_gui_overrides_to_custom_figure(fig, settings: dict) -> None:
     y_max = settings.get("y_max")
     y2_min = settings.get("y2_min")
     y2_max = settings.get("y2_max")
-    show_major_grid = bool(settings.get("show_major_grid", True))
+    show_major_grid = bool(settings.get("show_major_grid", False))
     show_minor_grid = bool(settings.get("show_minor_grid", False))
     legend_location = str(settings.get("legend_location", "best") or "best").strip()
     allowed_legend_locations = {
