@@ -1571,7 +1571,7 @@ ax.set_title(settings["title"])
 ax.set_xlabel(settings["x_label"] or str(df.columns[0]))
 ax.set_ylabel(settings["y_label"] or str(df.columns[1]))
 ax.grid(True, alpha=0.3)
-ax.legend(loc="best")
+ax.legend(loc="best", edgecolor="black")
 fig.tight_layout()
 
 plotted_count = 1
@@ -1753,15 +1753,6 @@ def _init_custom_code_editor() -> None:
 def _is_custom_code_enabled() -> bool:
     element = document.getElementById("useCustomCode")
     return bool(element.checked) if element is not None else False
-
-
-def _set_custom_code_enabled(enabled: bool) -> bool:
-    element = document.getElementById("useCustomCode")
-    if element is None:
-        return False
-    before = bool(element.checked)
-    element.checked = bool(enabled)
-    return before != bool(enabled)
 
 
 def _get_custom_code_text() -> str:
@@ -2210,7 +2201,6 @@ def on_tab_data(event=None):
 
 def on_tab_code(event=None):
     _switch_tab("code")
-    _set_custom_code_enabled(True)
 
 
 def _figure_has_visible_artists(fig) -> bool:
@@ -2492,7 +2482,13 @@ def _apply_gui_overrides_to_custom_figure(fig, settings: dict) -> None:
         if legend_name:
             labels[i] = legend_name
 
-    ax.legend(handles, labels, loc=legend_location, fontsize=max(font_size - 1, 1))
+    ax.legend(
+        handles,
+        labels,
+        loc=legend_location,
+        fontsize=max(font_size - 1, 1),
+        edgecolor="black",
+    )
 
 
 async def on_load_columns(event=None):
@@ -2756,7 +2752,11 @@ def _create_plot_figure() -> tuple[object, int, int]:
 
     if legend_location != "none" and len(plotted_labels) >= 1:
         if ax2 is None:
-            ax.legend(loc=legend_location, fontsize=max(font_size - 1, 1))
+            ax.legend(
+                loc=legend_location,
+                fontsize=max(font_size - 1, 1),
+                edgecolor="black",
+            )
         else:
             handles1, labels1 = ax.get_legend_handles_labels()
             handles2, labels2 = ax2.get_legend_handles_labels()
@@ -2768,6 +2768,7 @@ def _create_plot_figure() -> tuple[object, int, int]:
                     merged_labels,
                     loc=legend_location,
                     fontsize=max(font_size - 1, 1),
+                    edgecolor="black",
                 )
     _apply_subplot_margin_settings(fig, subplot_margins, use_tight_layout_if_auto=True)
     return fig, len(plotted_labels), skip_rows
