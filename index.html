@@ -1960,7 +1960,19 @@ def _load_dataframe(
         df = pd.read_excel(stream, header=header)
     else:
         sep = _decode_delimiter(delimiter, suffix)
-        df = pd.read_csv(stream, sep=sep, header=header, engine="python")
+        # UTF-8 で読めなければ Shift-JIS にフォールバック
+        for enc in ("utf-8", "shift_jis"):
+            try:
+                stream.seek(0)
+                df = pd.read_csv(
+                    stream, sep=sep, header=header,
+                    engine="python", encoding=enc,
+                )
+                break
+            except (UnicodeDecodeError, pd.errors.ParserError):
+                if enc == "shift_jis":
+                    raise
+                continue
 
     if df.empty:
         raise ValueError("データが空です。")
