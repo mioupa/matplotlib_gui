@@ -1,4 +1,4 @@
-# matplotlib browser GUI (PyScript single file)
+# matplotlib browser GUI
 
 `index.html`をブラウザで開くだけで、`matplotlib`をGUI操作できます。
 
@@ -11,5 +11,5 @@
 
 ## 注意
 
-- 初回はPyScript/Pythonパッケージの読込で時間がかかることがあります。
+- 初回はブラウザ側のPythonパッケージ読込で時間がかかることがあります。
 - 完全ブラウザ実行のため、サーバー起動は不要です。
