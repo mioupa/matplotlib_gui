@@ -22,6 +22,64 @@ class FigureResult:
     warnings: list = field(default_factory=list)  # [{"series": 1始まり, "message": str}]（A7 で使用）
 
 
+# ---------------------------------------------------------------- dropped (non-numeric) values (A7)
+
+MAX_EXAMPLES = 3
+
+
+def _is_blank_cell(value) -> bool:
+    if value is None:
+        return True
+    try:
+        if pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return isinstance(value, str) and value.strip() == ""
+
+
+def coerce_numeric(raw: pd.Series) -> tuple[pd.Series, int, list[str]]:
+    """数値に変換する。戻り値は (変換後, 変換できなかった非空欄のセル数, 例（最大3件・重複なし）)。空欄は数えない。"""
+    numeric = pd.to_numeric(raw, errors="coerce")
+    blank = pd.Series([_is_blank_cell(v) for v in raw.tolist()], index=raw.index, dtype=bool)
+    failed = numeric.isna() & ~blank
+    count = int(failed.sum())
+    examples: list[str] = []
+    if count:
+        for v in raw[failed].tolist():
+            text = str(v)
+            if text not in examples:
+                examples.append(text)
+            if len(examples) >= MAX_EXAMPLES:
+                break
+    return numeric, count, examples
+
+
+def dropped_warning(series_no: int, what: str, count: int, examples: list[str]) -> dict:
+    ex = ", ".join(f'"{e}"' for e in examples)
+    message = f"{what}: 数値に変換できない値が{count}件あったため、その行を除外しました（例: {ex}）。"
+    return {"series": series_no, "message": message}
+
+
+def _no_data_message(entries: list[dict]) -> str:
+    base = "描画可能な数値データがありません。"
+    hints = [w["message"] for e in entries for w in e.get("warnings", [])]
+    if hints:
+        return base + "数値に変換できない値は除外されます。" + hints[0]
+    return base
+
+
+def _looks_numeric(raw: pd.Series) -> bool:
+    """文字列を含む列でも、空欄以外の半数以上が数値に変換できるなら数値列として扱う。"""
+    if pd.api.types.is_numeric_dtype(raw.dtype):
+        return True
+    non_blank = [v for v in raw.tolist() if not _is_blank_cell(v)]
+    if not non_blank:
+        return False
+    ok = pd.to_numeric(pd.Series(non_blank, dtype=object), errors="coerce").notna().sum()
+    return ok * 2 >= len(non_blank)
+
+
 # ---------------------------------------------------------------- column helpers (legacy-dict based)
 
 
@@ -115,8 +173,10 @@ def get_plot_data(df: pd.DataFrame, series_settings: list[dict], x_request: str 
         y_key = f"y_{i}"
         label_suffix = f" [{y_idx}]" if y_idx >= 0 else ""
         data_label = f"{y_name}{label_suffix}"
-        plot_df[y_key] = pd.to_numeric(y_series, errors="coerce")
+        numeric, dropped, examples = coerce_numeric(y_series)
+        plot_df[y_key] = numeric
         entry = dict(setting)
+        entry["warnings"] = [dropped_warning(i + 1, f"系列{i + 1}（{y_name}）", dropped, examples)] if dropped else []
         entry["y_key"] = y_key
         entry["data_label"] = data_label
         entry["legend_label"] = setting.get("legend_name") or data_label
@@ -125,7 +185,7 @@ def get_plot_data(df: pd.DataFrame, series_settings: list[dict], x_request: str 
     y_keys = [entry["y_key"] for entry in series_entries]
     plot_df = plot_df.dropna(subset=y_keys, how="all")
     if plot_df.empty:
-        raise UserError("描画可能な数値データがありません。")
+        raise UserError(_no_data_message(series_entries))
 
     for entry in series_entries:
         entry["y_series"] = plot_df[entry["y_key"]]
@@ -151,9 +211,21 @@ def get_per_series_xy_data(df: pd.DataFrame, series_settings: list[dict]) -> tup
         label_suffix = f" [{y_idx}]" if y_idx >= 0 else ""
         data_label = f"{y_name}{label_suffix}"
 
+        i = len(entries)
+        warnings_list = []
+        x_series = x_series.reset_index(drop=True)
+        if x_request and not pd.api.types.is_numeric_dtype(x_series.dtype) and _looks_numeric(x_series):
+            x_series, x_dropped, x_examples = coerce_numeric(x_series)
+            if x_dropped:
+                warnings_list.append(dropped_warning(i + 1, f"系列{i + 1}のX列（{x_label}）", x_dropped, x_examples))
+        y_numeric, y_dropped, y_examples = coerce_numeric(y_series)
+        if y_dropped:
+            warnings_list.append(dropped_warning(i + 1, f"系列{i + 1}（{y_name}）", y_dropped, y_examples))
+
         entry = dict(setting)
-        entry["x_series"] = x_series.reset_index(drop=True)
-        entry["y_series"] = pd.to_numeric(y_series, errors="coerce").reset_index(drop=True)
+        entry["warnings"] = warnings_list
+        entry["x_series"] = x_series
+        entry["y_series"] = y_numeric.reset_index(drop=True)
         entry["data_label"] = data_label
         entry["legend_label"] = setting.get("legend_name") or data_label
         entry["x_label"] = x_label
@@ -167,7 +239,7 @@ def get_per_series_xy_data(df: pd.DataFrame, series_settings: list[dict]) -> tup
             has_points = True
             break
     if not has_points:
-        raise UserError("描画可能な数値データがありません。")
+        raise UserError(_no_data_message(entries))
 
     common_x_label = x_labels[0] if len(set(x_labels)) == 1 else "x"
     return entries, common_x_label
@@ -414,4 +486,5 @@ def create_figure(df_full: pd.DataFrame, settings: Settings) -> FigureResult:
     except BaseException:
         plt.close(fig)
         raise
-    return FigureResult(fig=fig, plotted_count=len(plotted_labels), skip_rows=skip_rows)
+    collected = [w for entry in all_entries for w in entry.get("warnings", [])]
+    return FigureResult(fig=fig, plotted_count=len(plotted_labels), skip_rows=skip_rows, warnings=collected)

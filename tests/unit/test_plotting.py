@@ -321,3 +321,79 @@ def test_legacy_helpers(df):
     assert xlabel == "index" and len(entries) == 2 and entries[1]["data_label"] == "b [2]"
     x, xl, es = get_plot_data(df, legacy, "__idx__0")
     assert xl == "t" and len(es) == 2 and list(x) == list(df["t"])
+
+
+# ---------------------------------------------------------------- A7: dropped values
+
+
+def _csv_df(name="non_numeric.csv"):
+    from pathlib import Path
+
+    from mplgui.loader import load_file
+
+    path = Path(__file__).resolve().parents[1] / "fixtures" / name
+    return load_file(path.read_bytes(), name, "", True).df
+
+
+def test_dropped_values_are_reported_per_series():
+    df = _csv_df()
+    r = build(df, series=[
+        {"x": "__idx__0", "y": "__idx__2"},   # 電圧: 数値列（空欄・N/A は欠損値でありカウントしない）
+        {"x": "__idx__0", "y": "__idx__1"},   # 金額: "1,234" 形式 → 全件変換不可
+        {"x": "__idx__0", "y": "__idx__3"},   # 単位付き: "1 mV"
+    ])
+    try:
+        assert r.plotted_count == 1
+        msgs = {w["series"]: w["message"] for w in r.warnings}
+        assert set(msgs) == {2, 3}
+        assert msgs[2].startswith("系列2（金額）: 数値に変換できない値が20件あったため、その行を除外しました（例: ")
+        assert '"1,234"' in msgs[2] and '"2,468"' in msgs[2] and '"3,702"' in msgs[2] and '"4,936"' not in msgs[2]
+        assert '"1 mV"' in msgs[3] and msgs[3].endswith("）。")
+    finally:
+        close(r)
+
+
+def test_blank_cells_are_not_counted_as_dropped():
+    df = pd.DataFrame({"t": [1, 2, 3, 4], "v": ["1", "", "  ", "x"]})
+    r = build(df, series=[{"x": "__idx__0", "y": "__idx__1"}])
+    try:
+        assert len(r.warnings) == 1
+        assert "1件" in r.warnings[0]["message"] and '"x"' in r.warnings[0]["message"]
+        assert r.warnings[0]["series"] == 1
+    finally:
+        close(r)
+
+
+def test_no_warning_for_clean_data(df):
+    r = build(df)
+    try:
+        assert r.warnings == []
+    finally:
+        close(r)
+
+
+def test_x_column_dropped_values_are_reported():
+    df = pd.DataFrame({"x": ["1", "2", "3", "oops", "5"], "y": [1.0, 2.0, 3.0, 4.0, 5.0]})
+    r = build(df, series=[{"x": "__idx__0", "y": "__idx__1"}])
+    try:
+        assert r.plotted_count == 1
+        assert "系列1のX列（x）" in r.warnings[0]["message"] and '"oops"' in r.warnings[0]["message"]
+        assert len(lines(r.fig.axes[0])[0].get_xdata()) == 4
+    finally:
+        close(r)
+
+
+def test_all_values_dropped_error_mentions_cause():
+    df = _csv_df()
+    with pytest.raises(UserError) as info:
+        build(df, series=[{"x": "__idx__0", "y": "__idx__1"}])
+    assert "数値に変換できない値" in info.value.message
+
+
+def test_bar_reports_dropped_values():
+    df = pd.DataFrame({"x": list("abcd"), "y": ["1", "2", "bad", "4"]})
+    r = build(df, lambda s: s["plot"].update(type="bar"), series=[{"y": "__idx__1"}])
+    try:
+        assert "系列1（y）" in r.warnings[0]["message"]
+    finally:
+        close(r)
