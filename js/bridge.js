@@ -35,6 +35,8 @@ let readyCallbacks = [];
 let fontState = "idle"; // idle | loading | ready | failed
 let fontPercent = null;
 let fontTask = null;
+let excelInstalling = false; // 初回の .xlsx 読込前に Excel 用ライブラリを取得中
+let excelReady = false;
 let fontWaitGaveUp = false; // 最初の描画がフォント待ちを打ち切った（以後は待たない）
 
 const setDataState = (state) => {
@@ -57,6 +59,8 @@ export const setCustomCodeProvider = (fn) => {
   customCodeProvider = fn;
 };
 
+const EXCEL_LOADING_MESSAGE = "Excel 読込用のライブラリを取得中…";
+
 const callPython = (name, ...args) => JSON.parse(api[name](...args));
 
 const reportError = (error) => {
@@ -70,6 +74,7 @@ const reportException = (err, context) => {
 // 進捗バナー: Python 起動中はその旨、起動後はフォント取得の進捗、どちらも無ければ非表示
 const refreshProgress = () => {
   if (!api) showProgress(PYTHON_LOADING_MESSAGE);
+  else if (excelInstalling) showProgress(EXCEL_LOADING_MESSAGE);
   else if (fontState === "loading") showProgress(fontPercent === null ? FONT_LOADING_MESSAGE : `${FONT_LOADING_MESSAGE} ${fontPercent}%`);
   else showProgress("");
 };
@@ -217,6 +222,28 @@ const doLoad = async () => {
   try {
     const bytes = new Uint8Array(await file.arrayBuffer());
     if (seq !== loadSeq) return;
+    if (!excelReady && /\.xlsx$/i.test(file.name)) {
+      excelInstalling = true;
+      setStatus(EXCEL_LOADING_MESSAGE);
+      refreshProgress();
+      let installed;
+      try {
+        installed = JSON.parse(await api.ensureExcel());
+      } finally {
+        excelInstalling = false;
+        refreshProgress();
+      }
+      if (seq !== loadSeq) return;
+      if (!installed.ok) {
+        setDataState("error");
+        loadWarnings = [];
+        showEncoding(undefined);
+        reportError(installed.error);
+        return;
+      }
+      excelReady = true;
+      setStatus("");
+    }
     const loadJson = JSON.stringify({ version: getSettings().version, load: getSettings().load });
     const result = callPython("loadFile", file.name, bytes, loadJson);
     if (seq !== loadSeq) return;

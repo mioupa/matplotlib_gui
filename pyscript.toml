@@ -1,5 +1,8 @@
-# PyScript 2026.7.3 (Pyodide 314.0.3 / Python 3.14)。openpyxl は Pyodide 同梱ではないため PyPI から micropip で導入する。
-packages = ["pandas", "matplotlib", "openpyxl==3.1.5", "et_xmlfile==2.0.0"]
+# PyScript 2026.7.3 (Pyodide 314.0.3 / Python 3.14)。
+# passthrough: packages を micropip を介さず直接 loadPyodide に渡す（Pyodide 同梱パッケージだけなので PyPI 解決が不要）。
+# openpyxl / et_xmlfile は Pyodide 同梱ではないため、.xlsx を初めて読み込むときに py/main.py が遅延導入する。
+packages = ["pandas", "matplotlib"]
+packages_cache = "passthrough"
 
 # py/mplgui/*.py を Pyodide の仮想FS（カレントディレクトリ直下）に配置し、`import mplgui` できるようにする。
 # キーは取得元（ページからの相対パス）、値は配置先。
