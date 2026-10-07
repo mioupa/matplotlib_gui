@@ -493,6 +493,38 @@ export const saveNow = async () => {
   }
 };
 
+// クリップボードにコピーする PNG を作る（保存と同じ設定: GUI 同期は現在の設定、編集モードは編集中のコード）。
+// js/ui/clipboard.js がクリックの中で ClipboardItem に渡す Promise になる。失敗は保存と同じ表示にして、reported = true で投げ直す。
+const reportedError = (message, original) => {
+  const error = new Error(message);
+  error.reported = true;
+  error.cause = original;
+  return error;
+};
+
+export const makeClipboardImage = async () => {
+  if (!api) {
+    setStatus(PYTHON_NOT_READY_MESSAGE, "warning");
+    throw reportedError("python not ready");
+  }
+  try {
+    await waitForFonts();
+    const result = callPython("copyImage", toJson(), currentCode());
+    if (!result.ok) {
+      reportError(result.error);
+      throw reportedError(result.error.message);
+    }
+    const binary = atob(result.dataUri.slice(result.dataUri.indexOf(",") + 1));
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return { blob: new Blob([bytes], { type: result.mime || "image/png" }), width: result.width, height: result.height };
+  } catch (err) {
+    if (err && err.reported) throw err;
+    reportException(err, "copyImage");
+    throw reportedError("internal error", err);
+  }
+};
+
 export const onPythonReady = (fn) => {
   if (api) fn();
   else readyCallbacks.push(fn);
