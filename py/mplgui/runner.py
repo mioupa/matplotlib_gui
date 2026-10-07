@@ -13,6 +13,7 @@ from functools import partial
 
 import matplotlib.pyplot as plt
 import pandas as pd
+from matplotlib.layout_engine import PlaceHolderLayoutEngine
 
 from .errors import UserError
 from .plotting import (
@@ -84,6 +85,16 @@ _FORMATS = {
 }
 
 
+def drop_placeholder_layout_engine(fig) -> None:
+    """tight_layout() 後に残る PlaceHolderLayoutEngine を外す（savefig が余分に全体を再描画するため）。
+
+    実際のエンジン（constrained / tight / compressed）は出力が変わるので外さない。
+    """
+    get = getattr(fig, "get_layout_engine", None)
+    if get is not None and isinstance(get(), PlaceHolderLayoutEngine):
+        fig.set_layout_engine(None)
+
+
 def figure_to_bytes(fig, file_format: str, transparent: bool = False, dpi: int = 120) -> tuple[bytes, str, str]:
     """Figure を指定形式のバイト列にする。戻り値は (bytes, mime, 拡張子)。"""
     fmt = (file_format or "").lower()
@@ -102,6 +113,7 @@ def figure_to_bytes(fig, file_format: str, transparent: bool = False, dpi: int =
         save_kwargs["transparent"] = True
 
     buffer = io.BytesIO()
+    drop_placeholder_layout_engine(fig)
     try:
         fig.savefig(buffer, format=save_format, **save_kwargs)
     except (ValueError, OverflowError, MemoryError) as exc:

@@ -185,3 +185,75 @@ def test_tight_layout_failure_is_japanese_user_error(monkeypatch, df):
     with pytest.raises(UserError) as info:
         make_figure(df, settings())
     assert "レイアウト" in info.value.message and "tight failed" in info.value.detail
+
+
+# ---------------------------------------------------------------- PlaceHolderLayoutEngine の除去
+
+
+def _default_fig(df):
+    from mplgui.plotting import create_figure
+
+    return create_figure(df, parse_settings(default_settings())).fig
+
+
+@pytest.mark.parametrize("fmt", ["png", "svg", "pdf"])
+def test_dropping_placeholder_engine_keeps_output_identical(df, fmt):
+    import io
+
+    import matplotlib as mpl
+    from matplotlib.layout_engine import PlaceHolderLayoutEngine
+
+    from mplgui.runner import drop_placeholder_layout_engine
+
+    meta = {"png": {"Software": None}, "svg": {"Date": None}, "pdf": {"CreationDate": None}}[fmt]
+    kw = {"dpi": 120} if fmt == "png" else {}
+
+    def render(drop):
+        fig = _default_fig(df)
+        try:
+            assert isinstance(fig.get_layout_engine(), PlaceHolderLayoutEngine)
+            if drop:
+                drop_placeholder_layout_engine(fig)
+                assert fig.get_layout_engine() is None
+            buf = io.BytesIO()
+            with mpl.rc_context({"svg.hashsalt": "fixed"}):
+                fig.savefig(buf, format=fmt, metadata=meta, **kw)
+            return buf.getvalue()
+        finally:
+            plt.close(fig)
+
+    assert render(False) == render(True)
+
+
+def test_real_layout_engine_is_kept(df):
+    from mplgui.runner import drop_placeholder_layout_engine
+
+    fig, ax = plt.subplots(layout="constrained")
+    ax.plot([0, 1], [0, 1])
+    try:
+        drop_placeholder_layout_engine(fig)
+        assert fig.get_layout_engine() is not None
+        assert fig.get_layout_engine().__class__.__name__ == "ConstrainedLayoutEngine"
+        figure_to_bytes(fig, "png")
+        assert fig.get_layout_engine().__class__.__name__ == "ConstrainedLayoutEngine"
+    finally:
+        plt.close(fig)
+
+
+def test_figure_to_bytes_draws_fewer_times(df, monkeypatch):
+    from matplotlib.figure import Figure
+
+    calls = {"n": 0}
+    orig = Figure.draw
+
+    def counting(self, *a, **k):
+        calls["n"] += 1
+        return orig(self, *a, **k)
+
+    fig = _default_fig(df)
+    try:
+        monkeypatch.setattr(Figure, "draw", counting)
+        figure_to_bytes(fig, "png")
+        assert calls["n"] == 1
+    finally:
+        plt.close(fig)
