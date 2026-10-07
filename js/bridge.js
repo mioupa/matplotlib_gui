@@ -9,7 +9,7 @@ import { setColumns } from "./ui/series.js";
 
 const RENDER_DELAY_MS = 250;
 const LOAD_DELAY_MS = { file: 0, header: 0, delimiter: 450 };
-const JP_FONT_URL = "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf";
+const JP_FONT_URL = "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@Sans2.004/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf";
 
 const root = document.documentElement;
 let api = null; // window.mplgui（Python 側が登録）
