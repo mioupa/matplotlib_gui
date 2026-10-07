@@ -231,6 +231,16 @@
           </div>
 
           <div class="group">
+            <label for="latinFont">欧文フォント</label>
+            <select id="latinFont" aria-describedby="latinFontHelp">
+              <option value="default">標準（Noto Sans JP）</option>
+              <option value="arimo">Arimo（Arial 互換）</option>
+              <option value="tinos">Tinos（Times 互換）</option>
+            </select>
+            <div id="latinFontHelp" class="help-text">英数字と記号を、選んだフォントで書きます。日本語の文字は Noto Sans JP で書きます。選んだときに、フォント（約 0.3〜0.5 MB）を取得します。</div>
+          </div>
+
+          <div class="group">
             <label for="fontSize">フォントサイズ</label>
             <input id="fontSize" type="number" step="1" value="15" />
           </div>
@@ -303,25 +313,49 @@
             <input id="saveFilename" placeholder="plot" />
           </div>
 
+          <div class="group">
+            <label for="saveFormat">保存形式</label>
+            <select id="saveFormat">
+              <option value="png">png</option>
+              <option value="jpg">jpg</option>
+              <option value="svg">svg</option>
+              <option value="pdf">pdf</option>
+            </select>
+          </div>
+
+          <div class="group">
+            <label for="saveDpi">DPI</label>
+            <div id="saveDpiRow" class="dpi-row">
+              <select id="saveDpi" aria-describedby="saveDpiHelp">
+                <option value="72">72</option>
+                <option value="150">150</option>
+                <option value="300">300</option>
+                <option value="600">600</option>
+                <option value="custom">任意</option>
+              </select>
+              <input id="saveDpiCustom" type="number" min="50" max="1200" step="1" aria-label="DPI（任意の値）" aria-describedby="saveDpiHelp" hidden />
+            </div>
+            <div id="saveDpiHelp" class="help-text">PNG・JPG の保存と、クリップボードへのコピーに使います（プレビューは 100 dpi で表示します）。</div>
+          </div>
+
+          <div id="svgTextGroup" class="group" hidden>
+            <label for="svgText">SVG の文字</label>
+            <select id="svgText" aria-describedby="svgTextHelp">
+              <option value="path">文字をパスに変換（どの環境でも同じ見た目）</option>
+              <option value="text">文字をテキストのまま残す（編集できる）</option>
+            </select>
+            <div id="svgTextHelp" class="help-text">テキストのまま残すと、Illustrator などで文字を編集できます。ただし、開く環境に同じフォント（Noto Sans JP など）が無いと、別のフォントで表示され、見た目が変わります。</div>
+          </div>
+
+          <div id="pdfHelp" class="group help-text" hidden>PDF は文字をフォントとして埋め込みます（Type 42）。Illustrator などで文字を編集できます。</div>
+
           <div class="group inline">
             <input id="saveTransparent" type="checkbox" />
             <label for="saveTransparent">背景を透過して保存</label>
           </div>
 
-          <div class="row group">
-            <div>
-              <label for="saveFormat">保存形式</label>
-              <select id="saveFormat">
-                <option value="png">png</option>
-                <option value="jpg">jpg</option>
-                <option value="svg">svg</option>
-                <option value="pdf">pdf</option>
-              </select>
-            </div>
-            <div>
-              <label for="savePlotBtn">描画データ保存</label>
-              <button id="savePlotBtn" class="secondary" type="button">保存する</button>
-            </div>
+          <div class="row group save-actions">
+            <button id="savePlotBtn" class="secondary" type="button">保存する</button>
           </div>
           </div>
         </details>

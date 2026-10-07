@@ -47,5 +47,12 @@ export const addStickyWarning = (message) => {
   paint();
 };
 
+// 条件が無くなった常時警告（選び直したフォントなど）を取り除く
+export const removeStickyWarning = (message) => {
+  const i = stickyWarnings.indexOf(message);
+  if (i >= 0) stickyWarnings.splice(i, 1);
+  paint();
+};
+
 // {message, series?} の配列 → 表示用の文字列配列
 export const warningTexts = (warnings) => (warnings || []).map((w) => (typeof w === "string" ? w : w.message)).filter(Boolean);

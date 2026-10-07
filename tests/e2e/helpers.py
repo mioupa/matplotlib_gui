@@ -236,3 +236,71 @@ def palette_grid_colors(page, series_id) -> list[str]:
         "(id) => [...document.querySelector(`#series-${id}-color-trigger`).closest('.series-item').querySelectorAll('.series-color-chip')].map(c => c.dataset.color.toUpperCase())",
         series_id,
     )
+
+
+# --- 保存セクション・欧文フォント・クリップボード ---
+# <html data-latin-font-state="idle|loading|ready|failed">（選択中の欧文フォント）、data-copy-state="idle|copying|done|failed|unsupported"
+ARIMO_GLOB = "**/Arimo_400Regular.ttf"
+TINOS_GLOB = "**/Tinos_400Regular.ttf"
+
+
+def image_size(data: bytes) -> tuple[int, int]:
+    """PNG / JPG のバイト列から画像の大きさ（幅, 高さ）を読む。"""
+    import io
+
+    from PIL import Image
+
+    with Image.open(io.BytesIO(data)) as image:
+        return image.size
+
+
+def save_bytes(page, timeout=120_000) -> bytes:
+    """保存ボタンを押し、ダウンロードされたファイルの中身を返す。"""
+    return open(save_plot(page, timeout).path(), "rb").read()
+
+
+def set_save_dpi(page, dpi):
+    """プリセット（72 / 150 / 300 / 600）か、それ以外なら「任意」を選んで値を入れる。"""
+    if str(dpi) in {"72", "150", "300", "600"}:
+        page.select_option("#saveDpi", str(dpi))
+    else:
+        page.select_option("#saveDpi", "custom")
+        page.fill("#saveDpiCustom", str(dpi))
+
+
+def latin_font_state(page) -> str:
+    return page.evaluate("document.documentElement.dataset.latinFontState || ''")
+
+
+def wait_latin_state(page, state, timeout=120_000):
+    page.wait_for_function(
+        "(s) => document.documentElement.dataset.latinFontState === s", arg=state, timeout=timeout
+    )
+
+
+def copy_state(page) -> str:
+    return page.evaluate("document.documentElement.dataset.copyState || ''")
+
+
+def wait_copy_state(page, state, timeout=120_000):
+    page.wait_for_function("(s) => document.documentElement.dataset.copyState === s", arg=state, timeout=timeout)
+
+
+def read_clipboard_png_size(page) -> tuple[int, int]:
+    """クリップボードの画像（image/png）の大きさ。"""
+    return tuple(
+        page.evaluate(
+            """async () => {
+              const items = await navigator.clipboard.read();
+              const blob = await items[0].getType('image/png');
+              const bitmap = await createImageBitmap(blob);
+              return [bitmap.width, bitmap.height];
+            }"""
+        )
+    )
+
+
+def wait_code_contains(page, text, timeout=60_000):
+    page.wait_for_function(
+        "(t) => document.getElementById('customPyCode').value.includes(t)", arg=text, timeout=timeout
+    )

@@ -21,6 +21,7 @@ export const FIELDS = [
   ["y2Scale", "axes.y2.scale", "select"],
   ["y2Min", "axes.y2.min", "number"],
   ["y2Max", "axes.y2.max", "number"],
+  ["latinFont", "plot.latinFont", "select"],
   ["fontSize", "plot.fontSize", "number"],
   ["showMajorGrid", "plot.grid.major", "checkbox"],
   ["showMinorGrid", "plot.grid.minor", "checkbox"],
@@ -34,6 +35,7 @@ export const FIELDS = [
   ["saveFilename", "save.filename", "text"],
   ["saveTransparent", "save.transparent", "checkbox"],
   ["saveFormat", "save.format", "select"],
+  ["svgText", "save.svgText", "select"],
 ];
 
 // 数値欄: 空 → null、数値 → number、数値にならない入力 → 文字列のまま（Python が日本語のエラーにする）
