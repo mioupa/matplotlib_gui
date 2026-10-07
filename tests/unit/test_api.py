@@ -13,9 +13,17 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
 @pytest.fixture(autouse=True)
 def fresh_session():
-    api.SESSION.df = None
+    api.SESSION.forget()
+    api.SESSION.workdir = None
     yield
-    api.SESSION.df = None
+    api.SESSION.forget()
+    api.SESSION.workdir = None
+
+
+@pytest.fixture
+def workdir(tmp_path):
+    api.SESSION.workdir = tmp_path
+    return tmp_path
 
 
 def load(name="utf8.csv", settings=None):
@@ -62,7 +70,7 @@ def test_internal_error_has_short_message_and_traceback(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("kaboom")
 
-    monkeypatch.setattr(api, "make_figure", boom)
+    monkeypatch.setattr(api, "generate_script", boom)
     r = json.loads(api.render_json(json.dumps(default_settings())))
     assert r["ok"] is False and r["error"]["message"] == api.INTERNAL_ERROR_MESSAGE
     assert "RuntimeError" in r["error"]["detail"] and "kaboom" in r["error"]["detail"] and "Traceback" in r["error"]["detail"]
@@ -86,12 +94,169 @@ def test_save_response():
     assert r["ok"] is False and "背景透過" in r["error"]["message"]
 
 
-def test_render_with_custom_code():
+def test_render_returns_generated_code_summary_and_output():
     load()
-    r = json.loads(api.render_json(json.dumps(default_settings()), api.default_custom_code()))
+    r = json.loads(api.render_json(json.dumps(default_settings())))
+    assert r["ok"] is True and r["output"] == ""
+    assert r["code"].startswith("# matplotlib GUI が生成したスクリプト") and "pd.read_csv(DATA_FILE" in r["code"]
+    assert 'encoding="utf-8"' in r["code"] and "plt.show()" in r["code"]  # 表示用は完全なスクリプト
+    assert r["summary"][0]["lines"] == 1 and r["summary"][0]["xlabel"] == "index" and r["summary"][0]["ylabel"] == "時間 [0]"
+
+
+def test_render_gui_mode_reuses_loaded_dataframe_without_reading_file(workdir):
+    load()
+    (workdir / "utf8.csv").unlink()  # ファイルが無くても、読込済みの df で描ける
+    r = json.loads(api.render_json(json.dumps(default_settings()), None))
+    assert r["ok"] is True and not list(workdir.glob("*.png"))  # savefig も実行しない
+
+
+def test_render_warnings_come_from_plan():
+    load("non_numeric.csv")
+    s = default_settings()
+    s["series"] = [{"x": "__idx__0", "y": "__idx__2"}, {"x": "__idx__0", "y": "__idx__1"}]
+    r = json.loads(api.render_json(json.dumps(s)))
+    assert r["ok"] and r["seriesCount"] == 1 and r["warnings"][0]["series"] == 2
+    assert "数値に変換できない値" in r["warnings"][0]["message"]
+
+
+def test_upload_is_written_to_workdir_under_original_name(workdir):
+    load("utf8.csv")
+    assert (workdir / "utf8.csv").read_bytes() == (FIXTURES / "utf8.csv").read_bytes()
+    load("cp932.csv")
+    assert not (workdir / "utf8.csv").exists() and (workdir / "cp932.csv").is_file()  # 前のファイルは消す
+    load("cp932.csv")
+    assert (workdir / "cp932.csv").is_file()  # 同じ名前の再読込では消さない
+
+
+def test_failed_load_forgets_everything_and_removes_written_file(workdir):
+    load("utf8.csv")
+    bad = json.loads(api.load_file_json("x.pdf", b"x", json.dumps(default_settings())))
+    assert bad["ok"] is False
+    assert api.SESSION.df is None and api.SESSION.source is None and api.SESSION.filename is None
+    assert not (workdir / "utf8.csv").exists() and not (workdir / "x.pdf").exists()
+
+
+def test_upload_name_with_path_is_reduced_to_base_name(workdir):
+    s = default_settings()
+    r = json.loads(api.load_file_json("../evil/utf8.csv", (FIXTURES / "utf8.csv").read_bytes(), json.dumps(s)))
+    assert r["ok"] and (workdir / "utf8.csv").is_file() and not (workdir.parent / "evil").exists()
+
+
+def test_edit_mode_runs_displayed_script_against_uploaded_file(workdir):
+    load("utf8.csv")
+    code = json.loads(api.render_json(json.dumps(default_settings())))["code"]
+    (workdir / "utf8.csv").write_text("時間,電圧\n0,1\n1,5\n2,3\n", encoding="utf-8")  # 生成コードが読む実ファイル
+    r = json.loads(api.render_json(json.dumps(default_settings()), code))
+    assert r["ok"] is True and r["image"].startswith("data:image/png;base64,")
+    assert r["summary"][0]["ylabel"] == "時間 [0]" and "seriesCount" not in r and "code" not in r
+    assert (workdir / "plot.png").is_file()  # 編集モードでは savefig まで実行する（作業フォルダに書く）
+
+
+def test_edit_mode_print_output_and_independence_from_gui_settings(workdir):
+    load()
+    code = (
+        "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([1, 2], [3, 4])\n"
+        "ax.set_title('コードのタイトル')\nprint('出力')\n"
+    )
+    s = default_settings()
+    s["plot"]["title"] = "GUIのタイトル"
+    s["plot"]["grid"]["major"] = True
+    r = json.loads(api.render_json(json.dumps(s), code))
+    assert r["ok"] and r["output"] == "出力\n"
+    assert r["summary"][0]["title"] == "コードのタイトル"  # A8: GUI の設定を上書き適用しない
+
+
+def test_edit_mode_works_without_loaded_file_and_ignores_invalid_settings():
+    r = json.loads(api.render_json("{broken", "import matplotlib.pyplot as plt\nplt.plot([0, 1])\n"))
     assert r["ok"] is True
-    r = json.loads(api.render_json(json.dumps(default_settings()), "raise ValueError('x')"))
-    assert r["ok"] is False and "カスタムコード" in r["error"]["message"]
+
+
+def test_edit_mode_error_payload(workdir):
+    load()
+    code = "print('途中')\nimport matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot(nothing)\n"
+    r = json.loads(api.render_json(json.dumps(default_settings()), code))
+    err = r["error"]
+    assert r["ok"] is False and r["output"] == "途中\n"
+    assert err["line"] == 4 and err["field"] == "Pythonコード"
+    assert "4行目" in err["message"] and "NameError" in err["message"] and "is not defined" not in err["message"]
+    assert 'File "plot.py", line 4' in err["traceback"] and "nothing" in err["traceback"]
+    assert "Traceback" in err["detail"] and "runner.py" in err["detail"]
+
+
+def test_edit_mode_no_figure_error_has_output():
+    r = json.loads(api.render_json(json.dumps(default_settings()), "print('x')"))
+    assert r["ok"] is False and r["error"]["field"] == "Pythonコード" and r["output"] == "x\n"
+
+
+def test_save_with_code_uses_save_settings(workdir):
+    load()
+    code = "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([1, 2], [3, 4])\nprint('save')\n"
+    s = default_settings()
+    s["save"].update(filename="out", format="svg")
+    r = json.loads(api.save_json(json.dumps(s), code))
+    assert r["ok"] and r["filename"] == "out.svg" and r["dataUri"].startswith("data:image/svg+xml;base64,") and r["output"] == "save\n"
+    s["save"].update(format="jpg", transparent=True)
+    r = json.loads(api.save_json(json.dumps(s), code))
+    assert r["ok"] is False and "背景透過" in r["error"]["message"] and r["output"] == "save\n"
+
+
+def test_save_with_code_ignores_invalid_plot_settings_but_checks_save_settings():
+    code = "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([1, 2], [3, 4])\n"
+    s = default_settings()
+    s["axes"]["x"].update(min=5, max=1)  # 描画設定の不備（GUI 同期なら軸範囲のエラー）
+    assert json.loads(api.save_json(json.dumps(s)))["ok"] is False
+    r = json.loads(api.save_json(json.dumps(s), code))
+    assert r["ok"] and r["filename"] == "plot.png"
+    s["save"]["format"] = "bmp"
+    r = json.loads(api.save_json(json.dumps(s), code))
+    assert r["ok"] is False and r["error"]["field"] == "保存形式"
+
+
+def test_save_uses_120_dpi_and_render_100():
+    import base64
+    import struct
+
+    load()
+    s = default_settings()  # 8 x 6 インチ
+    r = json.loads(api.render_json(json.dumps(s)))
+    w, h = struct.unpack(">II", base64.b64decode(r["image"].split(",")[1])[16:24])
+    assert (w, h) == (800, 600)
+    r = json.loads(api.save_json(json.dumps(s)))
+    w, h = struct.unpack(">II", base64.b64decode(r["dataUri"].split(",")[1])[16:24])
+    assert (w, h) == (960, 720)
+
+
+def test_runtime_error_in_generated_code_maps_to_step_message(monkeypatch):
+    import matplotlib.axes
+    from matplotlib.figure import Figure
+
+    load()
+    s = default_settings()
+    s["axes"]["y"].update(min=1, max=5)
+
+    def boom(self, *a, **k):
+        raise ValueError("bad limits")
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "set_ylim", boom)
+    r = json.loads(api.render_json(json.dumps(s)))
+    err = r["error"]
+    assert r["ok"] is False and err["message"] == "Y軸のスケールまたは範囲を適用できませんでした。範囲の値を確認してください。"
+    assert err["field"] == "Y軸の範囲" and "bad limits" in err["detail"] and err["line"] and "ax.set_ylim" in err["traceback"]
+    monkeypatch.undo()
+
+    def tight_boom(self, *a, **k):
+        raise RuntimeError("tight failed")
+
+    monkeypatch.setattr(Figure, "tight_layout", tight_boom)
+    r = json.loads(api.render_json(json.dumps(default_settings())))
+    assert "レイアウト" in r["error"]["message"] and r["error"]["field"] == "余白" and "tight failed" in r["error"]["detail"]
+
+    monkeypatch.undo()
+    s = default_settings()
+    s["plot"]["margins"].update(left=0.1, right=0.9, bottom=0.1, top=0.9)
+    monkeypatch.setattr(Figure, "subplots_adjust", tight_boom)
+    r = json.loads(api.render_json(json.dumps(s)))
+    assert "余白の設定" in r["error"]["message"] and r["error"]["field"] == "余白"
 
 
 def test_font_status_before_register():
@@ -210,7 +375,7 @@ def test_unparsable_values_only_series_error_is_japanese():
     _assert_japanese_clean(json.loads(api.render_json(json.dumps(s))))
 
 
-def test_unexpected_mismatch_error_is_wrapped_with_detail(monkeypatch):
+def test_unexpected_mismatch_error_is_wrapped_with_detail(monkeypatch):  # 描画の途中の TypeError は汎用メッセージにする
     import matplotlib.axes
 
     load()
@@ -222,3 +387,14 @@ def test_unexpected_mismatch_error_is_wrapped_with_detail(monkeypatch):
     r = json.loads(api.render_json(json.dumps(default_settings())))
     _assert_japanese_clean(r)
     assert "cannot cast" in r["error"]["detail"]
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [("", "plot.py"), ("   ", "plot.py"), ("figure1", "figure1.py"), ("fig.png", "fig.py"), ("a/b:c", "a_b_c.py"),
+     ("結果.svg", "結果.py"), ("...", "plot.py"), (None, "plot.py")],
+)
+def test_script_filename_uses_save_filename_rules(raw, expected):
+    assert api.script_filename(raw) == expected
+    # 保存ファイル名と同じ規則: 拡張子だけが違う
+    assert api.script_filename(raw or "").rsplit(".", 1)[0] == api.build_filename(raw or "", "png").rsplit(".", 1)[0]

@@ -7,16 +7,16 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 
+# 日本語フォントの優先順（唯一の定義）。codegen が生成するスクリプトの rcParams もこの並びを使う。
 SANS_SERIF_PRIORITY = [
-    "Noto Sans JP",
     "Noto Sans CJK JP",
+    "Noto Sans JP",
     "IPAexGothic",
     "Yu Gothic",
     "Hiragino Sans",
     "MS Gothic",
     "DejaVu Sans",
 ]
-PREFERRED_JP_FONTS = ["Noto Sans CJK JP", "Noto Sans JP"]
 
 _registered = False
 
@@ -28,14 +28,9 @@ def configure_rcparams() -> None:
 
 
 def register_font_file(path) -> None:
-    """フォントファイルを matplotlib に登録し、日本語フォントを sans-serif の先頭へ移す。"""
+    """フォントファイルを matplotlib に登録する。rcParams は生成コードと同じ SANS_SERIF_PRIORITY の並びにする。"""
     font_manager.fontManager.addfont(str(path))
-    current = list(plt.rcParams.get("font.sans-serif", []))
-    for name in reversed(PREFERRED_JP_FONTS):
-        if name in current:
-            current.remove(name)
-        current.insert(0, name)
-    plt.rcParams["font.sans-serif"] = current
+    configure_rcparams()
 
 
 def register_font_bytes(data: bytes, filename: str = "NotoSansCJKjp-Regular.otf") -> bool:

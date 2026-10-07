@@ -1,4 +1,4 @@
-// 「プロット / データ確認 / Pythonコード(beta)」のタブ切替（WAI-ARIA tabs。矢印キーでも移動できる）。
+// 「プロット / データ確認 / Pythonコード」のタブ切替（WAI-ARIA tabs。矢印キーでも移動できる）。
 const TABS = [
   ["plot", "tabPlotBtn", "plotPanel"],
   ["data", "tabDataBtn", "dataPanel"],

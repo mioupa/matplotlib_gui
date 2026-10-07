@@ -1,4 +1,6 @@
 // 選択中のファイル名と検出した文字コードの表示（#fileNameLabel / #encodingLabel）。
+// #fileNameLabel はファイル選択ボックス（.file-picker）内の表示。input は選択のたびに空に戻すので、
+// ブラウザ標準の「選択されていません」には頼らず、JS がファイル名（未選択時は既定文言）を出す。
 const ENCODING_NAMES = {
   "utf-8": "UTF-8",
   "utf-8-sig": "UTF-8（BOM付き）",
@@ -8,9 +10,15 @@ const ENCODING_NAMES = {
 
 export const encodingDisplayName = (encoding) => (encoding === null || encoding === undefined ? "Excel" : ENCODING_NAMES[encoding] || String(encoding));
 
+const NO_FILE_TEXT = "選択されていません";
+
 export const showFileName = (name) => {
   const label = document.getElementById("fileNameLabel");
-  if (label) label.textContent = name ? `選択中: ${name}` : "";
+  if (label) {
+    label.textContent = name || NO_FILE_TEXT;
+    label.title = name || "";
+    label.dataset.selected = name ? "true" : "false";
+  }
   showEncoding(undefined);
 };
 

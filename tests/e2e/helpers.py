@@ -127,3 +127,86 @@ def image_generation(page) -> str:
 
 def status_warnings(page) -> list[str]:
     return page.evaluate(STATUS_WARNINGS_JS)
+
+
+# --- Pythonコードタブ ---
+# <html data-code-mode="sync|edit">、#customPyCode（data-generation）、#codeOutput（data-kind）、#codeSyncStatus、
+# `#plotArea img` の data-summary（図の要約 JSON）。
+def code_mode(page) -> str:
+    return page.evaluate("document.documentElement.dataset.codeMode || ''")
+
+
+def code_text(page) -> str:
+    return page.input_value("#customPyCode")
+
+
+def code_generation(page) -> str:
+    return page.evaluate("document.getElementById('customPyCode').dataset.generation || ''")
+
+
+def open_code_tab(page):
+    page.click("#tabCodeBtn")
+
+
+def wait_code_generated(page, timeout=120_000):
+    """GUI 同期のコードが、表示中の画像と同じ世代で textarea に入るまで待つ。"""
+    page.wait_for_function(
+        """() => {
+          const img = document.querySelector('#plotArea img');
+          const code = document.getElementById('customPyCode');
+          return !!img && !!code.value && code.dataset.generation === img.dataset.generation;
+        }""",
+        timeout=timeout,
+    )
+
+
+def enter_edit_mode(page):
+    open_code_tab(page)
+    page.click("#editCodeBtn")
+    page.wait_for_function("document.documentElement.dataset.codeMode === 'edit'")
+
+
+def wait_image_generation_changed(page, previous, timeout=120_000):
+    """表示中の画像の世代が previous から変わり、描画要求が残っていないところまで待つ。新しい世代を返す。"""
+    page.wait_for_function(
+        """(prev) => {
+          const d = document.documentElement.dataset;
+          const img = document.querySelector('#plotArea img');
+          return d.renderState === 'idle' && !!img && img.dataset.generation !== prev
+            && img.dataset.generation === d.renderGeneration;
+        }""",
+        arg=previous,
+        timeout=timeout,
+    )
+    return image_generation(page)
+
+
+def run_edited_code(page, how="button"):
+    """編集モードのコードを実行し、描画が一段落するまで待つ（画像の世代が進む）。"""
+    previous = image_generation(page)
+    if how == "button":
+        page.click("#applyCustomCodeBtn")
+    else:
+        page.focus("#customPyCode")
+        page.keyboard.press("ControlOrMeta+Enter")
+    return wait_image_generation_changed(page, previous)
+
+
+def wait_run_finished(page, timeout=120_000):
+    """実行（成功・失敗とも）が終わるまで待つ。"""
+    page.wait_for_function("document.documentElement.dataset.renderState === 'idle'", timeout=timeout)
+
+
+def image_summary(page):
+    import json
+
+    raw = page.evaluate("(document.querySelector('#plotArea img') || {dataset: {}}).dataset.summary || ''")
+    return json.loads(raw) if raw else None
+
+
+def code_output(page) -> str:
+    return page.inner_text("#codeOutput")
+
+
+def code_output_kind(page) -> str:
+    return page.get_attribute("#codeOutput", "data-kind") or ""

@@ -5,22 +5,21 @@ py/main.py はこの関数を window.mplgui に登録するだけ。引数・戻
 """
 from __future__ import annotations
 
+import base64
 import json
 import traceback
-
-import matplotlib.pyplot as plt
+from pathlib import Path
 
 from . import fonts
+from .codegen import GENERIC_ERROR_MESSAGE, GeneratedScript, generate_script
+from .dataprep import plan_plot
 from .errors import UserError
-from .loader import PREVIEW_ROWS, build_preview, column_options, load_file
-from .runner import (
-    DEFAULT_CUSTOM_PLOT_CODE,
-    build_filename,
-    figure_to_data_uri,
-    make_figure,
-)
-from .settings import parse_load_settings, parse_settings
+from .formats import SAVE_DPI, build_filename
+from .loader import PREVIEW_ROWS, SourceInfo, build_preview, column_options, load_file
+from .runner import ScriptError, run_to_image
+from .settings import Settings, parse_load_settings, parse_save_settings, parse_settings
 
+PREVIEW_DPI = 100
 INTERNAL_ERROR_MESSAGE = "内部エラーが発生しました。もう一度操作してください。"
 
 
@@ -30,6 +29,37 @@ class Session:
     def __init__(self):
         self.df = None
         self.filename = None
+        self.source: SourceInfo | None = None
+        self.workdir: Path | None = None  # 設定すると、アップロードしたファイルを元の名前でここに置く
+        self._written: Path | None = None
+
+    def forget(self) -> None:
+        self.df = None
+        self.filename = None
+        self.source = None
+        self._remove_written()
+
+    def _remove_written(self) -> None:
+        if self._written is not None:
+            try:
+                self._written.unlink()
+            except OSError:
+                pass
+            self._written = None
+
+    def write_upload(self, name: str, data: bytes) -> None:
+        """編集モードのスクリプトが読めるように、アップロードしたファイルを workdir に置く（前のファイルは消す）。"""
+        if self.workdir is None:
+            return
+        base = Path(name).name
+        if base in {"", ".", ".."}:
+            self._remove_written()
+            return
+        target = self.workdir / base
+        if self._written is not None and self._written != target:
+            self._remove_written()
+        target.write_bytes(data)
+        self._written = target
 
 
 SESSION = Session()
@@ -41,7 +71,11 @@ def _dumps(obj) -> str:
 
 def _error_payload(exc: BaseException, context: str) -> dict:
     if isinstance(exc, UserError):
-        return {"ok": False, "error": exc.to_dict()}
+        payload = {"ok": False, "error": exc.to_dict()}
+        output = getattr(exc, "output", None)
+        if output is not None:
+            payload["output"] = output
+        return payload
     detail = f"context: {context}\ntype: {type(exc).__name__}\nmessage: {exc}\n\ntraceback:\n{traceback.format_exc().strip()}"
     return {"ok": False, "error": {"message": INTERNAL_ERROR_MESSAGE, "detail": detail}}
 
@@ -72,12 +106,14 @@ def _parse_json(text: str) -> dict:
 @_guard("load_file")
 def load_file_json(name: str, data: bytes, load_settings_json: str) -> dict:
     """ファイルを読み込み、列の選択肢とプレビューを返す。失敗時は読込済みデータを破棄する。"""
-    SESSION.df = None
-    SESSION.filename = None
+    SESSION.forget()
     load = parse_load_settings(_parse_json(load_settings_json))
-    loaded = load_file(bytes(data), name, load.delimiter, load.has_header)
+    raw = bytes(data)
+    loaded = load_file(raw, name, load.delimiter, load.has_header)
     SESSION.df = loaded.df
     SESSION.filename = name
+    SESSION.source = loaded.source
+    SESSION.write_upload(name, raw)
     return {
         "ok": True,
         "encoding": loaded.encoding,
@@ -87,40 +123,88 @@ def load_file_json(name: str, data: bytes, load_settings_json: str) -> dict:
     }
 
 
-def _figure_for(settings_json: str, custom_code: str | None):
-    settings = parse_settings(_parse_json(settings_json))
+def _source_info() -> SourceInfo:
+    if SESSION.source is not None:
+        return SESSION.source
+    name = Path(SESSION.filename or "data.csv").name
+    kind = Path(name).suffix.lower().lstrip(".") or "csv"
+    return SourceInfo(filename=name, kind=kind, encoding="utf-8", separator=",", has_header=True,
+                      sheet_name="Sheet1" if kind == "xlsx" else None)
+
+
+def _step_error(script: GeneratedScript, err: ScriptError) -> ScriptError:
+    """生成コードの実行時エラーを、失敗した手順に応じた日本語メッセージにする。"""
+    step = script.step_for_line(err.line)
+    mapped = ScriptError(
+        step.message if step else GENERIC_ERROR_MESSAGE,
+        field=step.field if step else None,
+        detail=err.detail,
+        traceback_text=err.traceback_text,
+        line=err.line,
+        output=err.output,
+        exc=err.exc,
+    )
+    return mapped
+
+
+def _generate(settings: Settings):
     if SESSION.df is None:
         raise UserError("先にファイルを読み込んでください。")
-    return settings, make_figure(SESSION.df, settings, custom_code)
+    plan = plan_plot(SESSION.df, settings)
+    return plan, generate_script(settings, _source_info(), plan)
+
+
+def _run(settings: Settings | None, code: str | None, *, file_format: str, transparent: bool, dpi: int):
+    """GUI 同期（code が None）: 設定から生成したスクリプトを、読込済みの df で実行する（読込・保存の行は空にする）。
+    編集モード（code が文字列）: そのスクリプトを、アップロードしたファイルのある作業フォルダで実行する。設定は使わない。"""
+    if code is None:
+        plan, script = _generate(settings)
+        try:
+            result = run_to_image(
+                script.auto_render_text(), file_format=file_format, transparent=transparent, dpi=dpi,
+                injected={"df": SESSION.df},
+            )
+        except ScriptError as err:
+            raise _step_error(script, err) from err
+        return plan, script, result
+    return None, None, run_to_image(code, file_format=file_format, transparent=transparent, dpi=dpi, cwd=SESSION.workdir)
+
+
+def _data_uri(result) -> str:
+    return f"data:{result.mime};base64,{base64.b64encode(result.data).decode('ascii')}"
 
 
 @_guard("render")
-def render_json(settings_json: str, custom_code: str | None = None) -> dict:
-    """設定どおりに描画し、PNG の data URI を返す。"""
-    _, result = _figure_for(settings_json, custom_code)
-    try:
-        uri, _ext = figure_to_data_uri(result.fig, "png", dpi=100)
-    finally:
-        plt.close(result.fig)
-    return {
-        "ok": True,
-        "image": uri,
-        "seriesCount": result.plotted_count,
-        "skipRows": result.skip_rows,
-        "warnings": result.warnings,
-    }
+def render_json(settings_json: str, code: str | None = None) -> dict:
+    """PNG（data URI）を返す。code が None なら設定どおりに描き、文字列ならそのコードを実行する。"""
+    settings = parse_settings(_parse_json(settings_json)) if code is None else None
+    plan, script, result = _run(settings, code, file_format="png", transparent=False, dpi=PREVIEW_DPI)
+    payload = {"ok": True, "image": _data_uri(result), "output": result.output, "summary": result.summary}
+    if plan is not None:
+        payload.update(seriesCount=plan.plotted_count, skipRows=plan.skip_rows, warnings=list(plan.warnings), code=script.text)
+    return payload
 
 
 @_guard("save")
-def save_json(settings_json: str, custom_code: str | None = None) -> dict:
+def save_json(settings_json: str, code: str | None = None) -> dict:
     """保存設定の形式で図を書き出し、data URI とファイル名を返す（ダウンロードは JS が行う）。"""
-    settings, result = _figure_for(settings_json, custom_code)
-    try:
-        uri, ext = figure_to_data_uri(result.fig, settings.save.format, transparent=settings.save.transparent)
-    finally:
-        plt.close(result.fig)
-    mime = uri[5 : uri.index(";")]
-    return {"ok": True, "filename": build_filename(settings.save.filename, ext), "mime": mime, "dataUri": uri}
+    raw = _parse_json(settings_json)
+    # 編集モードは保存設定だけを使う（描画設定が不正でも、編集したコードの図は保存できる）
+    settings = parse_settings(raw) if code is None else None
+    save = settings.save if settings is not None else parse_save_settings(raw)
+    _, _, result = _run(settings, code, file_format=save.format, transparent=save.transparent, dpi=SAVE_DPI)
+    return {
+        "ok": True,
+        "filename": build_filename(save.filename, result.ext),
+        "mime": result.mime,
+        "dataUri": _data_uri(result),
+        "output": result.output,
+    }
+
+
+def script_filename(save_filename: str) -> str:
+    """「.py で保存」のファイル名。保存ファイル名と同じ規則（formats.build_filename）で拡張子を .py にする。"""
+    return build_filename(str(save_filename or ""), "py")
 
 
 def register_font(data: bytes) -> str:
@@ -133,7 +217,3 @@ def register_font(data: bytes) -> str:
 
 def font_status() -> str:
     return _dumps({"ok": True, "registered": fonts.is_registered()})
-
-
-def default_custom_code() -> str:
-    return DEFAULT_CUSTOM_PLOT_CODE.strip() + "\n"

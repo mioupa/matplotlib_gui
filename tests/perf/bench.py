@@ -17,7 +17,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "tests" / "e2e"))
-from helpers import load_fixture, plot_src, wait_app_ready, wait_data_ready, wait_plot_changed  # noqa: E402
+from helpers import (  # noqa: E402
+    enter_edit_mode, image_generation, load_fixture, plot_src,
+    wait_app_ready, wait_data_ready, wait_plot_changed,
+)
 from server import start_server  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
 
@@ -96,7 +99,7 @@ def bench_startup(browser, url, reps):
 
 
 def bench_render(browser, url, reps, csv_path):
-    first_plot, change, save = [], [], []
+    first_plot, change, save, edit_run = [], [], [], []
     ctx = browser.new_context()
     # フォント等をHTTPキャッシュに載せるための捨て試行
     p0 = ctx.new_page()
@@ -125,9 +128,27 @@ def bench_render(browser, url, reps, csv_path):
             page.click("#savePlotBtn")
         dl.value.path()
         save.append((time.perf_counter() - t) * 1000)
+        # 編集モードでの実行（Phase 2 で追加。保存の後に測るので既存の項目には影響しない）。
+        # Ctrl/Cmd+Enter から新しい画像の表示まで（ファイルの再読込とスクリプト全体の実行を含む）
+        page.wait_for_timeout(1000)
+        enter_edit_mode(page)
+        page.wait_for_timeout(1500)
+        page.focus("#customPyCode")
+        prev = image_generation(page)
+        t = time.perf_counter()
+        page.keyboard.press("ControlOrMeta+Enter")
+        page.wait_for_function(
+            """(prev) => {
+              const d = document.documentElement.dataset;
+              const img = document.querySelector('#plotArea img');
+              return d.renderState === 'idle' && !!img && img.dataset.generation !== prev;
+            }""",
+            arg=prev, timeout=TIMEOUT,
+        )
+        edit_run.append((time.perf_counter() - t) * 1000)
         page.close()
     ctx.close()
-    return first_plot, change, save
+    return first_plot, change, save, edit_run
 
 
 def bench_xlsx(browser, url, reps, xlsx_path):
@@ -175,7 +196,7 @@ def main():
         browser = p.chromium.launch(headless=not a.headed)
         print("chromium", browser.version, "headed" if a.headed else "headless", "platform", platform.platform())
         cold, warm = bench_startup(browser, url, a.reps)
-        first, change, save = bench_render(browser, url, a.reps, csv_path)
+        first, change, save, edit_run = bench_render(browser, url, a.reps, csv_path)
         xlsx = bench_xlsx(browser, url, a.reps, REPO / "tests" / "fixtures" / "multi_sheet.xlsx")
         browser.close()
     res = {
@@ -183,6 +204,7 @@ def main():
         "first_plot_ms": first, "change_to_plot_ms": change,
         "change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in change],
         "save_png_ms": save,
+        "edit_mode_run_ms": edit_run,
         "first_xlsx_plot_ms": xlsx,
     }
     for k, v in res.items():

@@ -49,6 +49,18 @@ def test_data_preview_row_numbers_and_skipped_rows(page, app_url, tmp_path, cons
     page.wait_for_function("document.querySelectorAll('#dataArea tbody tr.skipped-row').length === 2")
 
 
+def test_file_picker_shows_selected_name(page, app_url, fixtures_dir, console_log):
+    page.goto(app_url)
+    wait_app_ready(page)
+    assert "選択されていません" in page.inner_text("#fileNameLabel")
+    load_fixture(page, fixtures_dir / "utf8.csv")
+    wait_settled(page)
+    text = page.inner_text("#fileNameLabel")
+    assert "utf8.csv" in text
+    assert "選択されていません" not in text
+    assert page.eval_on_selector("#fileInput", "e => e.value") == ""
+
+
 def test_file_input_reset_and_labels(page, app_url, fixtures_dir, console_log):
     page.goto(app_url)
     wait_app_ready(page)

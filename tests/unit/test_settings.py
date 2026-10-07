@@ -8,8 +8,8 @@ from mplgui.settings import (
     SCHEMA_VERSION,
     default_settings,
     parse_load_settings,
+    parse_save_settings,
     parse_settings,
-    to_legacy_dict,
 )
 
 pytestmark = pytest.mark.unit
@@ -150,6 +150,8 @@ def test_unknown_version_rejected():
         assert "バージョン" in info.value.message
     with pytest.raises(UserError):
         parse_load_settings({"version": 99})
+    with pytest.raises(UserError):
+        parse_save_settings({"version": 99})
 
 
 def test_marker_size_auto_and_backstop():
@@ -173,39 +175,26 @@ def test_parse_load_settings_ignores_other_invalid_fields():
     assert load.delimiter == ";" and load.has_header is False
 
 
+def test_parse_save_settings_ignores_other_invalid_fields():
+    raw = default_settings()
+    raw["plot"]["fontSize"] = "bad"
+    raw["axes"]["x"].update(min=5, max=1)
+    raw["save"].update(filename=" out ", format="SVG", transparent=True)
+    save = parse_save_settings(raw)
+    assert save.filename == "out" and save.format == "svg" and save.transparent is True
+    assert parse_save_settings({}) == parse_settings(default_settings()).save
+    raw["save"]["format"] = "bmp"
+    with pytest.raises(UserError) as info:
+        parse_save_settings(raw)
+    assert info.value.field == "保存形式"
+
+
 def test_settings_are_frozen():
     s = parse_settings(default_settings())
     with pytest.raises(Exception):
         s.plot.title = "x"
     with pytest.raises(Exception):
         s.series[0].color = "#000000"
-
-
-def test_to_legacy_dict_shape():
-    raw = default_settings()
-    raw["plot"].update(title="T", skipRows=2, xColumn="__idx__1")
-    raw["plot"]["margins"]["left"] = 0.1
-    raw["axes"]["x"].update(label="X", min=0, max=5)
-    raw["series"][0].update(label="L", secondaryAxis=True, y="__idx__2")
-    d = to_legacy_dict(parse_settings(raw))
-    expected_keys = {
-        "skip_rows", "plot_type", "title", "x_label", "y_label", "y2_label", "x_scale", "y_scale", "y2_scale",
-        "x_min", "x_max", "y_min", "y_max", "y2_min", "y2_max", "show_major_grid", "show_minor_grid",
-        "legend_location", "font_size", "fig_width", "fig_height", "subplot_margins", "subplot_left",
-        "subplot_right", "subplot_bottom", "subplot_top", "x_column_request", "series_settings", "series_settings_error",
-    }
-    assert set(d) == expected_keys
-    assert d["skip_rows"] == 2 and d["plot_type"] == "line" and d["title"] == "T" and d["x_label"] == "X"
-    assert d["x_min"] == 0 and d["x_max"] == 5 and d["subplot_left"] == 0.1
-    assert d["subplot_margins"] == {"left": 0.1, "right": None, "bottom": None, "top": None}
-    assert d["x_column_request"] == "__idx__1" and d["font_size"] == 15 and d["fig_width"] == 8
-    assert d["series_settings"] == [
-        {
-            "y_request": "__idx__2", "x_request": "", "color": "#FF4B00", "line_width": 2.0, "line_style": "solid",
-            "marker_size": 0.0, "legend_name": "L", "use_secondary_axis": True,
-        }
-    ]
-    json.dumps(d)
 
 
 def test_parse_does_not_mutate_input():

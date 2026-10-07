@@ -159,28 +159,56 @@ button {
   background: var(--card);
   color: var(--text);
 }
-input[type="file"] {
+.file-picker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   background: var(--surface);
+  font-size: 14px;
 }
-input[type="file"]::file-selector-button {
-  border: none;
+.file-picker:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.file-picker-btn {
+  flex: none;
   border-radius: 6px;
   padding: 8px 12px;
-  margin-right: 10px;
   background: var(--file-button-bg);
   color: var(--file-button-text);
   font-weight: 700;
+  white-space: nowrap;
+}
+.file-picker:hover .file-picker-btn {
+  background: var(--button-ghost-hover);
+}
+.file-picker-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.file-picker-name[data-selected="false"] {
+  color: var(--text-muted);
+}
+.file-picker input[type="file"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  opacity: 0;
   cursor: pointer;
 }
-input[type="file"]::-webkit-file-upload-button {
-  border: none;
-  border-radius: 6px;
-  padding: 8px 12px;
-  margin-right: 10px;
-  background: var(--file-button-bg);
-  color: var(--file-button-text);
-  font-weight: 700;
+.file-picker input[type="file"]::file-selector-button {
   cursor: pointer;
 }
 input[type="color"] {
@@ -463,11 +491,13 @@ button.secondary:hover {
   margin-bottom: 8px;
   font-size: 13px;
 }
+#codePanel {
+  overflow: auto;
+}
 .code-editor-wrap {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  height: 100%;
   min-height: 0;
 }
 .code-toolbar {
@@ -476,25 +506,106 @@ button.secondary:hover {
   flex-wrap: wrap;
   gap: 8px;
 }
-.code-toolbar .inline {
-  margin-right: auto;
-}
 .code-toolbar button {
   width: auto;
 }
-#customPyCode {
-  width: 100%;
-  height: 100%;
-  min-height: 360px;
-  resize: vertical;
+.code-toolbar button[hidden] {
+  display: none;
+}
+.code-sync-badge {
+  margin-right: auto;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--surface);
+}
+.code-sync-badge[data-state="edit"] {
+  color: var(--status-warning);
+  border-color: var(--status-warning);
+  background: var(--warning-bg);
+}
+.code-editor-box {
+  display: flex;
+  height: clamp(260px, 52vh, 560px);
+  min-height: 0;
   border: 1px solid var(--line);
   border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.is-edit .code-editor-box {
+  border-color: var(--status-warning);
+  box-shadow: 0 0 0 1px var(--status-warning);
+}
+.code-gutter,
+#customPyCode {
+  margin: 0;
+  padding: 12px 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre;
+}
+.code-gutter {
+  flex: none;
+  min-width: 3.4em;
+  padding: 12px 8px 32px;
+  overflow: hidden;
+  text-align: right;
+  color: var(--table-rownum-text);
+  background: var(--table-rownum-bg);
+  border-right: 1px solid var(--line-soft);
+  user-select: none;
+}
+#customPyCode {
+  flex: 1;
+  min-width: 0;
+  width: auto;
   padding: 12px;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: auto;
+  background: transparent;
+  color: var(--text);
+  tab-size: 4;
+}
+#customPyCode:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.code-output-title {
+  margin: 6px 0 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.code-output {
+  margin: 0;
+  max-height: 260px;
+  min-height: 44px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
   background: var(--surface);
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.code-output:empty::before {
+  content: "（出力はありません）";
+  color: var(--text-muted);
+}
+.code-output[data-kind="error"] {
+  border-color: var(--error-border);
+  background: var(--error-bg);
+  color: var(--error-text);
 }
 .help-text {
   margin-top: 6px;
@@ -653,7 +764,7 @@ button.series-color-chip.active {
     overflow: auto;
   }
   .layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     height: auto;
   }
   .panel {
@@ -674,5 +785,16 @@ button.series-color-chip.active {
   .table-wrap {
     max-height: 520px;
     flex: none;
+  }
+}
+@media (max-width: 480px) {
+  .tabs {
+    gap: 6px;
+  }
+  .tab-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 8px 6px;
+    font-size: 13px;
   }
 }
