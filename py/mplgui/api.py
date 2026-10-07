@@ -17,10 +17,14 @@ from .dataprep import plan_plot
 from .errors import UserError
 from .formats import build_filename
 from .loader import PREVIEW_ROWS, SourceInfo, build_preview, column_options, load_file
-from .runner import ScriptError, run_to_image
+from .runner import MathtextError, ScriptError, is_mathtext_error, run_to_image
 from .settings import Settings, parse_load_settings, parse_save_settings, parse_settings
 
 PREVIEW_DPI = 100
+MATHTEXT_ERROR = (
+    "タイトル・軸ラベル・凡例名の数式（$ で囲んだ部分）を解釈できませんでした。書き方を確認してください"
+    "（例: m$^2$、H$_2$O、$\\alpha$）。$ を文字として使うときは \\$ と書きます。"
+)
 INTERNAL_ERROR_MESSAGE = "内部エラーが発生しました。もう一度操作してください。"
 
 
@@ -134,7 +138,12 @@ def _source_info() -> SourceInfo:
 
 
 def _step_error(script: GeneratedScript, err: ScriptError) -> ScriptError:
-    """生成コードの実行時エラーを、失敗した手順に応じた日本語メッセージにする。"""
+    """生成コードの実行時エラーを、失敗した手順に応じた日本語メッセージにする（数式の書き間違いは専用のメッセージ）。"""
+    if is_mathtext_error(err.exc):
+        return ScriptError(
+            MATHTEXT_ERROR, field="数式", detail=err.detail, traceback_text=err.traceback_text,
+            line=err.line, output=err.output, exc=err.exc,
+        )
     step = script.step_for_line(err.line)
     mapped = ScriptError(
         step.message if step else GENERIC_ERROR_MESSAGE,
@@ -167,6 +176,10 @@ def _run(settings: Settings | None, code: str | None, *, file_format: str, trans
             )
         except ScriptError as err:
             raise _step_error(script, err) from err
+        except MathtextError as err:  # スクリプトは動いたが、画像にするときに数式の誤りが見つかった
+            mapped = UserError(MATHTEXT_ERROR, field="数式", detail=err.detail)
+            mapped.output = getattr(err, "output", "")
+            raise mapped from err
         return plan, script, result
     return None, None, run_to_image(
         code, file_format=file_format, transparent=transparent, dpi=dpi, svg_text=svg_text, cwd=SESSION.workdir

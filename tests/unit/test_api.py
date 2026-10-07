@@ -560,3 +560,68 @@ def test_script_filename_uses_save_filename_rules(raw, expected):
     assert api.script_filename(raw) == expected
     # 保存ファイル名と同じ規則: 拡張子だけが違う
     assert api.script_filename(raw or "").rsplit(".", 1)[0] == api.build_filename(raw or "", "png").rsplit(".", 1)[0]
+
+
+# ---------------------------------------------------------------- C6: mathtext errors
+
+BAD_MATH = [r"$\alpah$", "m$^$"]
+
+
+def _math_settings(title, margins):
+    s = default_settings()
+    s["plot"]["title"] = title
+    if margins:
+        s["plot"]["margins"] = {"left": 0.1, "right": 0.9, "bottom": 0.1, "top": 0.9}
+    return s
+
+
+@pytest.mark.parametrize("margins", [False, True], ids=["tight_layout", "all_margins"])
+@pytest.mark.parametrize("title", BAD_MATH)
+def test_mathtext_error_in_gui_mode_is_a_japanese_user_error(title, margins):
+    load()
+    s = _math_settings(title, margins)
+    for call in (api.render_json, api.save_json, api.copy_image_json):
+        r = json.loads(call(json.dumps(s)))
+        assert r["ok"] is False
+        assert r["error"]["message"] == api.MATHTEXT_ERROR and r["error"]["field"] == "数式"
+        assert "内部エラー" not in r["error"]["message"] and "レイアウト" not in r["error"]["message"]
+
+
+def test_mathtext_error_in_axis_label_and_legend_name():
+    load()
+    s = default_settings()
+    s["axes"]["x"]["label"] = "m$^$"
+    r = json.loads(api.render_json(json.dumps(s)))
+    assert r["error"]["message"] == api.MATHTEXT_ERROR
+    s = default_settings()
+    s["series"][0]["label"] = r"$\alpah$"
+    r = json.loads(api.render_json(json.dumps(s)))
+    assert r["error"]["message"] == api.MATHTEXT_ERROR
+
+
+@pytest.mark.parametrize("title", BAD_MATH)
+def test_mathtext_error_in_edit_mode_with_and_without_tight_layout(title):
+    s = default_settings()
+    base = "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([1, 2], [3, 4])\nax.set_title(%r)\n" % title
+    # スクリプトの中で描画される（tight_layout）
+    r = json.loads(api.render_json(json.dumps(s), base + "fig.tight_layout()\n"))
+    assert r["ok"] is False and "数式" in r["error"]["message"] and "ValueError" in r["error"]["message"]
+    assert r["error"]["line"] == 5 and r["error"]["field"] == "Pythonコード"
+    # スクリプトは通り、画像にするときに見つかる
+    r = json.loads(api.render_json(json.dumps(s), base))
+    assert r["ok"] is False and "数式" in r["error"]["message"] and r["error"]["field"] == "数式"
+    assert "内部エラー" not in r["error"]["message"]
+    r = json.loads(api.save_json(json.dumps(s), base))
+    assert r["ok"] is False and "数式" in r["error"]["message"]
+
+
+def test_valid_mathtext_renders():
+    load()
+    s = default_settings()
+    s["plot"]["title"] = r"m$^2$ と $\alpha$"
+    s["axes"]["x"]["label"] = "H$_2$O"
+    s["plot"]["margins"] = {"left": 0.1, "right": 0.9, "bottom": 0.1, "top": 0.9}
+    assert json.loads(api.render_json(json.dumps(s)))["ok"]
+    s["plot"]["margins"] = {"left": None, "right": None, "bottom": None, "top": None}
+    assert json.loads(api.render_json(json.dumps(s)))["ok"]
+    assert json.loads(api.save_json(json.dumps(s)))["ok"]

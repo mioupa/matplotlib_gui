@@ -70,6 +70,8 @@ def figure_to_bytes(
         with matplotlib.rc_context(savefig_rc(fmt, svg_text)):
             fig.savefig(buffer, format=save_format, **savefig_kwargs(fmt, transparent, dpi))
     except (ValueError, OverflowError, MemoryError) as exc:
+        if is_mathtext_error(exc):
+            raise MathtextError(MATHTEXT_HINT, field="数式", detail=f"{type(exc).__name__}: {exc}") from exc
         raise UserError(
             "画像を書き出せませんでした。図幅・図高さを小さくするか、保存形式を変えてください。",
             field="図幅",
@@ -129,7 +131,34 @@ _HINTS: tuple[tuple[type, str], ...] = (
 )
 
 
+MATHTEXT_HINT = "数式（$ で囲んだ部分）の書き方が正しくありません。$ を文字として使うときは \\$ と書きます。"
+
+
+class MathtextError(UserError):
+    """保存・画像化のときに見つかった、数式（mathtext）の書き間違い。"""
+
+
+def is_mathtext_error(exc: BaseException | None) -> bool:
+    """matplotlib の数式（mathtext）の構文エラーか。例外（と __cause__ / __context__ の連鎖）を調べる。
+
+    matplotlib/_mathtext.py のパーサから出た ValueError、または pyparsing の ParseBaseException を数式のエラーとみなす。
+    """
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if any(c.__name__ == "ParseBaseException" for c in type(exc).__mro__):
+            return True
+        if isinstance(exc, ValueError):
+            for frame in traceback.extract_tb(exc.__traceback__):
+                if os.path.basename(frame.filename) in {"_mathtext.py", "mathtext.py"} and "matplotlib" in frame.filename:
+                    return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
 def japanese_hint(exc: BaseException) -> str | None:
+    if is_mathtext_error(exc):
+        return MATHTEXT_HINT
     for kind, hint in _HINTS:
         if isinstance(exc, kind):
             return hint

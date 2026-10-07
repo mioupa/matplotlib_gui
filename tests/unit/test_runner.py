@@ -440,3 +440,27 @@ def test_check_raster_size_limits():
         check_raster_size(50, 50, 201)  # 画素数の上限を超える
     with pytest.raises(UserError):
         check_raster_size(55, 1, 1200)  # 66000 画素の辺（1辺は 65536 未満）
+
+
+def test_is_mathtext_error_detects_only_math_parse_errors():
+    from mplgui.runner import MATHTEXT_HINT, is_mathtext_error, japanese_hint
+
+    fig, ax = plt.subplots()
+    ax.set_title(r"$\alpah$")
+    try:
+        with pytest.raises(ValueError) as info:
+            fig.canvas.draw()
+        assert is_mathtext_error(info.value) and japanese_hint(info.value) == MATHTEXT_HINT
+    finally:
+        plt.close(fig)
+    assert not is_mathtext_error(ValueError("x")) and not is_mathtext_error(None)
+    assert japanese_hint(ValueError("x")) == "値が正しくありません"
+    assert "\\$" in MATHTEXT_HINT
+
+
+def test_mathtext_error_during_conversion_is_a_user_error_with_field():
+    from mplgui.runner import MathtextError
+
+    with pytest.raises(MathtextError) as info:
+        run_to_image(SIMPLE + "ax.set_title('m$^$')\n")
+    assert info.value.field == "数式" and "数式" in info.value.message
