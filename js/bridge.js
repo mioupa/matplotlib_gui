@@ -355,7 +355,7 @@ export const leaveEditMode = () => {
 // 編集モードのコードを実行する（同期モードでは GUI の設定で再描画する）
 export const runCode = () => {
   if (!api) {
-    setStatus(PYTHON_NOT_READY_MESSAGE, "info");
+    setStatus(PYTHON_NOT_READY_MESSAGE, "warning");
     return;
   }
   if (isEditMode()) editHasRun = true;
