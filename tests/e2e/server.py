@@ -33,10 +33,17 @@ class _Quiet(http.server.SimpleHTTPRequestHandler):
         return super().translate_path(path)
 
 
-def start_server(directory, base_path: str | None = None) -> tuple[http.server.ThreadingHTTPServer, str]:
+class _Server(http.server.ThreadingHTTPServer):
+    # 既定の listen backlog (5) だと、Chromium が ES モジュール等を一斉に取得した際に
+    # 接続が溢れて ERR_CONNECTION_RESET になり、アプリが起動しないことがあるため広げる
+    request_queue_size = 128
+    daemon_threads = True
+
+
+def start_server(directory, base_path: str | None = None) -> tuple[_Server, str]:
     bp = normalize_base_path(base_path)
     handler_cls = type("_Handler", (_Quiet,), {"base_path": bp})
     handler = functools.partial(handler_cls, directory=str(Path(directory)))
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    srv = _Server(("127.0.0.1", 0), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv, f"http://127.0.0.1:{srv.server_address[1]}{bp}"
