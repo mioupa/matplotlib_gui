@@ -2,6 +2,7 @@
 export const showProgress = (text) => {
   const el = document.getElementById("progress");
   if (!el) return;
+  if (document.documentElement.dataset.loadFailed) return; // 読み込み失敗の案内（index.html）を上書きしない
   el.textContent = text || "";
   el.hidden = !text;
 };

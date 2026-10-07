@@ -11,8 +11,31 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/noto-sans-jp@5.3.0/700.css" />
     <link rel="stylesheet" href="https://pyscript.net/releases/2026.7.3/core.css" />
     <link rel="stylesheet" href="css/style.css" />
-    <script type="module" src="./js/main.js"></script>
-    <script type="module" src="https://pyscript.net/releases/2026.7.3/core.js"></script>
+    <!-- 画面のスクリプト（js/main.js とその import、PyScript の core.js）の読み込みに失敗したとき、
+         何も起きないまま読み込み中で止まらないよう利用者に知らせる。他のモジュールに依存しない古典スクリプトで定義する。 -->
+    <script>
+      window.__mplguiLoadFailed = function () {
+        var message = "画面の読み込みに失敗しました。ネットワーク接続を確認して、ページを再読み込みしてください。";
+        var show = function () {
+          document.documentElement.dataset.appState = "failed";
+          var status = document.getElementById("status");
+          if (status) {
+            status.textContent = message;
+            status.dataset.kind = "error";
+          }
+          var progress = document.getElementById("progress");
+          if (progress) {
+            progress.textContent = message;
+            progress.hidden = false;
+          }
+        };
+        document.documentElement.dataset.loadFailed = "true";
+        if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", show);
+        else show();
+      };
+    </script>
+    <script type="module" src="./js/main.js" onerror="__mplguiLoadFailed()"></script>
+    <script type="module" src="https://pyscript.net/releases/2026.7.3/core.js" onerror="__mplguiLoadFailed()"></script>
   </head>
   <body>
     <div class="layout">
