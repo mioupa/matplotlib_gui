@@ -1,7 +1,11 @@
-// 日本語フォント（Noto Sans CJK JP）の取得。Cache Storage に保存し、再訪問ではダウンロードしない。
+// 日本語フォント（Noto Sans JP、TrueType 版、約5.7 MB）の取得。Cache Storage に保存し、再訪問ではダウンロードしない。
 // - セッション中の取得は最大1回（失敗しても再試行しない）。
 // - Cache Storage が使えない環境では通常の fetch にフォールバックする。
-export const FONT_URL = "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@Sans2.004/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf";
+// TrueType 版を使う理由: matplotlib は CFF 形式の OTF を pdf.fonttype=42 で正しく埋め込めない（PDF が壊れる）ため。
+// ライセンス: SIL OFL 1.1（https://cdn.jsdelivr.net/npm/@expo-google-fonts/noto-sans-jp@0.4.4/LICENSE_FONT）
+export const FONT_URL = "https://cdn.jsdelivr.net/npm/@expo-google-fonts/noto-sans-jp@0.4.4/400Regular/NotoSansJP_400Regular.ttf";
+// 以前に使っていた約16 MB の OTF。同じキャッシュに残っていれば消す（ベストエフォート）
+const LEGACY_FONT_URL = "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@Sans2.004/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf";
 export const FONT_CACHE_NAME = "mplgui-fonts-v1";
 
 // テスト専用の上書き: E2E が addInitScript で window.__MPLGUI_TEST_OVERRIDES__ = {fontStallMs, fontFirstRenderWaitMs} を
@@ -21,6 +25,18 @@ const openCache = async () => {
     return await caches.open(FONT_CACHE_NAME);
   } catch (_) {
     return null;
+  }
+};
+
+// 古い OTF のキャッシュを1回だけ削除する（失敗しても無視する）
+let legacyCleaned = false;
+const cleanupLegacy = async (cache) => {
+  if (!cache || legacyCleaned) return;
+  legacyCleaned = true;
+  try {
+    await cache.delete(LEGACY_FONT_URL);
+  } catch (_) {
+    // 無視
   }
 };
 
@@ -97,6 +113,7 @@ export const loadFont = (onProgress = () => {}) => {
   if (!fontPromise) {
     fontPromise = (async () => {
       const cache = await openCache();
+      await cleanupLegacy(cache);
       const cached = await readCached(cache);
       if (cached) {
         onProgress(100);
@@ -107,7 +124,7 @@ export const loadFont = (onProgress = () => {}) => {
         const bytes = await download(onProgress);
         if (cache) {
           try {
-            await cache.put(FONT_URL, new Response(bytes, { headers: { "content-type": "font/otf" } }));
+            await cache.put(FONT_URL, new Response(bytes, { headers: { "content-type": "font/ttf" } }));
           } catch (_) {
             // 保存に失敗しても今回のセッションでは使える
           }

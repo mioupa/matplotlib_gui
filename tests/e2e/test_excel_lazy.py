@@ -5,7 +5,7 @@ from helpers import load_fixture, status_kind, wait_app_ready, wait_data_ready, 
 
 pytestmark = pytest.mark.e2e
 
-FONT_GLOB = "**/NotoSansCJKjp-Regular.otf"
+FONT_GLOB = "**/NotoSansJP_400Regular.ttf"
 EXCEL_MARKERS = ("openpyxl", "et_xmlfile")
 
 

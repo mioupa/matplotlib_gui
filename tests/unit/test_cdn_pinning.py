@@ -77,6 +77,7 @@ def test_checker_rejects_unpinned(url):
     "url",
     [
         "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@Sans2.004/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf",
+        "https://cdn.jsdelivr.net/npm/@expo-google-fonts/noto-sans-jp@0.4.4/400Regular/NotoSansJP_400Regular.ttf",
         "https://cdn.jsdelivr.net/npm/@fontsource/noto-sans-jp@5.3.0/400.css",
         "https://pyscript.net/releases/2026.7.3/core.js",
         "https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl",

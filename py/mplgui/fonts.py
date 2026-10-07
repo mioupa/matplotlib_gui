@@ -9,8 +9,8 @@ from matplotlib import font_manager
 
 # 日本語フォントの優先順（唯一の定義）。codegen が生成するスクリプトの rcParams もこの並びを使う。
 SANS_SERIF_PRIORITY = [
-    "Noto Sans CJK JP",
     "Noto Sans JP",
+    "Noto Sans CJK JP",
     "IPAexGothic",
     "Yu Gothic",
     "Hiragino Sans",
@@ -33,7 +33,7 @@ def register_font_file(path) -> None:
     configure_rcparams()
 
 
-def register_font_bytes(data: bytes, filename: str = "NotoSansCJKjp-Regular.otf") -> bool:
+def register_font_bytes(data: bytes, filename: str = "NotoSansJP-Regular.ttf") -> bool:
     """フォントのバイト列を登録する。登録は1セッション1回だけ（2回目以降は何もしない）。"""
     global _registered
     if _registered:

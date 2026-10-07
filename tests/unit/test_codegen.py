@@ -380,7 +380,7 @@ def test_font_list_comes_from_fonts_module(tmp_path, data):
     b = Built(tmp_path, data, None, [S(1)])
     expected = "[" + ", ".join(literal(n) for n in SANS_SERIF_PRIORITY) + "]"
     assert f'plt.rcParams["font.sans-serif"] = {expected}' in b.script.text
-    assert SANS_SERIF_PRIORITY[0] == "Noto Sans CJK JP"
+    assert SANS_SERIF_PRIORITY[0] == "Noto Sans JP"
 
 
 def test_script_only_imports_pandas_matplotlib_numpy(tmp_path, data):
