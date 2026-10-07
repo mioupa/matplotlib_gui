@@ -1,6 +1,4 @@
 // エントリ。DOM 構築後（module は defer）に UI を初期化する。
-// notify.js は parentNode 系例外のハンドラを登録するため、必ず最初に import する。
-import "./ui/notify.js";
 import { scheduleLoad, scheduleRender } from "./bridge.js";
 import { bindColorPanelOutsideClick } from "./ui/colorPicker.js";
 import { bindCustomCodeEvents } from "./ui/customCode.js";

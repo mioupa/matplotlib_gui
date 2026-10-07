@@ -33,11 +33,8 @@ class ConsoleCollector:
     def mark(self, stage):
         self.stage = stage
 
-    def parentnode(self):
-        return [e for e in self.events if "parentNode" in e[3]]
-
     def report(self):
-        print(f"\n[console-errors] total={len(self.events)} parentNode={len(self.parentnode())}")
+        print(f"\n[console-errors] total={len(self.events)}")
         for t, stage, kind, text in self.events:
             print(f"  [{t}s][{stage}][{kind}] {text}")
 

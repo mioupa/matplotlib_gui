@@ -138,33 +138,9 @@ def _format_internal_error_detail(exc: Exception, context: str) -> str:
     return "\n".join(lines)
 
 
-def _is_parentnode_error(exc: Exception) -> bool:
-    text = str(exc)
-    return ("parentNode" in text) or ("NoneType" in text and "parentNode" in text)
-
-
-def _log_suppressed(where: str, exc) -> None:
-    try:
-        from js import console
-        if False:
-            console.warn("[mplgui] suppressed parentNode error:", where, str(exc), traceback.format_exc())
-        else:
-            console.warn("[mplgui] suppressed parentNode error:", where, str(exc))
-    except Exception:
-        pass
-
-
 def _safe_close_figure(fig) -> None:
-    if fig is None:
-        return
-    try:
+    if fig is not None:
         plt.close(fig)
-    except Exception as exc:
-        # Pyodide/ブラウザ描画バックエンドの後処理競合は無視する
-        if _is_parentnode_error(exc):
-            _log_suppressed("_safe_close_figure", exc)
-            return
-        raise
 
 
 def _switch_tab(tab_name: str) -> None:
@@ -201,21 +177,8 @@ def _spawn_task(coro) -> None:
         try:
             finished_task.result()
         except Exception as exc:
-            if _is_parentnode_error(exc):
-                _log_suppressed("_spawn_task", exc)
-                try:
-                    if _has_rendered_plot():
-                        set_status("描画に成功しました。")
-                    else:
-                        detail = _format_internal_error_detail(exc, "async task callback")
-                        set_status("内部エラーを自動回避しました。もう一度操作してください。", True, detail)
-                except Exception:
-                    pass
-            else:
-                try:
-                    set_status(str(exc), True)
-                except Exception:
-                    pass
+            detail = _format_internal_error_detail(exc, "async task callback")
+            set_status("内部エラーが発生しました。もう一度操作してください。", True, detail)
 
     task.add_done_callback(_consume_done)
 
@@ -645,13 +608,6 @@ def _render_plot_image(fig) -> None:
     plot_area.innerHTML = f'<img alt="plot" src="data:image/png;base64,{encoded}" />'
 
 
-def _has_rendered_plot() -> bool:
-    plot_area = document.getElementById("plotArea")
-    if plot_area is None:
-        return False
-    return plot_area.querySelector("img") is not None
-
-
 def on_tab_plot(event=None):
     _switch_tab("plot")
 
@@ -970,11 +926,6 @@ async def on_load_columns(event=None):
     except Exception as exc:
         CURRENT_DF = None
         _set_data_ready(False)
-        if _is_parentnode_error(exc):
-            _log_suppressed("on_load_columns", exc)
-            detail = _format_internal_error_detail(exc, "on_load_columns")
-            set_status("内部エラーを自動回避しました。もう一度同じ操作を実行してください。", True, detail)
-            return
         set_status(str(exc), True)
 
 
@@ -1247,14 +1198,6 @@ async def on_render(event=None):
         _set_data_ready(True)
         set_status(f"描画に成功しました（{plotted_count}系列、スキップ{skip_rows}行）。")
     except Exception as exc:
-        if _is_parentnode_error(exc):
-            _log_suppressed("on_render", exc)
-            if _has_rendered_plot():
-                set_status("描画に成功しました。")
-            else:
-                detail = _format_internal_error_detail(exc, "on_render")
-                set_status("内部エラーを自動回避しました。もう一度描画を実行してください。", True, detail)
-            return
         set_status(str(exc), True)
     finally:
         _safe_close_figure(fig)
@@ -1275,11 +1218,6 @@ async def on_save_plot(event=None):
         window.downloadDataUri(filename, data_uri)
         set_status(f"描画データを保存しました: {filename}")
     except Exception as exc:
-        if _is_parentnode_error(exc):
-            _log_suppressed("on_save_plot", exc)
-            detail = _format_internal_error_detail(exc, "on_save_plot")
-            set_status("内部エラーを自動回避しました。もう一度保存を実行してください。", True, detail)
-            return
         set_status(str(exc), True)
     finally:
         _safe_close_figure(fig)
@@ -1330,13 +1268,5 @@ _init_custom_code_editor()
 _switch_tab("plot")
 if hasattr(window, "ensureSeriesItems"):
     window.ensureSeriesItems()
-try:
-    _register_js_api()
-    _bind_events()
-except Exception as exc:
-    if _is_parentnode_error(exc):
-        _log_suppressed("initialization", exc)
-        detail = _format_internal_error_detail(exc, "initialization")
-        set_status("内部エラーを自動回避しました。ページを再読み込みして再試行してください。", True, detail)
-    else:
-        set_status(f"初期化エラー: {exc}", True)
+_register_js_api()
+_bind_events()
