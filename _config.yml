@@ -1,0 +1,5 @@
+# GitHub Pages (Jekyll) の配信設定
+# 開発用ドキュメントはリポジトリには置くが、Pages では配信しない
+exclude:
+  - docs/
+  - AGENTS.md
