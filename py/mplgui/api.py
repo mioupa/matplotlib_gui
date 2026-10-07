@@ -17,7 +17,7 @@ from .errors import UserError
 from .formats import SAVE_DPI, build_filename
 from .loader import PREVIEW_ROWS, SourceInfo, build_preview, column_options, load_file
 from .runner import ScriptError, run_to_image
-from .settings import Settings, parse_load_settings, parse_settings
+from .settings import Settings, parse_load_settings, parse_save_settings, parse_settings
 
 PREVIEW_DPI = 100
 INTERNAL_ERROR_MESSAGE = "内部エラーが発生しました。もう一度操作してください。"
@@ -188,11 +188,14 @@ def render_json(settings_json: str, code: str | None = None) -> dict:
 @_guard("save")
 def save_json(settings_json: str, code: str | None = None) -> dict:
     """保存設定の形式で図を書き出し、data URI とファイル名を返す（ダウンロードは JS が行う）。"""
-    settings = parse_settings(_parse_json(settings_json))
-    _, _, result = _run(settings, code, file_format=settings.save.format, transparent=settings.save.transparent, dpi=SAVE_DPI)
+    raw = _parse_json(settings_json)
+    # 編集モードは保存設定だけを使う（描画設定が不正でも、編集したコードの図は保存できる）
+    settings = parse_settings(raw) if code is None else None
+    save = settings.save if settings is not None else parse_save_settings(raw)
+    _, _, result = _run(settings, code, file_format=save.format, transparent=save.transparent, dpi=SAVE_DPI)
     return {
         "ok": True,
-        "filename": build_filename(settings.save.filename, result.ext),
+        "filename": build_filename(save.filename, result.ext),
         "mime": result.mime,
         "dataUri": _data_uri(result),
         "output": result.output,

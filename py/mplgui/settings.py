@@ -396,10 +396,20 @@ def parse_settings(raw: dict | None) -> Settings:
     if any(s.secondary_axis for s in series):
         _check_axis_range(axes.y2, "第2Y")
 
-    sv = merged["save"]
-    save = SaveSettings(
+    save = _parse_save(merged["save"])
+    return Settings(version=SCHEMA_VERSION, load=load, plot=plot, axes=axes, series=series, save=save)
+
+
+def _parse_save(sv: dict) -> SaveSettings:
+    return SaveSettings(
         filename=_string(sv["filename"], "保存ファイル名").strip(),
         format=_choice(str(sv["format"]).strip().lower() if isinstance(sv["format"], str) else sv["format"], "保存形式", SAVE_FORMATS),
         transparent=_boolean(sv["transparent"], "背景を透過して保存"),
     )
-    return Settings(version=SCHEMA_VERSION, load=load, plot=plot, axes=axes, series=series, save=save)
+
+
+def parse_save_settings(raw: dict | None) -> SaveSettings:
+    """保存設定だけを検証する（編集モードの保存を、使わない描画設定の不備で止めないため）。"""
+    raw = raw if isinstance(raw, dict) else {}
+    _check_version(raw)
+    return _parse_save(_merge(default_settings()["save"], raw.get("save")))

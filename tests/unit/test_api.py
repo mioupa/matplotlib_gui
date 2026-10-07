@@ -200,6 +200,18 @@ def test_save_with_code_uses_save_settings(workdir):
     assert r["ok"] is False and "背景透過" in r["error"]["message"] and r["output"] == "save\n"
 
 
+def test_save_with_code_ignores_invalid_plot_settings_but_checks_save_settings():
+    code = "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([1, 2], [3, 4])\n"
+    s = default_settings()
+    s["axes"]["x"].update(min=5, max=1)  # 描画設定の不備（GUI 同期なら軸範囲のエラー）
+    assert json.loads(api.save_json(json.dumps(s)))["ok"] is False
+    r = json.loads(api.save_json(json.dumps(s), code))
+    assert r["ok"] and r["filename"] == "plot.png"
+    s["save"]["format"] = "bmp"
+    r = json.loads(api.save_json(json.dumps(s), code))
+    assert r["ok"] is False and r["error"]["field"] == "保存形式"
+
+
 def test_save_uses_120_dpi_and_render_100():
     import base64
     import struct

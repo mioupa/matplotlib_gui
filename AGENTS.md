@@ -78,7 +78,7 @@ Python が登録し、登録後に `mplgui-ready` イベントを送る。引数
 `defaultCustomCode()` は廃止した（Phase 2）。
 
 - `code` が null（GUI 同期）: 設定から生成したスクリプトの「自動描画用」（§4.1）を、読込済みの DataFrame（`df`）を渡して実行する。`image` は PNG の data URI、`code` は表示用の完全なスクリプト、`output` は実行中の print / stderr、`summary` は `runner.figure_summary` の軸ごとの要約。読込済みデータが必要。`save` は保存設定の形式・背景透過・`SAVE_DPI`（120）で書き出す（`render` のプレビューは dpi 100）。
-- `code` が文字列（編集モード）: そのスクリプトを丸ごと、アップロードしたファイルのある作業フォルダ（`SESSION.workdir`）で実行する。`render` は設定を読まない（設定が不正でも、読込済みデータが無くても動く）。`save` は設定を解釈したうえで、保存形式と背景透過だけを使う。GUI の設定をコードの結果に上書き適用することはしない（A8）。
+- `code` が文字列（編集モード）: そのスクリプトを丸ごと、アップロードしたファイルのある作業フォルダ（`SESSION.workdir`）で実行する。`render` は設定を読まない（設定が不正でも、読込済みデータが無くても動く）。`save` は保存設定（`save.*`）だけを `settings.parse_save_settings` で検証して使う（描画設定が不正でも、編集したコードの図は保存できる）。GUI の設定をコードの結果に上書き適用することはしない（A8）。
 - `loadFile` は、読み込んだファイルを元のファイル名（フォルダ部分は除く）で作業フォルダに書き出す（前のファイルは消す。失敗したら読込済みデータと書き出したファイルを破棄する）。こうして、表示中のスクリプトの `pd.read_csv("ファイル名", ...)` がそのまま動く（P5）。
 - `warnings` は `{series, message}` の配列（読込時は文字列配列の場合もある。JS の `warningTexts` が吸収する）。
 - 失敗: `{ok: false, error: {message, field?, detail?, traceback?, line?}, output?}`。

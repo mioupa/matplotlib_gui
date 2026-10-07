@@ -8,6 +8,7 @@ from mplgui.settings import (
     SCHEMA_VERSION,
     default_settings,
     parse_load_settings,
+    parse_save_settings,
     parse_settings,
 )
 
@@ -149,6 +150,8 @@ def test_unknown_version_rejected():
         assert "バージョン" in info.value.message
     with pytest.raises(UserError):
         parse_load_settings({"version": 99})
+    with pytest.raises(UserError):
+        parse_save_settings({"version": 99})
 
 
 def test_marker_size_auto_and_backstop():
@@ -170,6 +173,20 @@ def test_parse_load_settings_ignores_other_invalid_fields():
     raw["load"].update(delimiter=";", hasHeader=False)
     load = parse_load_settings(raw)
     assert load.delimiter == ";" and load.has_header is False
+
+
+def test_parse_save_settings_ignores_other_invalid_fields():
+    raw = default_settings()
+    raw["plot"]["fontSize"] = "bad"
+    raw["axes"]["x"].update(min=5, max=1)
+    raw["save"].update(filename=" out ", format="SVG", transparent=True)
+    save = parse_save_settings(raw)
+    assert save.filename == "out" and save.format == "svg" and save.transparent is True
+    assert parse_save_settings({}) == parse_settings(default_settings()).save
+    raw["save"]["format"] = "bmp"
+    with pytest.raises(UserError) as info:
+        parse_save_settings(raw)
+    assert info.value.field == "保存形式"
 
 
 def test_settings_are_frozen():
