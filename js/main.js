@@ -7,6 +7,7 @@ import { bindCodeTab } from "./ui/codeTab.js";
 import { applyStateToForm, bindForms } from "./ui/forms.js";
 import { bindSaveFormatEvents, syncSaveFormatOptions } from "./ui/saveFormat.js";
 import { bindSeriesEvents, renderSeriesList, setColumns, syncMarkerSizeDisplay, syncVisibility } from "./ui/series.js";
+import { initPanelSections } from "./ui/panelSections.js";
 import { bindTabs } from "./ui/tabs.js";
 
 const fileInput = document.getElementById("fileInput");
@@ -20,6 +21,7 @@ if (fileInput) {
 const savePlotBtn = document.getElementById("savePlotBtn");
 if (savePlotBtn) savePlotBtn.addEventListener("click", () => saveNow());
 
+initPanelSections();
 bindTabs();
 bindForms();
 bindSeriesEvents();
