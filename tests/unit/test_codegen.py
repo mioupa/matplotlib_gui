@@ -650,6 +650,8 @@ def test_savefig_rc_lines_only_for_pdf_and_svg(tmp_path, data):
     pdf = text("pdf")
     assert 'plt.rcParams["pdf.fonttype"] = 42  # PDF に文字をフォントとして埋め込む' in pdf
     assert "OpenType（CFF）" in pdf and pdf.index("fonttype") < pdf.index("fig.savefig")
+    note = [ln for ln in pdf.splitlines() if "OpenType（CFF）" in ln or "42 を 3 にする" in ln]
+    assert len(note) == 2 and all(ln.startswith("#") and len(ln) < 100 for ln in note)  # 注記は2行に分ける
     assert 'plt.rcParams["svg.fonttype"] = "path"  # SVG の文字を図形（パス）にする' in text("svg")
     assert 'plt.rcParams["svg.fonttype"] = "path"' in text("svg", svgText="path")
     assert 'plt.rcParams["svg.fonttype"] = "none"  # SVG の文字をテキストのまま残す' in text("svg", svgText="text")

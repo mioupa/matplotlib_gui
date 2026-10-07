@@ -499,8 +499,8 @@ _RC_COMMENTS = {
 }
 
 _PDF_CFF_NOTE = (
-    "# ※ 手元の日本語フォントが OpenType（CFF）形式（macOS のヒラギノなど）だと、この PDF の文字は正しく表示されないことがある。"
-    "そのときは Noto Sans JP（TrueType 版）を入れるか、42 を 3 にする（文字は編集できなくなる）"
+    "# ※ 手元の日本語フォントが OpenType（CFF）形式（macOS のヒラギノなど）だと、この PDF の文字は正しく表示されないことがある。",
+    "#   そのときは Noto Sans JP（TrueType 版）を入れるか、42 を 3 にする（文字は編集できなくなる）",
 )
 
 
@@ -512,7 +512,7 @@ def _emit_output(b: _Builder, settings: Settings) -> None:
     for key, value in savefig_rc(save.format, save.svg_text).items():
         comment = _RC_COMMENTS.get((save.format, key)) or _RC_COMMENTS[(save.format, key, value)]
         if save.format == "pdf":
-            b.add(_PDF_CFF_NOTE)
+            b.add(*_PDF_CFF_NOTE)
         b.add(f"plt.rcParams[{literal(key)}] = {literal(value)}  # {comment}")
     kwargs = savefig_kwargs(save.format, save.transparent, save.dpi)
     args = "".join(f", {k}={literal(v)}" for k, v in kwargs.items())
