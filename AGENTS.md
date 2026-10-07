@@ -25,6 +25,7 @@
 | `js/defaults.js` | 設定の既定値（`DEFAULT_SETTINGS`）、色パレット（UD カラー） |
 | `js/state.js` | 設定オブジェクトの保持・更新・購読（`getSettings`、`setPath`、`updateSeries`、`addSeries`、`removeSeries`、`subscribe`、`toJson`） |
 | `js/bridge.js` | Python（`window.mplgui`）の唯一の窓口。読込・描画・保存の制御、世代管理、フォント取得の起動 |
+| `js/startup-progress.js` | Python 起動中の段階表示。Resource Timing（`PerformanceObserver`、取得済みエントリを含む）から Pyodide 本体（`pyodide.asm.wasm`・`python_stdlib.zip`）→ パッケージ wheel（pandas / matplotlib）→ 初期化（`/py/main.py` の取得）を推定する |
 | `js/font-cache.js` | 日本語フォントの取得と Cache Storage への保存 |
 | `js/ui/*.js` | 画面部品（`colorPicker`、`customCode`、`dataPreview`、`fileInfo`、`forms`、`notify`、`plotView`、`progress`、`saveFormat`、`series`、`tabs`） |
 | `py/main.py` | PyScript のエントリ。JS と `mplgui` の橋渡しだけを書く（`window.mplgui` の登録、Excel 用ライブラリの遅延導入） |
@@ -77,6 +78,7 @@ Python が登録し、登録後に `mplgui-ready` イベントを送る。引数
 ## 5. 描画パイプライン
 
 - 描画は設定変更の 250 ms 後（デバウンス）。読込は、ファイル選択・ヘッダ変更で 0 ms、区切り文字の変更で 450 ms 後。保存設定（`save.*`）の変更では再描画しない。`skipRows` の変更は Python を呼ばず、データ確認表のグレー表示だけ即時に更新する。
+- 起動中の `#progress`（`aria-live="polite"`）は段階表示: 「Python 実行環境を読み込み中…」→「ライブラリを読み込み中…（pandas ✓, matplotlib …）」→「ライブラリを初期化中…」→ 準備完了で消える（フォント取得の表示が続く場合あり）。`<html>` の `data-startup-stage`（`runtime` / `packages` / `init` / `ready`）に現在の段階が入る。新しい id は無い。読込失敗の案内（`data-load-failed`）は上書きしない。
 - 描画要求には世代番号を付ける。Python の描画は同時に最大1つ。実行中に新しい要求が来たら「やり直し」の印だけ付け、終了後に最新の設定で1回だけ描く（合流）。古い世代の結果は画像にもステータスにも反映しない。
 - Python の起動前に選んだファイルや変えた設定は保持し、起動後に最新の内容で1回読み込んで描く（起動キュー）。
 - E2E が使う状態は `<html>` の data 属性: `data-app-state`（`starting` / `ready` / `failed`）、`data-data-state`（`none` / `loading` / `ready` / `error`）、`data-render-state`（`idle` / `pending` / `rendering`）、`data-render-generation`、`data-font-state`（`idle` / `loading` / `ready` / `failed`）、`data-load-count`。表示中の画像は `#plotArea img` の `data-generation` を持つ。ステータスは `#status` の `data-kind`。

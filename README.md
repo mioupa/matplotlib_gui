@@ -25,7 +25,13 @@ https://mioupa.github.io/matplotlib_gui/ を開いてください。`index.html`
 
 ## プライバシー
 
-読み込んだデータの処理はすべてブラウザの中で行い、外部には送信しません。外部への通信は、ライブラリ（PyScript / Pyodide / pandas / matplotlib など）とフォントの取得だけです。
+読み込んだデータの処理はすべてブラウザの中で行い、外部には送信しません。外部への通信は、ライブラリ（PyScript / Pyodide / pandas / matplotlib など）とフォントの取得だけです。通信先は次のとおりです。
+
+| ホスト | 取得するもの |
+|---|---|
+| `pyscript.net` | PyScript 本体 |
+| `cdn.jsdelivr.net` | Pyodide 本体と同梱パッケージ（pandas / matplotlib など）、画面用フォント（Noto Sans JP）、グラフ用の日本語フォント（Noto Sans CJK JP） |
+| `files.pythonhosted.org` | openpyxl の wheel（`.xlsx` を初めて開くときだけ） |
 
 初回の訪問では、Pyodide とライブラリ（数十 MB）と、日本語フォント（約 16 MB）をダウンロードするため、時間がかかります。2回目以降はキャッシュを使います（フォントはブラウザの Cache Storage に保存し、再ダウンロードしません）。
 

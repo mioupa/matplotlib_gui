@@ -10,12 +10,12 @@ import { applySkipRows, showPreview } from "./ui/dataPreview.js";
 import { setColumns } from "./ui/series.js";
 import { showEncoding, showFileName } from "./ui/fileInfo.js";
 import { setBusy, showProgress } from "./ui/progress.js";
+import { RUNTIME_MESSAGE, watchStartup } from "./startup-progress.js";
 import { FONT_FIRST_RENDER_WAIT_MS, isFontCached, loadFont } from "./font-cache.js";
 
 const RENDER_DELAY_MS = 250;
 const LOAD_DELAY_MS = { file: 0, header: 0, delimiter: 450 };
 const FONT_FAILED_MESSAGE = "日本語フォントを取得できませんでした。日本語が正しく表示されない場合があります。";
-const PYTHON_LOADING_MESSAGE = "Python 実行環境を読み込み中…（初回は時間がかかります）";
 const FONT_LOADING_MESSAGE = "日本語フォントを取得中…";
 
 const root = document.documentElement;
@@ -37,6 +37,8 @@ let fontPercent = null;
 let fontTask = null;
 let excelInstalling = false; // 初回の .xlsx 読込前に Excel 用ライブラリを取得中
 let excelReady = false;
+let startupMessage = RUNTIME_MESSAGE; // Python 起動中の段階表示（startup-progress.js）
+let stopStartupWatch = () => {};
 let fontWaitGaveUp = false; // 最初の描画がフォント待ちを打ち切った（以後は待たない）
 
 const setDataState = (state) => {
@@ -73,7 +75,7 @@ const reportException = (err, context) => {
 
 // 進捗バナー: Python 起動中はその旨、起動後はフォント取得の進捗、どちらも無ければ非表示
 const refreshProgress = () => {
-  if (!api) showProgress(PYTHON_LOADING_MESSAGE);
+  if (!api) showProgress(startupMessage);
   else if (excelInstalling) showProgress(EXCEL_LOADING_MESSAGE);
   else if (fontState === "loading") showProgress(fontPercent === null ? FONT_LOADING_MESSAGE : `${FONT_LOADING_MESSAGE} ${fontPercent}%`);
   else showProgress("");
@@ -326,6 +328,8 @@ export const onPythonReady = (fn) => {
 const handlePythonReady = () => {
   if (api || !window.mplgui) return;
   api = window.mplgui;
+  stopStartupWatch();
+  root.dataset.startupStage = "ready";
   root.dataset.appState = "ready";
   startFont(); // 起動時のダウンロードと競合しないよう、Python の準備後に始める
   const callbacks = readyCallbacks;
@@ -353,6 +357,11 @@ export const initBridge = () => {
   setRenderState("idle");
   setFontState("idle");
   root.dataset.loadCount = "0";
+  stopStartupWatch = watchStartup((stage, message) => {
+    startupMessage = message;
+    root.dataset.startupStage = stage; // runtime | packages | init（Python の準備後は ready）
+    if (!api) refreshProgress();
+  });
   refreshProgress();
   subscribe(routeChange);
   // フォントが Cache Storage にあれば、Python の起動を待たずに読み出しだけ始める（ダウンロードは起こらない）
