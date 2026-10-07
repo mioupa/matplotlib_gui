@@ -1,5 +1,12 @@
 # GitHub Pages (Jekyll) の配信設定
-# 開発用ドキュメントはリポジトリには置くが、Pages では配信しない
+# Jekyll は "_" で始まるファイルを既定で配信しないため、Python パッケージの __init__.py だけ明示的に含める
+include:
+  - __init__.py
+# 開発用のファイルはリポジトリには置くが、Pages では配信しない
 exclude:
   - docs/
   - AGENTS.md
+  - tests/
+  - pyproject.toml
+  - uv.lock
+  - .python-version
