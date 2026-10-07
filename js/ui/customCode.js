@@ -1,5 +1,5 @@
 // Pythonコード(beta)タブ。コード本文と「使用する」は設定オブジェクトには入れず、描画要求のたびに別引数で渡す。
-import { canAutoRender, renderNow, scheduleRender, setCustomCodeProvider } from "../bridge.js";
+import { canAutoRender, onGeneratedCode, renderNow, scheduleRender, setCustomCodeProvider } from "../bridge.js";
 
 const customCodeInput = () => document.getElementById("customPyCode");
 const useCustomCodeInput = () => document.getElementById("useCustomCode");
@@ -11,16 +11,18 @@ export const getCustomCode = () => {
   return use && use.checked && editor ? String(editor.value || "") : null;
 };
 
-// Python 起動後に既定コードを入れる（未入力のときだけ）
-export const initDefaultCode = (defaultCode) => {
+// GUI 設定から生成したスクリプトを表示する。「使用する」が無効のときだけ上書きする（編集中のコードは守る）
+export const showGeneratedCode = (code) => {
   const editor = customCodeInput();
   if (!editor) return;
-  editor.dataset.defaultCode = defaultCode;
-  if (!String(editor.value || "").trim()) editor.value = defaultCode;
+  editor.dataset.defaultCode = code;
+  const use = useCustomCodeInput();
+  if (!use || !use.checked) editor.value = code;
 };
 
 export const bindCustomCodeEvents = () => {
   setCustomCodeProvider(getCustomCode);
+  onGeneratedCode(showGeneratedCode);
   const use = useCustomCodeInput();
   const editor = customCodeInput();
   const applyBtn = document.getElementById("applyCustomCodeBtn");

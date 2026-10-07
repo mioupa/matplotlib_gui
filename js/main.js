@@ -1,9 +1,9 @@
 // エントリ。DOM 構築後（module は defer）に UI を設定オブジェクトへ結び付ける。
 //   画面の入力 → state.js（設定オブジェクト）→ bridge.js が JSON で Python を呼ぶ → 結果を ui/* が描く
 import { subscribe } from "./state.js";
-import { getDefaultCustomCode, initBridge, onPythonReady, saveNow, selectFile } from "./bridge.js";
+import { initBridge, saveNow, selectFile } from "./bridge.js";
 import { bindColorPanelOutsideClick } from "./ui/colorPicker.js";
-import { bindCustomCodeEvents, initDefaultCode } from "./ui/customCode.js";
+import { bindCustomCodeEvents } from "./ui/customCode.js";
 import { applyStateToForm, bindForms } from "./ui/forms.js";
 import { bindSaveFormatEvents, syncSaveFormatOptions } from "./ui/saveFormat.js";
 import { bindSeriesEvents, renderSeriesList, setColumns, syncMarkerSizeDisplay, syncVisibility } from "./ui/series.js";
@@ -41,4 +41,3 @@ applyStateToForm();
 setColumns([]);
 syncSaveFormatOptions();
 initBridge();
-onPythonReady(() => initDefaultCode(getDefaultCustomCode()));

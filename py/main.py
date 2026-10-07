@@ -4,6 +4,7 @@ JS（js/bridge.js）は window.mplgui の関数を呼ぶ。引数・戻り値は
 """
 import asyncio
 import json
+from pathlib import Path
 
 import matplotlib
 
@@ -21,6 +22,9 @@ from mplgui.errors import UserError  # noqa: E402
 from mplgui.fonts import configure_rcparams  # noqa: E402
 
 configure_rcparams()
+
+# ブラウザ内で実行するスクリプトが、アップロードしたファイルを元のファイル名で読めるように、作業フォルダに置く
+api.SESSION.workdir = Path.cwd()
 
 
 # openpyxl / et_xmlfile は Pyodide 同梱ではない。バージョン固定の wheel URL を Pyodide の loadPackage に直接渡す
@@ -97,7 +101,6 @@ _PROXIES = {
     "save": create_proxy(_save),
     "registerFont": create_proxy(_register_font),
     "fontStatus": create_proxy(api.font_status),
-    "defaultCustomCode": create_proxy(api.default_custom_code),
 }
 _API = Object.new()
 for _name, _proxy in _PROXIES.items():

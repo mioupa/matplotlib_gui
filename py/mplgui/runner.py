@@ -1,88 +1,38 @@
-"""Figure → 画像バイト列、保存ファイル名、旧 Pythonコード(beta) タブの実行（DOM / js には依存しない）。
+"""スクリプトの実行と、Figure → 画像バイト列（DOM / js には依存しない）。
 
-カスタムコードは設定とは別の引数で受け取る。GUI 設定による上書き（A8）は従来どおり残している（Phase 2 で変更予定）。
+GUI の描画も、ユーザーが編集したコードの実行も、ここの run_script() 1本を通る。
+GUI の設定を、実行後の Figure に上書き適用することはしない（A8）。
 """
 from __future__ import annotations
 
 import base64
 import builtins
+import contextlib
 import io
-import re
+import linecache
+import os
 import traceback
-from functools import partial
+import warnings
+from dataclasses import dataclass, field
+from pathlib import Path
 
+import matplotlib
 import matplotlib.pyplot as plt
-import pandas as pd
+from matplotlib.figure import Figure
 from matplotlib.layout_engine import PlaceHolderLayoutEngine
 
 from .errors import UserError
-from .plotting import (
-    FigureResult,
-    apply_axes_decoration,
-    apply_subplot_margins,
-    create_figure,
-    figure_has_visible_artists,
-    get_per_series_xy_data,
-    get_plot_data,
-    resolve_series_requests,
-    settings_scales_and_limits,
-    slice_skip_rows,
-)
-from .settings import Settings, to_legacy_dict
+from .formats import FORMATS, build_filename, savefig_kwargs  # noqa: F401  (build_filename は runner からも使えるようにする)
 
-DEFAULT_CUSTOM_PLOT_CODE = """# 利用可能オブジェクト:
-# - df: skipRows適用後のDataFrame
-# - current_df: 読み込み直後のDataFrame（skipRows未適用）
-# - settings: GUI設定(dict)
-# - plt, pd
-# 必須:
-# - fig に Figure を代入
-# 任意:
-# - plotted_count (int) を設定（未設定時は自動判定）
+SCRIPT_FILENAME = "plot.py"
+CODE_FIELD = "Pythonコード"
+NO_FIGURE_MESSAGE = "図が作られませんでした。fig, ax = plt.subplots() などで図を作ってください。"
 
-fig, ax = plt.subplots(figsize=(settings["fig_width"], settings["fig_height"]), dpi=100)
+# plt.show() は Agg バックエンドでは何も表示できず、この警告を出す。実行中はこれだけを無視する。
+_SHOW_WARNING = r"FigureCanvasAgg is non-interactive, and thus cannot be shown"
 
-if df.shape[1] < 2:
-    raise ValueError("2列以上のデータが必要です。")
 
-x = pd.to_numeric(df.iloc[:, 0], errors="coerce")
-y = pd.to_numeric(df.iloc[:, 1], errors="coerce")
-mask = x.notna() & y.notna()
-if not bool(mask.any()):
-    raise ValueError("先頭2列に描画可能な数値データがありません。")
-
-series_settings = settings.get("series_settings", [])
-default_legend = ""
-if isinstance(series_settings, list) and len(series_settings) > 0:
-    default_legend = str(series_settings[0].get("legend_name", "") or "").strip()
-if not default_legend:
-    default_legend = str(df.columns[1])
-
-ax.plot(
-    x[mask],
-    y[mask],
-    color="#005AFF",
-    linewidth=2.0,
-    marker="o",
-    markersize=4,
-    label=default_legend,
-)
-ax.set_title(settings["title"])
-ax.set_xlabel(settings["x_label"] or str(df.columns[0]))
-ax.set_ylabel(settings["y_label"] or str(df.columns[1]))
-ax.grid(True, alpha=0.3)
-ax.legend(loc="best", edgecolor="black")
-fig.tight_layout()
-
-plotted_count = 1
-"""
-
-_FORMATS = {
-    "png": ("png", "image/png", "png"),
-    "jpg": ("jpeg", "image/jpeg", "jpg"),
-    "svg": ("svg", "image/svg+xml", "svg"),
-    "pdf": ("pdf", "application/pdf", "pdf"),
-}
+# ---------------------------------------------------------------- image output
 
 
 def drop_placeholder_layout_engine(fig) -> None:
@@ -98,24 +48,16 @@ def drop_placeholder_layout_engine(fig) -> None:
 def figure_to_bytes(fig, file_format: str, transparent: bool = False, dpi: int = 120) -> tuple[bytes, str, str]:
     """Figure を指定形式のバイト列にする。戻り値は (bytes, mime, 拡張子)。"""
     fmt = (file_format or "").lower()
-    if fmt not in _FORMATS:
+    if fmt not in FORMATS:
         raise UserError("「保存形式」の値が不正です。png / jpg / svg / pdf から選んでください。", field="保存形式")
     if transparent and fmt not in {"png", "svg"}:
         raise UserError("背景透過を有効にした場合、保存形式はpngまたはsvgを選択してください。", field="保存形式")
-    save_format, mime, ext = _FORMATS[fmt]
-
-    save_kwargs = {}
-    if save_format in {"png", "jpeg"}:
-        save_kwargs["dpi"] = dpi
-    if save_format == "jpeg":
-        save_kwargs["facecolor"] = "white"
-    if transparent:
-        save_kwargs["transparent"] = True
+    save_format, mime, ext = FORMATS[fmt]
 
     buffer = io.BytesIO()
     drop_placeholder_layout_engine(fig)
     try:
-        fig.savefig(buffer, format=save_format, **save_kwargs)
+        fig.savefig(buffer, format=save_format, **savefig_kwargs(fmt, transparent, dpi))
     except (ValueError, OverflowError, MemoryError) as exc:
         raise UserError(
             "画像を書き出せませんでした。図幅・図高さを小さくするか、保存形式を変えてください。",
@@ -130,174 +72,208 @@ def figure_to_data_uri(fig, file_format: str, transparent: bool = False, dpi: in
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}", ext
 
 
-_INVALID_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+def figure_summary(fig) -> list[dict]:
+    """Figure の中身の要約（軸ごと）。JSON にできる値だけで、E2E と生成コードの一致確認に使う。"""
+    out = []
+    for ax in fig.axes:
+        legend = ax.get_legend()
+        out.append(
+            {
+                "title": ax.get_title(),
+                "xlabel": ax.get_xlabel(),
+                "ylabel": ax.get_ylabel(),
+                "xlim": [float(v) for v in ax.get_xlim()],
+                "ylim": [float(v) for v in ax.get_ylim()],
+                "xscale": ax.get_xscale(),
+                "yscale": ax.get_yscale(),
+                "lines": len(ax.lines),
+                "collections": len(ax.collections),
+                "patches": len(ax.patches),
+                "legend": [t.get_text() for t in legend.get_texts()] if legend is not None else [],
+                "xticklabels": [t.get_text() for t in ax.get_xticklabels()],
+            }
+        )
+    return out
 
 
-def build_filename(raw_filename: str, ext: str) -> str:
-    """保存ファイル名を作る。空欄時は plot.<ext>。入力中の拡張子は取り除いて ext を付ける。"""
-    raw_filename = _INVALID_FILENAME_CHARS.sub("_", (raw_filename or "").strip())
-    if raw_filename:
-        filename_base = raw_filename.rstrip(".")
-        if "." in filename_base:
-            filename_base = filename_base.rsplit(".", 1)[0]
-        filename_base = filename_base.strip() or "plot"
-        return f"{filename_base}.{ext}"
-    return f"plot.{ext}"
+# ---------------------------------------------------------------- script execution
+
+# 例外の型 → 日本語の説明（上から順に isinstance で判定する。サブクラスを先に並べる）
+_HINTS: tuple[tuple[type, str], ...] = (
+    (IndentationError, "インデント（字下げ）が正しくありません"),
+    (SyntaxError, "書き方（文法）が正しくありません"),
+    (NameError, "定義されていない名前を使っています"),
+    (FileNotFoundError, "ファイルが見つかりません"),
+    (ModuleNotFoundError, "読み込めないライブラリがあります（使えるのは pandas, matplotlib, numpy です）"),
+    (ImportError, "読み込めないライブラリや名前があります（使えるのは pandas, matplotlib, numpy です）"),
+    (KeyError, "存在しないキー（列名など）を指定しています"),
+    (IndexError, "範囲の外の位置を指定しています"),
+    (TypeError, "型が合わない操作をしています"),
+    (ValueError, "値が正しくありません"),
+    (AttributeError, "存在しない属性やメソッドを使っています"),
+    (ZeroDivisionError, "0で割り算をしています"),
+    (SystemExit, "exit() などでスクリプトが途中で終了しました"),
+)
 
 
-# ---------------------------------------------------------------- legacy custom code
+def japanese_hint(exc: BaseException) -> str | None:
+    for kind, hint in _HINTS:
+        if isinstance(exc, kind):
+            return hint
+    return None
 
 
-def _apply_gui_overrides_to_custom_figure(fig, legacy: dict, settings: Settings) -> None:
-    """従来どおり、GUI設定（タイトル・ラベル・スケール・目盛・グリッド・凡例）でカスタムコードの図を上書きする。"""
-    if fig is None or not hasattr(fig, "axes") or len(fig.axes) == 0:
+class ScriptError(UserError):
+    """スクリプトの実行時エラー。message は日本語の要約。traceback は plot.py の行だけ、detail は全体。"""
+
+    def __init__(self, message, *, field=None, detail=None, traceback_text="", line=None, output="", exc=None):
+        super().__init__(message, field=field, detail=detail)
+        self.traceback_text = traceback_text
+        self.line = line
+        self.output = output
+        self.exc = exc
+
+    def to_dict(self) -> dict:
+        out = super().to_dict()
+        out["traceback"] = self.traceback_text
+        out["line"] = self.line
+        return out
+
+
+def _user_frames(tb) -> list[traceback.FrameSummary]:
+    return [f for f in traceback.extract_tb(tb) if f.filename == SCRIPT_FILENAME]
+
+
+def _format_user_traceback(exc: BaseException) -> tuple[str, int | None]:
+    """plot.py の行だけのトレースバック文字列と、最後の plot.py の行番号。"""
+    frames = _user_frames(exc.__traceback__)
+    lines: list[str] = []
+    line: int | None = None
+    if frames:
+        lines.append("Traceback (most recent call last):\n")
+        lines.extend(traceback.format_list(frames))
+        line = frames[-1].lineno
+    if isinstance(exc, SyntaxError) and exc.lineno:
+        line = exc.lineno
+    lines.extend(traceback.format_exception_only(type(exc), exc))
+    return "".join(lines), line
+
+
+def _error_message(exc: BaseException, line: int | None) -> str:
+    kind = type(exc).__name__
+    hint = japanese_hint(exc)
+    what = f"{kind}: {hint}" if hint else kind
+    where = f"{line}行目、" if line else ""
+    return f"Pythonコードの実行中にエラーが発生しました（{where}{what}）。詳細は「{CODE_FIELD}」タブに表示しています。"
+
+
+@dataclass
+class ScriptRun:
+    fig: Figure
+    output: str
+    namespace: dict = field(default_factory=dict)
+
+
+@contextlib.contextmanager
+def _working_directory(path):
+    if path is None:
+        yield
         return
-
-    ax = fig.axes[0]
-    ax2 = fig.axes[1] if len(fig.axes) >= 2 else None
-    font_size = float(legacy.get("font_size", 15) or 15)
-    legend_location = legacy["legend_location"]
-
-    if legacy["title"]:
-        ax.set_title(legacy["title"], fontsize=font_size + 2)
-    ax.set_xlabel(legacy["x_label"] or ax.get_xlabel(), fontsize=font_size)
-    ax.set_ylabel(legacy["y_label"] or ax.get_ylabel(), fontsize=font_size)
-    if ax2 is not None:
-        ax2.set_ylabel(legacy["y2_label"] or ax2.get_ylabel(), fontsize=font_size)
-
-    scales, limits = settings_scales_and_limits(settings)
-    apply_axes_decoration(
-        ax, ax2, font_size=font_size, scales=scales, limits=limits,
-        show_major_grid=legacy["show_major_grid"], show_minor_grid=legacy["show_minor_grid"],
-    )
-
-    for axis in fig.axes:
-        existing_legend = axis.get_legend()
-        if existing_legend is not None:
-            existing_legend.remove()
-
-    if legend_location == "none":
-        return
-
-    handles = []
-    labels = []
-    for axis in fig.axes:
-        h, lab = axis.get_legend_handles_labels()
-        handles.extend(h)
-        labels.extend(lab)
-    if not labels:
-        return
-
-    for i, setting in enumerate(legacy.get("series_settings", [])):
-        if i >= len(labels):
-            break
-        legend_name = str(setting.get("legend_name", "") or "").strip()
-        if legend_name:
-            labels[i] = legend_name
-
-    ax.legend(handles, labels, loc=legend_location, fontsize=max(font_size - 1, 1), edgecolor="black")
+    previous = os.getcwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
 
 
-def run_custom_code(code: str, df_full: pd.DataFrame, settings: Settings) -> FigureResult:
-    """Pythonコード(beta)を実行し、fig を取り出す。名前空間は従来と同じ。"""
-    skip_rows = settings.plot.skip_rows
-    df = slice_skip_rows(df_full, skip_rows)
-    if not (code or "").strip():
-        raise UserError("カスタムコードが空です。", field="カスタムコード")
+def _pick_figure(namespace: dict, before: set[int]):
+    fig = namespace.get("fig")
+    if isinstance(fig, Figure):
+        return fig
+    new_numbers = [n for n in plt.get_fignums() if n not in before]
+    if new_numbers:
+        return plt.figure(new_numbers[-1])
+    return None
 
-    legacy = to_legacy_dict(settings)
-    series_legacy = legacy["series_settings"]
-    x_request = settings.plot.x_column
-    helper_plot_data = partial(get_plot_data, x_request=x_request)
-    context = {
-        "df": df,
-        "current_df": df_full,
-        "settings": legacy,
-        "series_settings": series_legacy,
-        "helpers": {
-            "get_plot_data": helper_plot_data,
-            "get_per_series_xy_data": get_per_series_xy_data,
-            "resolve_series_requests": resolve_series_requests,
-        },
-    }
-    local_scope = {
-        "df": df.copy(),
-        "current_df": df_full.copy(),
-        "settings": legacy,
-        "ctx": context,
-        "series_settings": series_legacy,
-        "get_plot_data": helper_plot_data,
-        "get_per_series_xy_data": get_per_series_xy_data,
-        "resolve_series_requests": resolve_series_requests,
-        "plt": plt,
-        "pd": pd,
-        "fig": None,
-        "plotted_count": None,
-        "skip_rows": skip_rows,
-    }
-    global_scope = {"__builtins__": builtins, "plt": plt, "pd": pd}
 
+@contextlib.contextmanager
+def run_script(code: str, *, injected: dict | None = None, cwd: str | Path | None = None):
+    """コードを実行し、Figure と print の出力を返す（with ブロックを抜けると、実行中に作られた図を全て閉じる）。
+
+    - rcParams は実行前に戻す（スクリプトが変えた設定を次の実行に持ち越さない）。
+    - 実行中に作られた図は、ブロックを抜けるときに閉じる（呼び出し側は with の中で画像にする）。
+    - 失敗は ScriptError（compile / 実行時の例外）または UserError（図が作られなかった）。
+    """
     before = set(plt.get_fignums())
-
-    def close_new_figures(keep=None):
+    buffer = io.StringIO()
+    namespace: dict = {"__name__": "__main__", "__builtins__": builtins, **(injected or {})}
+    try:
+        with matplotlib.rc_context():
+            try:
+                _execute(code, namespace, buffer, cwd)
+            except UserError:
+                raise
+            except (Exception, SystemExit) as exc:
+                text, line = _format_user_traceback(exc)
+                raise ScriptError(
+                    _error_message(exc, line),
+                    field=CODE_FIELD,
+                    detail="".join(traceback.format_exception(exc)),
+                    traceback_text=text,
+                    line=line,
+                    output=buffer.getvalue(),
+                    exc=exc,
+                ) from exc
+            fig = _pick_figure(namespace, before)
+            if fig is None:
+                err = UserError(NO_FIGURE_MESSAGE, field=CODE_FIELD)
+                err.output = buffer.getvalue()
+                raise err
+            yield ScriptRun(fig=fig, output=buffer.getvalue(), namespace=namespace)
+    finally:
+        linecache.cache.pop(SCRIPT_FILENAME, None)  # トレースバックの整形は終わっている
         for num in set(plt.get_fignums()) - before:
-            if keep is not None and getattr(keep, "number", None) == num:
-                continue
             plt.close(num)
 
-    fig = None
-    try:
+
+def _execute(code: str, namespace: dict, buffer: io.StringIO, cwd) -> None:
+    lines = code.splitlines(True)
+    linecache.cache[SCRIPT_FILENAME] = (len(code), None, lines, SCRIPT_FILENAME)
+    with _working_directory(cwd), contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+        compiled = compile(code, SCRIPT_FILENAME, "exec")
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=_SHOW_WARNING, category=UserWarning)
+            exec(compiled, namespace)  # noqa: S102 - 利用者自身のコード（または生成したコード）を実行する
+
+
+
+
+@dataclass
+class ImageResult:
+    data: bytes
+    mime: str
+    ext: str
+    output: str
+    summary: list
+
+
+def run_to_image(
+    code: str,
+    *,
+    file_format: str = "png",
+    transparent: bool = False,
+    dpi: int = 100,
+    injected: dict | None = None,
+    cwd: str | Path | None = None,
+) -> ImageResult:
+    """コードを実行して Figure を画像にする。失敗した例外には、実行中の出力を output 属性で付ける。"""
+    with run_script(code, injected=injected, cwd=cwd) as run:
+        output = run.output
         try:
-            exec(code, global_scope, local_scope)
-        except UserError:
+            data, mime, ext = figure_to_bytes(run.fig, file_format, transparent, dpi)
+            summary = figure_summary(run.fig)
+        except UserError as exc:
+            exc.output = output
             raise
-        except Exception as exc:
-            raise UserError(
-                f"カスタムコードの実行に失敗しました: {exc}", field="カスタムコード", detail=traceback.format_exc()
-            ) from exc
-
-        fig = local_scope.get("fig")
-        if fig is None:
-            raise UserError("カスタムコードで fig を生成してください。", field="カスタムコード")
-        if not hasattr(fig, "savefig"):
-            raise UserError("fig には matplotlib.figure.Figure を設定してください。", field="カスタムコード")
-        _apply_gui_overrides_to_custom_figure(fig, legacy, settings)
-        m = settings.plot.margins
-        apply_subplot_margins(
-            fig, {"left": m.left, "right": m.right, "bottom": m.bottom, "top": m.top}, use_tight_layout_if_auto=True
-        )
-
-        plotted_raw = local_scope.get("plotted_count")
-        if plotted_raw is None:
-            plotted_count = 1 if figure_has_visible_artists(fig) else 0
-        else:
-            try:
-                plotted_count = int(plotted_raw)
-            except Exception:
-                raise UserError("plotted_count は整数で指定してください。", field="カスタムコード") from None
-        if plotted_count <= 0 and figure_has_visible_artists(fig):
-            plotted_count = 1
-        if plotted_count <= 0:
-            raise UserError("描画可能なデータがありません。")
-
-        custom_skip_rows = local_scope.get("skip_rows", skip_rows)
-        try:
-            custom_skip_rows = int(custom_skip_rows)
-        except Exception:
-            custom_skip_rows = skip_rows
-        if custom_skip_rows < 0:
-            custom_skip_rows = skip_rows
-    except BaseException:
-        close_new_figures()
-        if fig is not None and hasattr(fig, "number"):
-            plt.close(fig)
-        raise
-    close_new_figures(keep=fig)
-    return FigureResult(fig=fig, plotted_count=plotted_count, skip_rows=custom_skip_rows)
-
-
-def make_figure(df_full: pd.DataFrame, settings: Settings, custom_code: str | None = None) -> FigureResult:
-    """custom_code が None なら GUI 設定で、文字列ならそのコードで Figure を作る。"""
-    if custom_code is not None:
-        return run_custom_code(custom_code, df_full, settings)
-    return create_figure(df_full, settings)
+    return ImageResult(data=data, mime=mime, ext=ext, output=output, summary=summary)

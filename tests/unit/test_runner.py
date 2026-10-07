@@ -1,18 +1,17 @@
-import pandas as pd
+import matplotlib as mpl
 import pytest
 
 import matplotlib.pyplot as plt
 
 from mplgui.errors import UserError
 from mplgui.runner import (
-    DEFAULT_CUSTOM_PLOT_CODE,
+    ScriptError,
     build_filename,
     figure_to_bytes,
     figure_to_data_uri,
-    make_figure,
-    run_custom_code,
+    run_script,
+    run_to_image,
 )
-from mplgui.settings import default_settings, parse_settings
 
 pytestmark = pytest.mark.unit
 
@@ -23,17 +22,6 @@ def fig():
     ax.plot([0, 1, 2], [0, 1, 0])
     yield f
     plt.close(f)
-
-
-@pytest.fixture
-def df():
-    return pd.DataFrame({"t": [0.0, 1.0, 2.0, 3.0], "v": [1.0, 2.0, 3.0, 4.0], "w": [4.0, 3.0, 2.0, 1.0]})
-
-
-def settings(**plot):
-    raw = default_settings()
-    raw["plot"].update(plot)
-    return parse_settings(raw)
 
 
 @pytest.mark.parametrize(
@@ -93,114 +81,24 @@ def test_build_filename():
     assert build_filename(".png", "png") == "plot.png"
 
 
-def test_default_custom_code_runs(df):
-    r = run_custom_code(DEFAULT_CUSTOM_PLOT_CODE, df, settings())
-    try:
-        assert r.plotted_count == 1 and r.skip_rows == 0
-        assert len(r.fig.axes[0].get_lines()) == 1
-    finally:
-        plt.close(r.fig)
-
-
-def test_custom_code_namespace(df):
-    code = """
-assert set(['df','current_df','settings','ctx','series_settings','get_plot_data','get_per_series_xy_data',
-            'resolve_series_requests','plt','pd','fig','plotted_count','skip_rows']) <= set(globals()) | set(dir())
-assert list(df.columns) == ['t', 'v', 'w'] and len(df) == 2 and len(current_df) == 4 and skip_rows == 2
-assert settings['plot_type'] == 'line' and 'series_settings' in settings and settings['skip_rows'] == 2
-assert series_settings[0]['y_request'] == '' and ctx['df'] is not None and 'get_plot_data' in ctx['helpers']
-assert resolve_series_requests(df, series_settings) == ['__idx__0']
-x, label, entries = get_plot_data(df, series_settings)
-fig, ax = plt.subplots()
-ax.plot(df['t'], df['v'])
-"""
-    r = run_custom_code(code, df, settings(skipRows=2))
-    plt.close(r.fig)
-    assert r.skip_rows == 2
-
-
-def test_custom_code_gui_overrides_still_apply(df):
-    raw = default_settings()
-    raw["plot"]["title"] = "GUI題"
-    raw["axes"]["x"]["label"] = "GUI X"
-    raw["plot"]["legend"]["location"] = "none"
-    raw["axes"]["y"].update(min=0, max=10)
-    code = "fig, ax = plt.subplots()\nax.plot([1, 2], [3, 4], label='a')\nax.set_title('code')\nax.legend()\n"
-    r = run_custom_code(code, df, parse_settings(raw))
-    try:
-        ax = r.fig.axes[0]
-        assert ax.get_title() == "GUI題" and ax.get_xlabel() == "GUI X"
-        assert ax.get_legend() is None and ax.get_ylim() == (0, 10)
-    finally:
-        plt.close(r.fig)
-
-
-def test_custom_code_errors(df):
-    with pytest.raises(UserError) as info:
-        run_custom_code("   ", df, settings())
-    assert "空" in info.value.message
-    with pytest.raises(UserError) as info:
-        run_custom_code("x = 1", df, settings())
-    assert "fig" in info.value.message
-    with pytest.raises(UserError) as info:
-        run_custom_code("fig = 3", df, settings())
-    assert "Figure" in info.value.message
-    before = set(plt.get_fignums())
-    with pytest.raises(UserError) as info:
-        run_custom_code("fig, ax = plt.subplots()\nraise ValueError('boom')", df, settings())
-    assert "カスタムコードの実行に失敗しました" in info.value.message and "boom" in info.value.message
-    assert info.value.detail and "Traceback" in info.value.detail
-    assert set(plt.get_fignums()) == before  # 失敗時に作りかけの Figure を残さない
-    with pytest.raises(UserError):
-        run_custom_code("fig, ax = plt.subplots()", df, settings(skipRows=4))  # スキップ行数 >= 行数
-
-
-def test_custom_code_empty_figure_is_error(df):
-    before = set(plt.get_fignums())
-    with pytest.raises(UserError):
-        run_custom_code("fig, ax = plt.subplots()", df, settings())
-    assert set(plt.get_fignums()) == before
-
-
-def test_make_figure_dispatch(df):
-    r = make_figure(df, settings())
-    plt.close(r.fig)
-    assert r.plotted_count == 1
-    r = make_figure(df, settings(), "fig, ax = plt.subplots()\nax.plot([0,1],[0,1])")
-    plt.close(r.fig)
-    assert r.plotted_count == 1
-
-
 def test_filename_invalid_characters_are_replaced():
     assert build_filename('a/b:c*?.png', "svg") == "a_b_c__.svg"
-
-
-def test_tight_layout_failure_is_japanese_user_error(monkeypatch, df):
-    from matplotlib.figure import Figure
-
-    def boom(self, *a, **k):
-        raise RuntimeError("tight failed")
-
-    monkeypatch.setattr(Figure, "tight_layout", boom)
-    with pytest.raises(UserError) as info:
-        make_figure(df, settings())
-    assert "レイアウト" in info.value.message and "tight failed" in info.value.detail
 
 
 # ---------------------------------------------------------------- PlaceHolderLayoutEngine の除去
 
 
-def _default_fig(df):
-    from mplgui.plotting import create_figure
-
-    return create_figure(df, parse_settings(default_settings())).fig
+def _tight_fig():
+    fig, ax = plt.subplots()
+    ax.plot([0, 1, 2], [0, 1, 0])
+    fig.tight_layout()
+    return fig
 
 
 @pytest.mark.parametrize("fmt", ["png", "svg", "pdf"])
-def test_dropping_placeholder_engine_keeps_output_identical(df, fmt):
+def test_dropping_placeholder_engine_keeps_output_identical(fmt):
     import io
 
-    import matplotlib as mpl
     from matplotlib.layout_engine import PlaceHolderLayoutEngine
 
     from mplgui.runner import drop_placeholder_layout_engine
@@ -209,7 +107,7 @@ def test_dropping_placeholder_engine_keeps_output_identical(df, fmt):
     kw = {"dpi": 120} if fmt == "png" else {}
 
     def render(drop):
-        fig = _default_fig(df)
+        fig = _tight_fig()
         try:
             assert isinstance(fig.get_layout_engine(), PlaceHolderLayoutEngine)
             if drop:
@@ -225,14 +123,13 @@ def test_dropping_placeholder_engine_keeps_output_identical(df, fmt):
     assert render(False) == render(True)
 
 
-def test_real_layout_engine_is_kept(df):
+def test_real_layout_engine_is_kept():
     from mplgui.runner import drop_placeholder_layout_engine
 
     fig, ax = plt.subplots(layout="constrained")
     ax.plot([0, 1], [0, 1])
     try:
         drop_placeholder_layout_engine(fig)
-        assert fig.get_layout_engine() is not None
         assert fig.get_layout_engine().__class__.__name__ == "ConstrainedLayoutEngine"
         figure_to_bytes(fig, "png")
         assert fig.get_layout_engine().__class__.__name__ == "ConstrainedLayoutEngine"
@@ -240,7 +137,7 @@ def test_real_layout_engine_is_kept(df):
         plt.close(fig)
 
 
-def test_figure_to_bytes_draws_fewer_times(df, monkeypatch):
+def test_figure_to_bytes_draws_fewer_times(monkeypatch):
     from matplotlib.figure import Figure
 
     calls = {"n": 0}
@@ -250,10 +147,248 @@ def test_figure_to_bytes_draws_fewer_times(df, monkeypatch):
         calls["n"] += 1
         return orig(self, *a, **k)
 
-    fig = _default_fig(df)
+    fig = _tight_fig()
     try:
         monkeypatch.setattr(Figure, "draw", counting)
         figure_to_bytes(fig, "png")
         assert calls["n"] == 1
     finally:
         plt.close(fig)
+
+
+# ---------------------------------------------------------------- run_script
+
+
+SIMPLE = "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([0, 1], [0, 1])\n"
+
+
+def test_run_script_returns_fig_and_closes_it_afterwards():
+    before = set(plt.get_fignums())
+    with run_script(SIMPLE) as run:
+        assert len(run.fig.axes[0].lines) == 1
+        assert set(plt.get_fignums()) - before  # 実行中は存在する
+    assert set(plt.get_fignums()) == before
+
+
+def test_print_and_stderr_are_captured_in_order(capsys):
+    code = SIMPLE + "import sys\nprint('first')\nprint('second', file=sys.stderr)\nprint('third')\n"
+    with run_script(code) as run:
+        assert run.output == "first\nsecond\nthird\n"
+    assert capsys.readouterr().out == ""  # 画面（標準出力）には出ない
+
+
+def test_injected_names_and_namespace():
+    code = "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot(values)\nname = __name__\n"
+    with run_script(code, injected={"values": [1, 2, 3]}) as run:
+        assert run.namespace["name"] == "__main__" and list(run.fig.axes[0].lines[0].get_ydata()) == [1, 2, 3]
+
+
+def test_fig_variable_wins_over_last_figure():
+    code = (
+        "import matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots(); ax.set_title('first')\n"
+        "other, bx = plt.subplots(); bx.set_title('second')\n"
+    )
+    with run_script(code) as run:
+        assert run.fig.axes[0].get_title() == "first"
+
+
+def test_last_new_figure_is_used_without_fig_variable():
+    code = "import matplotlib.pyplot as plt\nplt.figure().add_subplot().set_title('a')\nplt.figure().add_subplot().set_title('b')\n"
+    before = set(plt.get_fignums())
+    with run_script(code) as run:
+        assert run.fig.axes[0].get_title() == "b"
+    assert set(plt.get_fignums()) == before
+
+
+def test_no_figure_is_user_error():
+    with pytest.raises(UserError) as info:
+        with run_script("x = 1\nprint('hi')\n"):
+            pass
+    assert info.value.message == "図が作られませんでした。fig, ax = plt.subplots() などで図を作ってください。"
+    assert info.value.field == "Pythonコード" and info.value.output == "hi\n"
+
+
+def test_empty_figure_is_allowed():
+    with run_script("import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\n") as run:
+        assert len(run.fig.axes[0].lines) == 0
+
+
+def test_fig_variable_that_is_not_a_figure_falls_back_to_new_figure():
+    with run_script("import matplotlib.pyplot as plt\nfig = 3\nplt.figure().add_subplot()\n") as run:
+        assert len(run.fig.axes) == 1
+
+
+def test_rcparams_do_not_leak_between_runs():
+    before = mpl.rcParams["axes.titlesize"], mpl.rcParams["lines.linewidth"]
+    code = SIMPLE + "plt.rcParams['lines.linewidth'] = 9\nplt.rcParams['axes.titlesize'] = 30\n"
+    with run_script(code):
+        assert mpl.rcParams["lines.linewidth"] == 9
+    assert (mpl.rcParams["axes.titlesize"], mpl.rcParams["lines.linewidth"]) == before
+    with pytest.raises(ScriptError):
+        with run_script(code + "raise ValueError('x')"):
+            pass
+    assert (mpl.rcParams["axes.titlesize"], mpl.rcParams["lines.linewidth"]) == before
+
+
+def test_plt_show_emits_no_warning_but_other_warnings_pass():
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with run_script(SIMPLE + "plt.show()\n"):
+            pass
+    assert not [w for w in caught if "non-interactive" in str(w.message)]
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with run_script(SIMPLE + "import warnings\nwarnings.warn('keep me')\n"):
+            pass
+    assert [str(w.message) for w in caught] == ["keep me"]
+
+
+def test_cwd_is_changed_and_restored(tmp_path):
+    import os
+
+    (tmp_path / "data.txt").write_text("1 2 3", encoding="utf-8")
+    code = SIMPLE + "import os\nvalues = open('data.txt').read()\nprint(os.getcwd() == %r)\n" % str(tmp_path.resolve())
+    before = os.getcwd()
+    with run_script(code, cwd=tmp_path) as run:
+        assert run.output.strip() == "True" and run.namespace["values"] == "1 2 3"
+    assert os.getcwd() == before
+
+
+def test_cwd_is_restored_on_error(tmp_path):
+    import os
+
+    before = os.getcwd()
+    with pytest.raises(ScriptError):
+        with run_script("raise ValueError('x')", cwd=tmp_path):
+            pass
+    assert os.getcwd() == before
+
+
+# ---------------------------------------------------------------- error reporting
+
+
+def _error(code, **kw):
+    with pytest.raises(ScriptError) as info:
+        with run_script(code, **kw):
+            pass
+    return info.value
+
+
+def test_runtime_error_reports_user_frames_line_and_source():
+    code = "import matplotlib.pyplot as plt\nimport pandas as pd\nfig, ax = plt.subplots()\n\ndef f(v):\n    return v + undefined_name\n\nf(1)\n"
+    err = _error(code)
+    assert err.line == 6 and err.field == "Pythonコード" and isinstance(err.exc, NameError)
+    assert 'File "plot.py", line 8, in <module>' in err.traceback_text and "    f(1)" in err.traceback_text
+    assert 'File "plot.py", line 6, in f' in err.traceback_text and "    return v + undefined_name" in err.traceback_text
+    assert err.traceback_text.rstrip().endswith("NameError: name 'undefined_name' is not defined")
+    assert "runner.py" not in err.traceback_text and "contextlib" not in err.traceback_text
+    assert "runner.py" in err.detail  # 全体のトレースバックは別に持つ
+
+
+def test_error_in_library_called_from_user_code_points_at_user_line():
+    err = _error("import pandas as pd\n\npd.DataFrame({'a': [1]})['missing']\n")
+    assert err.line == 3 and isinstance(err.exc, KeyError)
+    assert "pandas" not in err.traceback_text.split("KeyError")[0].replace("import pandas", "").replace("pd.DataFrame", "")
+
+
+def test_status_message_is_japanese_with_line_and_hint():
+    err = _error("x = 1\ny = 2\nprint(zzz)\n")
+    assert err.message == (
+        "Pythonコードの実行中にエラーが発生しました（3行目、NameError: 定義されていない名前を使っています）。"
+        "詳細は「Pythonコード」タブに表示しています。"
+    )
+    assert "is not defined" not in err.message  # 英語の例外文はトレースバックだけに出す
+
+
+def test_syntax_error_shows_line_and_caret():
+    err = _error("import matplotlib.pyplot as plt\nfig, ax = plt.subplots(\nx = = 1\n")
+    assert err.line is not None and isinstance(err.exc, SyntaxError)
+    assert 'File "plot.py"' in err.traceback_text and "SyntaxError" in err.traceback_text and "^" in err.traceback_text
+    assert f"{err.line}行目" in err.message and "SyntaxError: 書き方（文法）が正しくありません" in err.message
+
+
+def test_indentation_error_hint():
+    err = _error("if True:\nprint(1)\n")
+    assert "IndentationError: インデント" in err.message and err.line == 2
+
+
+@pytest.mark.parametrize(
+    "code, kind, hint",
+    [
+        ("open('nope.txt')", "FileNotFoundError", "ファイルが見つかりません"),
+        ("import not_a_real_module", "ModuleNotFoundError", "読み込めないライブラリ"),
+        ("from os import nothing_here", "ImportError", "読み込めないライブラリや名前"),
+        ("{}['a']", "KeyError", "存在しないキー"),
+        ("[][1]", "IndexError", "範囲の外"),
+        ("1 + 'a'", "TypeError", "型が合わない"),
+        ("int('x')", "ValueError", "値が正しくありません"),
+        ("object().foo", "AttributeError", "存在しない属性"),
+        ("1 / 0", "ZeroDivisionError", "0で割り算"),
+    ],
+)
+def test_hint_table(code, kind, hint):
+    err = _error(code)
+    assert type(err.exc).__name__ == kind
+    assert f"{kind}: " in err.message and hint in err.message and err.line == 1
+
+
+def test_unknown_exception_type_has_no_hint():
+    err = _error("class MyError(Exception):\n    pass\n\nraise MyError('x')\n")
+    assert err.message.startswith("Pythonコードの実行中にエラーが発生しました（4行目、MyError）。")
+
+
+def test_system_exit_is_reported_not_propagated():
+    err = _error("import sys\nsys.exit(2)\n")
+    assert isinstance(err.exc, SystemExit) and err.line == 2 and "SystemExit" in err.message
+
+
+def test_error_keeps_output_printed_before_failure():
+    err = _error("print('before')\n1/0\n")
+    assert err.output == "before\n"
+    assert err.to_dict()["line"] == 2 and "traceback" in err.to_dict()
+
+
+def test_failed_run_leaks_no_figures_and_no_linecache():
+    import linecache
+
+    before = set(plt.get_fignums())
+    _error("import matplotlib.pyplot as plt\nplt.figure()\nraise ValueError('x')\n")
+    assert set(plt.get_fignums()) == before and "plot.py" not in linecache.cache
+
+
+# ---------------------------------------------------------------- run_to_image / summary
+
+
+def test_run_to_image_returns_png_output_and_summary():
+    res = run_to_image(SIMPLE + "ax.set_title('T')\nprint('hello')\n", file_format="png", dpi=100)
+    assert res.data.startswith(b"\x89PNG") and res.output == "hello\n" and res.mime == "image/png"
+    assert res.summary[0]["title"] == "T" and res.summary[0]["lines"] == 1
+
+
+def test_run_to_image_conversion_error_carries_output():
+    with pytest.raises(UserError) as info:
+        run_to_image(SIMPLE + "print('x')\n", file_format="jpg", transparent=True)
+    assert "背景透過" in info.value.message and info.value.output == "x\n"
+
+
+def test_figure_summary_content():
+    import json
+
+    code = (
+        "import matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots()\n"
+        "ax.plot([1, 2], [3, 4], label='線')\nax.scatter([1], [1])\nax.bar(['a', 'b'], [1, 2])\n"
+        "ax.set_title('T'); ax.set_xlabel('X'); ax.set_ylabel('Y'); ax.set_yscale('log'); ax.set_ylim(1, 10)\n"
+        "ax.legend()\nax2 = ax.twinx()\n"
+    )
+    res = run_to_image(code)
+    json.dumps(res.summary)
+    first, second = res.summary
+    assert first["title"] == "T" and first["xlabel"] == "X" and first["ylabel"] == "Y"
+    assert first["yscale"] == "log" and first["xscale"] == "linear" and first["ylim"] == [1.0, 10.0]
+    assert (first["lines"], first["collections"], first["patches"]) == (1, 1, 2)
+    assert first["legend"] == ["線"] and second["legend"] == []
+    assert all(isinstance(v, float) for v in first["xlim"])

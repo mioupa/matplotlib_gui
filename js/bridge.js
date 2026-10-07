@@ -31,6 +31,7 @@ let loadSeq = 0;
 let loadCount = 0;
 let loadWarnings = [];
 let customCodeProvider = () => null; // 有効なカスタムコードの文字列、無効なら null
+let generatedCodeListener = () => {}; // GUI 設定から生成したスクリプトを受け取る（Pythonコードタブ用）
 let readyCallbacks = [];
 let fontState = "idle"; // idle | loading | ready | failed
 let fontPercent = null;
@@ -60,13 +61,16 @@ export const canAutoRender = () => dataReady;
 export const setCustomCodeProvider = (fn) => {
   customCodeProvider = fn;
 };
+export const onGeneratedCode = (fn) => {
+  generatedCodeListener = fn;
+};
 
 const EXCEL_LOADING_MESSAGE = "Excel 読込用のライブラリを取得中…";
 
 const callPython = (name, ...args) => JSON.parse(api[name](...args));
 
 const reportError = (error) => {
-  setStatus(error.message, "error", error.detail || "");
+  setStatus(error.message, "error", error.traceback || error.detail || "");
 };
 const reportException = (err, context) => {
   const detail = `context: ${context}\n${err && err.stack ? err.stack : String(err)}`;
@@ -151,11 +155,16 @@ const executeRender = async (generation) => {
     if (stale()) return;
     if (result.ok) {
       showPlot(result.image, generation);
-      const skipped = Number.isInteger(result.skipRows) ? result.skipRows : 0;
-      setStatus(`描画に成功しました（${result.seriesCount}系列、スキップ${skipped}行）。`, "ok", "", [
-        ...loadWarnings,
-        ...warningTexts(result.warnings),
-      ]);
+      if (typeof result.code === "string") generatedCodeListener(result.code);
+      if (Number.isInteger(result.seriesCount)) {
+        const skipped = Number.isInteger(result.skipRows) ? result.skipRows : 0;
+        setStatus(`描画に成功しました（${result.seriesCount}系列、スキップ${skipped}行）。`, "ok", "", [
+          ...loadWarnings,
+          ...warningTexts(result.warnings),
+        ]);
+      } else {
+        setStatus("コードの実行に成功しました。", "ok", result.output || "", loadWarnings);
+      }
     } else {
       reportError(result.error);
     }
@@ -319,7 +328,6 @@ export const saveNow = async () => {
   }
 };
 
-export const getDefaultCustomCode = () => (api ? api.defaultCustomCode() : "");
 export const onPythonReady = (fn) => {
   if (api) fn();
   else readyCallbacks.push(fn);
