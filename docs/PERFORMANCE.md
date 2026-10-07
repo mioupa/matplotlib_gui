@@ -2,7 +2,7 @@
 
 計測スクリプト: `tests/perf/bench.py`（Playwright 同期 API。pytest では収集されない）。
 再実行: `uv run python tests/perf/bench.py --reps 5 --json tests/perf/out/result.json`
-（`--headed` で有ヘッドレス解除、環境変数 `E2E_SERVE_DIR` で配信ディレクトリを切替。出力先 `tests/perf/out/` は git 管理外）
+（`--headed` でヘッドあり実行、環境変数 `E2E_SERVE_DIR` で配信ディレクトリを切替。出力先 `tests/perf/out/` は git 管理外）
 
 ## 変更前（ベースライン）
 
