@@ -66,6 +66,12 @@ def main():
 
     (OUT / "tab.txt").write_bytes(csv_text(header, data, sep="\t").encode("utf-8"))
 
+    # 生成コードの一致確認用: 正の値だけ（対数軸に使える）／文字列のカテゴリ列を持つ棒グラフ用
+    growth = [(i, round(2 ** (i / 3), 4), round(10 + i * 1.5, 2)) for i in range(N)]
+    (OUT / "growth.csv").write_bytes(csv_text(["時間", "指数", "線形"], growth).encode("utf-8"))
+    cats = [(f"品目{c}", 10 + i * 7 % 23, 30 - i * 5 % 17) for i, c in enumerate("ABCDEF")]
+    (OUT / "categories.csv").write_bytes(csv_text(["品目", "売上A", "売上B"], cats).encode("utf-8"))
+
     wb = openpyxl.Workbook()
     ws1 = wb.active
     ws1.title = "Sheet1"
