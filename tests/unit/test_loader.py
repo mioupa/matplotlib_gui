@@ -189,3 +189,24 @@ def test_errors_are_user_errors_in_japanese(name, data):
 
 def test_load_dataframe_wrapper():
     assert not load_dataframe((FIXTURES / "utf8.csv").read_bytes(), "utf8.csv", "", True).empty
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [("、", "、"), ("；", "；"), ("\\t", "\t"), (",", ","), (";", ";"), ("|", "|"), ("\\u3001", "、"), ("a\\t、", "a\t、")],
+)
+def test_decode_delimiter_keeps_non_ascii(raw, expected):
+    assert decode_delimiter(raw, ".txt") == expected
+
+
+def test_decode_delimiter_invalid_escape_still_japanese_error():
+    with pytest.raises(UserError) as info:
+        decode_delimiter("\\x", ".txt")
+    assert info.value.field == "区切り文字" and not info.value.message.isascii()
+
+
+def test_ideographic_comma_delimited_file_loads():
+    data = "時間、電圧、電流\n1、2、3\n4、5、6\n".encode("utf-8")
+    loaded = load_file(data, "comma.txt", "、", True)
+    assert list(loaded.df.columns) == ["時間", "電圧", "電流"]
+    assert loaded.df.shape == (2, 3)

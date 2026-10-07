@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import io
 import re
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,10 +22,26 @@ class LoadedData:
     encoding: str | None  # xlsx は None
 
 
+# バックスロッシュ表記（\t, \x41, \u3001 など）だけを解釈する。それ以外（「、」などの非 ASCII 文字）は変更しない。
+_ESCAPE = re.compile(r"\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[0-7]{1,3}|.)", re.DOTALL)
+
+
+def _decode_escapes(text: str) -> str:
+    def repl(match: re.Match) -> str:
+        token = match.group(0)
+        if not token.isascii():
+            return token
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return token.encode("ascii").decode("unicode_escape")
+
+    return _ESCAPE.sub(repl, text)
+
+
 def decode_delimiter(delimiter: str, suffix: str) -> str:
     if delimiter:
         try:
-            return bytes(delimiter, "utf-8").decode("unicode_escape")
+            return _decode_escapes(delimiter)
         except UnicodeDecodeError as exc:
             raise UserError(
                 "「区切り文字」のエスケープ表記が正しくありません。\\t（タブ）のように書くか、記号をそのまま入力してください。",
