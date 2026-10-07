@@ -1,18 +1,25 @@
 """アプリ固有の待機・操作ロジックはすべてここに置く（要素は id のみで選ぶ）。
 
-使用する信号（現行 index.html）:
-- アプリ準備完了: PyScript の初期化末尾で Python が `window.requestRender` /
-  `window.requestLoadColumns` を登録する。`typeof window.requestRender === 'function'`
-  を「Python準備完了」とする。
-- データ読込完了: `window.__matplotDataReady === true`（読込開始時に false、完了時に true）。
-- プロット更新: `#plotArea img` の src（PNG data URI）が変化したこと。
-  描画のたびに innerHTML ごと置き換えられる。
+使用する信号（<html> の data 属性。js/bridge.js が更新する）:
+- data-app-state: "starting" → "ready"（Python 起動完了）
+- data-data-state: "none" | "loading" | "ready" | "error"（データ読込）
+- data-render-state: "idle" | "pending"（デバウンス待ち）| "rendering"
+- data-render-generation: 最新の描画要求の世代番号。表示中の `#plotArea img` は data-generation を持つ。
+- `#status` の data-kind: "" | "ok" | "error"
 """
 import time
 
-READY_JS = "typeof window.requestRender === 'function' && typeof window.requestLoadColumns === 'function'"
-DATA_READY_JS = "window.__matplotDataReady === true"
+READY_JS = "document.documentElement.dataset.appState === 'ready'"
+DATA_READY_JS = "document.documentElement.dataset.dataState === 'ready'"
 PLOT_SRC_JS = "(document.querySelector('#plotArea img') || {}).src || ''"
+# 描画要求が残っておらず、表示中の画像が最新の要求のものになっている
+SETTLED_JS = """() => {
+  const d = document.documentElement.dataset;
+  const img = document.querySelector('#plotArea img');
+  return d.renderState === 'idle' && d.dataState !== 'loading'
+    && (!d.renderGeneration || (img && img.dataset.generation === d.renderGeneration)
+        || document.getElementById('status').dataset.kind === 'error');
+}"""
 
 
 class ConsoleCollector:
@@ -65,6 +72,19 @@ def wait_plot_changed(page, previous_src, timeout=120_000):
         timeout=timeout,
     )
     return plot_src(page)
+
+
+def wait_settled(page, timeout=120_000):
+    """読込・描画が一段落するまで待つ（エラー終了を含む）。"""
+    page.wait_for_function(SETTLED_JS, timeout=timeout)
+
+
+def status_text(page) -> str:
+    return page.inner_text("#status")
+
+
+def status_kind(page) -> str:
+    return page.get_attribute("#status", "data-kind") or ""
 
 
 def set_title(page, text):

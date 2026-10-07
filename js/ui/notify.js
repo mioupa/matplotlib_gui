@@ -3,6 +3,7 @@ export const setStatus = (message, isError = false, detail = "") => {
   const status = document.getElementById("status");
   if (status) {
     status.textContent = message || "";
+    status.dataset.kind = !message ? "" : isError ? "error" : "ok";
     status.style.color = isError ? "var(--status-error)" : "var(--status-ok)";
   }
 

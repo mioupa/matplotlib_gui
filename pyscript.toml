@@ -5,6 +5,10 @@ packages = ["pandas", "matplotlib", "openpyxl==3.1.5", "et_xmlfile==2.0.0"]
 # キーは取得元（ページからの相対パス）、値は配置先。
 [files]
 "./py/mplgui/__init__.py" = "./mplgui/__init__.py"
+"./py/mplgui/api.py" = "./mplgui/api.py"
+"./py/mplgui/errors.py" = "./mplgui/errors.py"
+"./py/mplgui/settings.py" = "./mplgui/settings.py"
 "./py/mplgui/loader.py" = "./mplgui/loader.py"
+"./py/mplgui/plotting.py" = "./mplgui/plotting.py"
 "./py/mplgui/runner.py" = "./mplgui/runner.py"
 "./py/mplgui/fonts.py" = "./mplgui/fonts.py"

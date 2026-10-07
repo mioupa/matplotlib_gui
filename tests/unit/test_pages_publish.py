@@ -110,3 +110,17 @@ def test_publish_rules_sanity(jekyll_config):
     assert _is_published("py/mplgui/__init__.py", jekyll_config)
     assert not _is_published("py/mplgui/__init__.py", {})  # include が無ければ Jekyll は配信しない
     assert not _is_published("_hidden/a.js", jekyll_config)
+
+
+def test_all_js_files_are_published_and_imports_resolve(jekyll_config):
+    import re
+
+    js_files = sorted((REPO / "js").rglob("*.js"))
+    assert js_files
+    for path in js_files:
+        rel = path.relative_to(REPO).as_posix()
+        _assert_published(rel, jekyll_config, "js/")
+        for spec in re.findall(r"""(?:import|from)\s+["'](\.{1,2}/[^"']+)["']""", path.read_text(encoding="utf-8")):
+            target = (path.parent / spec).resolve()
+            assert target.is_file(), f"{rel}: import {spec} が解決できない"
+            _assert_published(target.relative_to(REPO).as_posix(), jekyll_config, f"{rel} import")

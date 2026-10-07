@@ -1,34 +1,30 @@
-// 保存形式セレクトの選択肢（背景透過時は png / svg のみ）。
-const saveFormatSelect = document.getElementById("saveFormat");
-const saveTransparentInput = document.getElementById("saveTransparent");
+// 保存形式セレクトの選択肢（背景透過時は png / svg のみ）。選択肢が変わったら state の保存形式も追従させる。
+import { getSettings, setPath } from "../state.js";
 
 const SAVE_FORMATS_ALL = ["png", "jpg", "svg", "pdf"];
 const SAVE_FORMATS_TRANSPARENT = ["png", "svg"];
-export const syncSaveFormatOptions = () => {
-  if (!saveFormatSelect) return;
-  const allowTransparentOnly = !!(saveTransparentInput && saveTransparentInput.checked);
-  const formats = allowTransparentOnly ? SAVE_FORMATS_TRANSPARENT : SAVE_FORMATS_ALL;
-  const currentValue = (saveFormatSelect.value || "").toLowerCase();
 
-  saveFormatSelect.innerHTML = "";
+export const syncSaveFormatOptions = () => {
+  const select = document.getElementById("saveFormat");
+  if (!select) return;
+  const formats = getSettings().save.transparent ? SAVE_FORMATS_TRANSPARENT : SAVE_FORMATS_ALL;
+  const current = String(getSettings().save.format || select.value || "").toLowerCase();
+
+  select.innerHTML = "";
   for (const fmt of formats) {
     const opt = document.createElement("option");
     opt.value = fmt;
     opt.textContent = fmt;
-    saveFormatSelect.appendChild(opt);
+    select.appendChild(opt);
   }
-
-  if (formats.includes(currentValue)) {
-    saveFormatSelect.value = currentValue;
-  } else {
-    saveFormatSelect.value = formats[0];
-  }
+  select.value = formats.includes(current) ? current : formats[0];
+  setPath("save.format", select.value);
 };
 
 export const bindSaveFormatEvents = () => {
-  if (saveTransparentInput) {
-    saveTransparentInput.addEventListener("change", () => {
-      syncSaveFormatOptions();
-    });
+  const transparent = document.getElementById("saveTransparent");
+  if (transparent) {
+    // forms.js の入力ハンドラ（state 更新）より後に走るよう、change を購読する
+    transparent.addEventListener("change", syncSaveFormatOptions);
   }
 };

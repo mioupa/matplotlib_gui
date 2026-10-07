@@ -1,23 +1,18 @@
-// 系列ごとの色選択UI（オーバーレイパネル）。
-import { scheduleRender } from "../bridge.js";
+// 系列ごとの色選択UI（オーバーレイパネル）。選んだ色は onChange(color) で呼び出し側（state）へ渡す。
+import { PALETTE } from "../defaults.js";
 
-const seriesList = document.getElementById("seriesList");
+const normalizeColor = (value) => String(value || "").trim().toUpperCase();
 
-export const SERIES_COLORS = [
-  "#FF4B00",
-  "#005AFF",
-  "#03AF7A",
-  "#4DC4FF",
-  "#F6AA00",
-  "#FFF100",
-  "#990099",
-  "#84919E",
-  "#000000",
-  "#804000",
-  "#FF8082",
-];
+const closeAllColorPanels = (exceptPanel = null) => {
+  const seriesList = document.getElementById("seriesList");
+  if (!seriesList) return;
+  for (const p of seriesList.querySelectorAll(".series-color-panel")) {
+    if (exceptPanel && p === exceptPanel) continue;
+    p.classList.add("hidden");
+  }
+};
 
-export const bindSeriesColorControls = (item) => {
+export const bindSeriesColorControls = (item, onChange) => {
   const trigger = item.querySelector(".series-color-trigger");
   const panel = item.querySelector(".series-color-panel");
   const grid = item.querySelector(".series-color-grid");
@@ -27,33 +22,20 @@ export const bindSeriesColorControls = (item) => {
   const valueLabel = item.querySelector(".series-color-value");
   if (!trigger || !panel || !grid || !customToggle || !colorInput || !swatch || !valueLabel) return;
 
-  const closeAllColorPanels = (exceptPanel = null) => {
-    if (!seriesList) return;
-    const panels = seriesList.querySelectorAll(".series-color-panel");
-    for (const p of panels) {
-      if (exceptPanel && p === exceptPanel) continue;
-      p.classList.add("hidden");
-    }
-  };
-
-  const normalizeColor = (value) => String(value || "").trim().toUpperCase();
-
   const syncSeriesColorView = () => {
     const current = normalizeColor(colorInput.value);
     swatch.style.backgroundColor = current || "#000000";
     valueLabel.textContent = current || "#000000";
 
-    const isPaletteColor = SERIES_COLORS.some((c) => normalizeColor(c) === current);
+    const isPaletteColor = PALETTE.some((c) => normalizeColor(c) === current);
     colorInput.classList.toggle("hidden", isPaletteColor);
-    const chips = grid.querySelectorAll(".series-color-chip");
-    for (const chip of chips) {
-      const chipColor = normalizeColor(chip.dataset.color);
-      chip.classList.toggle("active", chipColor === current);
+    for (const chip of grid.querySelectorAll(".series-color-chip")) {
+      chip.classList.toggle("active", normalizeColor(chip.dataset.color) === current);
     }
   };
 
   grid.innerHTML = "";
-  for (const color of SERIES_COLORS) {
+  for (const color of PALETTE) {
     const chip = document.createElement("button");
     chip.type = "button";
     chip.className = "series-color-chip";
@@ -64,7 +46,7 @@ export const bindSeriesColorControls = (item) => {
       colorInput.value = color;
       syncSeriesColorView();
       panel.classList.add("hidden");
-      scheduleRender();
+      onChange(color);
     });
     grid.appendChild(chip);
   }
@@ -86,6 +68,7 @@ export const bindSeriesColorControls = (item) => {
 
   colorInput.addEventListener("input", () => {
     syncSeriesColorView();
+    onChange(colorInput.value);
   });
 
   syncSeriesColorView();
@@ -94,11 +77,11 @@ export const bindSeriesColorControls = (item) => {
 // パネル外クリックでオーバーレイを閉じる
 export const bindColorPanelOutsideClick = () => {
   document.addEventListener("click", (event) => {
+    const seriesList = document.getElementById("seriesList");
     if (!seriesList) return;
     const target = event.target;
     if (target && target.closest(".series-color-picker")) return;
-    const panels = seriesList.querySelectorAll(".series-color-panel");
-    for (const panel of panels) {
+    for (const panel of seriesList.querySelectorAll(".series-color-panel")) {
       panel.classList.add("hidden");
     }
   });

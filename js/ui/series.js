@@ -1,180 +1,72 @@
-// 系列カード（追加・削除・列セレクト・種別/第2軸に応じた表示切替）。
-import { scheduleRender } from "../bridge.js";
-import { SERIES_COLORS, bindSeriesColorControls } from "./colorPicker.js";
+// 系列カード（追加・削除・列セレクト・種別/第2軸に応じた表示切替）。カードは state の系列リストから描く。
+import { addSeries, getSettings, hasSecondaryAxis, removeSeries, updateSeries, setPath } from "../state.js";
+import { bindSeriesColorControls } from "./colorPicker.js";
+import { readNumber } from "./forms.js";
 
-const seriesList = document.getElementById("seriesList");
-const addSeriesBtn = document.getElementById("addSeriesBtn");
-const plotTypeSelect = document.getElementById("plotType");
-const globalXGroup = document.getElementById("globalXGroup");
-const xColumnSelect = document.getElementById("xColumn");
-const y2LabelGroup = document.getElementById("y2LabelGroup");
-const y2AxisSettingsGroup = document.getElementById("y2AxisSettingsGroup");
-let lastPlotType = plotTypeSelect ? plotTypeSelect.value : "line";
+let columns = []; // [{value: "__idx__0", label: "時間 [0]"}]（読込のたびに更新）
 
-const getColumnOptions = (includeIndex = false) => {
-  const xColumn = document.getElementById("xColumn");
-  if (!xColumn) return [];
-  const options = [];
-  for (const opt of xColumn.options) {
-    if (!includeIndex && !opt.value) continue;
-    options.push({ value: opt.value, label: opt.textContent || opt.value });
-  }
-  return options;
-};
+const esc = (text) =>
+  String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-const fillSeriesYSelect = (selectEl, selectedValue = "") => {
-  if (!selectEl) return;
-  const columns = getColumnOptions(false);
+const defaultMarkerSize = (plotType) => (plotType === "line" ? 0 : 24);
+const displayMarkerSize = (series, plotType) => (series.markerSize === null ? defaultMarkerSize(plotType) : series.markerSize);
+
+const fillSelect = (selectEl, options, selected) => {
   selectEl.innerHTML = "";
-
-  const autoOption = document.createElement("option");
-  autoOption.value = "";
-  autoOption.textContent = "(自動)";
-  selectEl.appendChild(autoOption);
-
-  for (const col of columns) {
-    const opt = document.createElement("option");
-    opt.value = col.value;
-    opt.textContent = col.label;
-    selectEl.appendChild(opt);
+  for (const opt of options) {
+    const o = document.createElement("option");
+    o.value = opt.value;
+    o.textContent = opt.label;
+    selectEl.appendChild(o);
   }
-
-  if (selectedValue && Array.from(selectEl.options).some((opt) => opt.value === selectedValue)) {
-    selectEl.value = selectedValue;
-  }
+  selectEl.value = options.some((o) => o.value === selected) ? selected : "";
 };
 
-const fillSeriesXSelect = (selectEl, selectedValue = "") => {
-  if (!selectEl) return;
-  const columns = getColumnOptions(true);
-  selectEl.innerHTML = "";
-  for (const col of columns) {
-    const opt = document.createElement("option");
-    opt.value = col.value;
-    opt.textContent = col.label;
-    selectEl.appendChild(opt);
-  }
-  if (Array.from(selectEl.options).some((opt) => opt.value === selectedValue)) {
-    selectEl.value = selectedValue;
-  } else {
-    selectEl.value = "";
-  }
-};
+const xOptions = () => [{ value: "", label: "(index)" }, ...columns];
+const yOptions = () => [{ value: "", label: "(自動)" }, ...columns];
 
-export const syncPlotTypeUI = () => {
-  const type = plotTypeSelect ? plotTypeSelect.value : "line";
-  const usePerSeriesX = type === "line" || type === "scatter";
-  if (globalXGroup) {
-    globalXGroup.style.display = usePerSeriesX ? "none" : "";
-  }
-  if (!seriesList) return;
-  const xGroups = seriesList.querySelectorAll(".series-x-wrap");
-  for (const group of xGroups) {
-    group.style.display = usePerSeriesX ? "block" : "none";
-  }
-};
-
-export const syncMarkerSizeForPlotType = () => {
-  if (!seriesList || !plotTypeSelect) return;
-  const currentType = plotTypeSelect.value;
-  const markerInputs = seriesList.querySelectorAll(".series-marker-size");
-  if (currentType === "scatter") {
-    for (const input of markerInputs) {
-      const current = Number(input.value);
-      if (!Number.isFinite(current) || current <= 0) {
-        input.value = "24";
-      }
-    }
-  } else if (currentType === "line" && lastPlotType === "scatter") {
-    for (const input of markerInputs) {
-      const current = Number(input.value);
-      if (Number.isFinite(current) && current === 24) {
-        input.value = "0";
-      }
-    }
-  }
-  lastPlotType = currentType;
-};
-
-export const syncY2LabelUI = () => {
-  if (!seriesList) return;
-  const hasSecondary = !!seriesList.querySelector(".series-use-y2:checked");
-  if (y2LabelGroup) {
-    y2LabelGroup.style.display = hasSecondary ? "" : "none";
-  }
-  if (y2AxisSettingsGroup) {
-    y2AxisSettingsGroup.style.display = hasSecondary ? "" : "none";
-  }
-};
-
-const renumberSeries = () => {
-  if (!seriesList) return;
-  const items = Array.from(seriesList.querySelectorAll(".series-item"));
-  items.forEach((item, idx) => {
-    const title = item.querySelector(".series-item-title");
-    if (title) title.textContent = `系列 ${idx + 1}`;
-  });
-  const disableRemove = items.length <= 1;
-  items.forEach((item) => {
-    const removeBtn = item.querySelector(".remove-series");
-    if (removeBtn) {
-      removeBtn.disabled = disableRemove;
-      removeBtn.style.opacity = disableRemove ? "0.5" : "1";
-      removeBtn.style.cursor = disableRemove ? "not-allowed" : "pointer";
-    }
-  });
-};
-
-const addSeriesItem = (preset = {}) => {
-  if (!seriesList) return;
-  const item = document.createElement("div");
-  item.className = "series-item";
-  const color = preset.color || SERIES_COLORS[seriesList.children.length % SERIES_COLORS.length];
-  const defaultMarkerSize = Object.prototype.hasOwnProperty.call(preset, "markerSize")
-    ? preset.markerSize
-    : plotTypeSelect && plotTypeSelect.value === "line"
-      ? 0
-      : 24;
-  item.innerHTML = `
+const cardHtml = (series, plotType) => {
+  const id = (name) => `series-${series.id}-${name}`;
+  return `
     <div class="series-item-header">
       <div class="series-item-title">系列</div>
       <button type="button" class="small-btn ghost-btn remove-series">削除</button>
     </div>
     <div class="row group">
       <div class="series-x-wrap">
-        <label>X列</label>
-        <select class="series-x"></select>
+        <label for="${id("x")}">X列</label>
+        <select id="${id("x")}" class="series-x"></select>
       </div>
       <div>
-        <label>Y列</label>
-        <select class="series-y"></select>
+        <label for="${id("y")}">Y列</label>
+        <select id="${id("y")}" class="series-y"></select>
       </div>
     </div>
     <div class="row group">
       <div>
-        <label>色</label>
+        <label for="${id("color-trigger")}">色</label>
         <div class="series-color-picker">
-          <button type="button" class="series-color-trigger">
+          <button type="button" id="${id("color-trigger")}" class="series-color-trigger">
             <span class="series-color-swatch-inline"></span>
             <span>色を選択</span>
           </button>
           <div class="series-color-panel hidden">
             <div class="series-color-grid"></div>
             <button type="button" class="small-btn ghost-btn series-color-custom-toggle">カスタム</button>
-            <input class="series-color series-color-custom hidden" type="color" value="${color}" />
+            <input class="series-color series-color-custom hidden" type="color" value="${esc(series.color)}" aria-label="カスタム色" />
           </div>
         </div>
-        <div class="color-value series-color-value">${color}</div>
+        <div class="color-value series-color-value">${esc(series.color)}</div>
       </div>
       <div>
-        <label>線幅</label>
-        <input class="series-line-width" type="number" step="0.1" value="${preset.lineWidth || 2.0}" />
+        <label for="${id("line-width")}">線幅</label>
+        <input id="${id("line-width")}" class="series-line-width" type="number" step="0.1" value="${esc(series.lineWidth ?? "")}" />
       </div>
     </div>
     <div class="row group">
       <div>
-        <label>線種</label>
-        <select class="series-line-style">
+        <label for="${id("line-style")}">線種</label>
+        <select id="${id("line-style")}" class="series-line-style">
           <option value="solid">solid</option>
           <option value="dashed">dashed</option>
           <option value="dashdot">dashdot</option>
@@ -182,99 +74,129 @@ const addSeriesItem = (preset = {}) => {
         </select>
       </div>
       <div>
-        <label>点サイズ</label>
-        <input class="series-marker-size" type="number" step="1" value="${defaultMarkerSize}" />
+        <label for="${id("marker-size")}">点サイズ</label>
+        <input id="${id("marker-size")}" class="series-marker-size" type="number" step="1" value="${esc(displayMarkerSize(series, plotType))}" />
       </div>
     </div>
     <div class="group">
-      <label>凡例名（任意）</label>
-      <input class="series-legend-name" type="text" value="${preset.legendName || ""}" placeholder="自動" />
+      <label for="${id("legend-name")}">凡例名（任意）</label>
+      <input id="${id("legend-name")}" class="series-legend-name" type="text" value="${esc(series.label)}" placeholder="自動" />
     </div>
     <div class="group">
       <label class="inline check-label">
-        <input class="series-use-y2" type="checkbox" ${preset.useSecondaryAxis ? "checked" : ""} />
+        <input class="series-use-y2" type="checkbox" ${series.secondaryAxis ? "checked" : ""} />
         <span>第2軸を使用</span>
       </label>
     </div>
   `;
-
-  seriesList.appendChild(item);
-  const ySelect = item.querySelector(".series-y");
-  fillSeriesYSelect(ySelect, preset.yRequest || "");
-  const xSelect = item.querySelector(".series-x");
-  fillSeriesXSelect(xSelect, preset.xRequest || (xColumnSelect ? xColumnSelect.value : ""));
-  bindSeriesColorControls(item);
-
-  const lineStyleSelect = item.querySelector(".series-line-style");
-  if (lineStyleSelect) {
-    lineStyleSelect.value = preset.lineStyle || "solid";
-  }
-
-  const removeBtn = item.querySelector(".remove-series");
-  if (removeBtn) {
-    removeBtn.addEventListener("click", () => {
-      if (seriesList.children.length <= 1) return;
-      item.remove();
-      renumberSeries();
-      syncY2LabelUI();
-      scheduleRender();
-    });
-  }
-
-  syncPlotTypeUI();
-  syncY2LabelUI();
-  renumberSeries();
 };
 
-window.refreshSeriesColumnOptions = () => {
-  if (!seriesList) return;
-  const ySelects = seriesList.querySelectorAll(".series-y");
-  for (const selectEl of ySelects) {
-    fillSeriesYSelect(selectEl, selectEl.value);
+const buildCard = (series, plotType) => {
+  const item = document.createElement("div");
+  item.className = "series-item";
+  item.dataset.seriesId = series.id;
+  item.innerHTML = cardHtml(series, plotType);
+  fillSelect(item.querySelector(".series-x"), xOptions(), series.x);
+  fillSelect(item.querySelector(".series-y"), yOptions(), series.y);
+  item.querySelector(".series-line-style").value = series.lineStyle;
+  bindSeriesColorControls(item, (color) => updateSeries(series.id, { color }));
+  item.querySelector(".remove-series").addEventListener("click", () => removeSeries(series.id));
+  return item;
+};
+
+export const syncVisibility = () => {
+  const settings = getSettings();
+  const usePerSeriesX = settings.plot.type !== "bar";
+  const globalX = document.getElementById("globalXGroup");
+  if (globalX) globalX.style.display = usePerSeriesX ? "none" : "";
+  for (const group of document.querySelectorAll("#seriesList .series-x-wrap")) {
+    group.style.display = usePerSeriesX ? "block" : "none";
   }
-  const xSelects = seriesList.querySelectorAll(".series-x");
-  for (const selectEl of xSelects) {
-    fillSeriesXSelect(selectEl, selectEl.value);
+  const hasY2 = hasSecondaryAxis();
+  for (const id of ["y2LabelGroup", "y2AxisSettingsGroup"]) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = hasY2 ? "" : "none";
   }
 };
 
-window.ensureSeriesItems = () => {
-  if (!seriesList) return;
-  if (seriesList.children.length === 0) {
-    addSeriesItem();
-  } else {
-    renumberSeries();
+// 点サイズが自動（null）の系列は、プロット種別に応じた値を表示する（ユーザーが入力した値は変えない）
+export const syncMarkerSizeDisplay = () => {
+  const { plot, series } = getSettings();
+  for (const item of document.querySelectorAll("#seriesList .series-item")) {
+    const s = series.find((x) => x.id === item.dataset.seriesId);
+    const input = item.querySelector(".series-marker-size");
+    if (s && input && s.markerSize === null && document.activeElement !== input) {
+      input.value = String(defaultMarkerSize(plot.type));
+    }
   }
-  syncPlotTypeUI();
-  syncY2LabelUI();
+};
+
+export const renderSeriesList = () => {
+  const list = document.getElementById("seriesList");
+  if (!list) return;
+  const { series, plot } = getSettings();
+  list.replaceChildren(...series.map((s) => buildCard(s, plot.type)));
+  const items = list.querySelectorAll(".series-item");
+  items.forEach((item, idx) => {
+    item.querySelector(".series-item-title").textContent = `系列 ${idx + 1}`;
+    const removeBtn = item.querySelector(".remove-series");
+    const disable = items.length <= 1;
+    removeBtn.disabled = disable;
+    removeBtn.style.opacity = disable ? "0.5" : "1";
+    removeBtn.style.cursor = disable ? "not-allowed" : "pointer";
+  });
+  syncVisibility();
+};
+
+const refreshXColumnSelect = () => {
+  const select = document.getElementById("xColumn");
+  if (select) fillSelect(select, xOptions(), getSettings().plot.xColumn);
+};
+
+// 読込後の列の選択肢を更新する。もう存在しない列の選択は解除する（再描画は呼び出し側が行う）。
+export const setColumns = (newColumns) => {
+  columns = newColumns;
+  const valid = new Set(columns.map((c) => c.value));
+  const settings = getSettings();
+  if (settings.plot.xColumn && !valid.has(settings.plot.xColumn)) setPath("plot.xColumn", "", "reconcile");
+  for (const s of settings.series) {
+    const patch = {};
+    if (s.x && !valid.has(s.x)) patch.x = "";
+    if (s.y && !valid.has(s.y)) patch.y = "";
+    if (Object.keys(patch).length) updateSeries(s.id, patch, "reconcile");
+  }
+  refreshXColumnSelect();
+  renderSeriesList();
+};
+
+const FIELD_BY_CLASS = [
+  ["series-x", "x", "text"],
+  ["series-y", "y", "text"],
+  ["series-line-width", "lineWidth", "number"],
+  ["series-line-style", "lineStyle", "text"],
+  ["series-marker-size", "markerSize", "number"],
+  ["series-legend-name", "label", "text"],
+  ["series-use-y2", "secondaryAxis", "checkbox"],
+];
+
+const onSeriesInput = (event) => {
+  const target = event.target;
+  if (!target || !target.matches || !target.matches("input, select")) return;
+  const item = target.closest(".series-item");
+  if (!item) return;
+  const entry = FIELD_BY_CLASS.find(([cls]) => target.classList.contains(cls));
+  if (!entry) return;
+  const [, field, kind] = entry;
+  const value = kind === "checkbox" ? target.checked : kind === "number" ? readNumber(target) : target.value;
+  updateSeries(item.dataset.seriesId, { [field]: value });
 };
 
 export const bindSeriesEvents = () => {
-  if (addSeriesBtn) {
-    addSeriesBtn.addEventListener("click", () => {
-      addSeriesItem();
-      scheduleRender();
-    });
-  }
-  if (plotTypeSelect) {
-    plotTypeSelect.addEventListener("change", () => {
-      syncPlotTypeUI();
-      syncMarkerSizeForPlotType();
-      scheduleRender();
-    });
-  }
-  if (seriesList) {
-    const onSeriesInput = (event) => {
-      const target = event.target;
-      if (!target) return;
-      if (target.matches("input, select")) {
-        if (target.matches(".series-use-y2")) {
-          syncY2LabelUI();
-        }
-        scheduleRender();
-      }
-    };
-    seriesList.addEventListener("input", onSeriesInput);
-    seriesList.addEventListener("change", onSeriesInput);
+  const list = document.getElementById("seriesList");
+  const addBtn = document.getElementById("addSeriesBtn");
+  if (addBtn) addBtn.addEventListener("click", () => addSeries());
+  if (list) {
+    list.addEventListener("input", onSeriesInput);
+    list.addEventListener("change", onSeriesInput);
   }
 };
