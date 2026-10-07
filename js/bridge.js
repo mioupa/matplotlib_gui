@@ -10,7 +10,7 @@ import { applySkipRows, showPreview } from "./ui/dataPreview.js";
 import { setColumns } from "./ui/series.js";
 import { showEncoding, showFileName } from "./ui/fileInfo.js";
 import { setBusy, showProgress } from "./ui/progress.js";
-import { isFontCached, loadFont } from "./font-cache.js";
+import { FONT_FIRST_RENDER_WAIT_MS, isFontCached, loadFont } from "./font-cache.js";
 
 const RENDER_DELAY_MS = 250;
 const LOAD_DELAY_MS = { file: 0, header: 0, delimiter: 450 };
@@ -35,6 +35,7 @@ let readyCallbacks = [];
 let fontState = "idle"; // idle | loading | ready | failed
 let fontPercent = null;
 let fontTask = null;
+let fontWaitGaveUp = false; // 最初の描画がフォント待ちを打ち切った（以後は待たない）
 
 const setDataState = (state) => {
   dataReady = state === "ready";
@@ -101,6 +102,7 @@ const startFont = () => {
       try {
         api.registerFont(bytes);
         setFontState("ready");
+        if (fontWaitGaveUp) renderNow(); // フォント無しで描いた図を、現在の設定で1回だけ描き直す（通常の合流処理・新しい世代）
       } catch (_) {
         setFontState("failed");
         addStickyWarning(FONT_FAILED_MESSAGE);
@@ -113,8 +115,21 @@ const startFont = () => {
   return fontTask;
 };
 
+// 最初の描画は最大 FONT_FIRST_RENDER_WAIT_MS だけ待つ。超えたらフォールバックフォントで描き、取得完了後に再描画する。
 const waitForFont = async () => {
-  if (fontState === "loading" && fontTask) await fontTask;
+  if (fontState !== "loading" || !fontTask || fontWaitGaveUp) return;
+  let timer = null;
+  const timeout = new Promise((resolve) => {
+    timer = window.setTimeout(() => {
+      fontWaitGaveUp = true;
+      resolve();
+    }, FONT_FIRST_RENDER_WAIT_MS);
+  });
+  try {
+    await Promise.race([fontTask, timeout]);
+  } finally {
+    window.clearTimeout(timer);
+  }
 };
 
 // ---- 描画 ----
