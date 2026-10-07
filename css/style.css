@@ -787,3 +787,14 @@ button.series-color-chip.active {
     flex: none;
   }
 }
+@media (max-width: 480px) {
+  .tabs {
+    gap: 6px;
+  }
+  .tab-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 8px 6px;
+    font-size: 13px;
+  }
+}

@@ -200,3 +200,11 @@ def test_save_in_edit_mode_uses_edited_code(app):
     svg = open(download.path(), encoding="utf-8").read()
     assert "保存される編集後タイトル" in svg and TITLE not in svg
     assert status_kind(page) == "ok"
+
+
+def test_no_horizontal_scroll_on_narrow_screens(page, app_url, console_log):
+    page.set_viewport_size({"width": 375, "height": 812})
+    page.goto(app_url)
+    for tab in ("tabPlotBtn", "tabDataBtn", "tabCodeBtn"):
+        page.click(f"#{tab}")
+        assert page.evaluate("document.documentElement.scrollWidth") <= 375, tab
