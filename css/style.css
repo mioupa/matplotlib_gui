@@ -30,9 +30,13 @@
   --error-text: #d20f39;
   --status-ok: #4c4f69;
   --status-error: #d20f39;
+  --status-warning: #8a5300;
+  --status-info: #5c5f77;
+  --warning-bg: rgba(223, 142, 29, 0.14);
+  --busy-bg: rgba(239, 241, 245, 0.72);
   --table-header-bg: #e6e9ef;
-  --table-skipped-bg: #dce0e8;
-  --table-skipped-text: #6c6f85;
+  --table-skipped-bg: #ccd0da;
+  --table-skipped-text: #8c8fa1;
   --table-rownum-bg: #e6e9ef;
   --table-rownum-text: #6c6f85;
   --series-item-bg: #e6e9ef;
@@ -74,9 +78,13 @@
     --error-text: #f5c2e7;
     --status-ok: #cdd6f4;
     --status-error: #f38ba8;
+    --status-warning: #f9e2af;
+    --status-info: #bac2de;
+    --warning-bg: rgba(249, 226, 175, 0.12);
+    --busy-bg: rgba(24, 24, 37, 0.7);
     --table-header-bg: #313244;
-    --table-skipped-bg: #181825;
-    --table-skipped-text: #a6adc8;
+    --table-skipped-bg: #0f0f17;
+    --table-skipped-text: #7f849c;
     --table-rownum-bg: #313244;
     --table-rownum-text: #a6adc8;
     --series-item-bg: #313244;
@@ -251,6 +259,88 @@ button.secondary:hover {
   margin-top: 10px;
   min-height: 22px;
   font-size: 13px;
+}
+.status[data-kind="ok"] {
+  color: var(--status-ok);
+}
+.status[data-kind="warning"] {
+  color: var(--status-warning);
+}
+.status[data-kind="error"] {
+  color: var(--status-error);
+  font-weight: 600;
+}
+.status[data-kind="info"] {
+  color: var(--status-info);
+}
+.status[data-kind="ok"]::before {
+  content: "\2713  ";
+}
+.status[data-kind="error"]::before {
+  content: "\2715  ";
+}
+.status[data-kind="warning"] {
+  padding: 6px 8px;
+  border-left: 3px solid var(--status-warning);
+  border-radius: 4px;
+  background: var(--warning-bg);
+}
+.status-warning-item {
+  color: var(--status-warning);
+}
+.status-warning-item::before {
+  content: "\26A0  ";
+}
+.file-info {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+.file-info:empty {
+  display: none;
+}
+.progress-banner {
+  margin-bottom: 10px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--status-info);
+  font-size: 13px;
+}
+.progress-banner[hidden] {
+  display: none;
+}
+#plotPanel {
+  position: relative;
+}
+.render-busy {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 5;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--busy-bg);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  opacity: 0;
+  animation: busy-in 0.15s ease-out 0.2s forwards; /* 短い描画では出さない */
+}
+.render-busy[hidden] {
+  display: none;
+}
+@keyframes busy-in {
+  to {
+    opacity: 1;
+  }
+}
+#plotPanel[aria-busy="true"] #plotArea {
+  opacity: 0.6;
+  transition: opacity 0.15s ease-out 0.2s;
 }
 .status-detail-wrap {
   margin-top: 8px;
@@ -434,8 +524,14 @@ button.secondary:hover {
   gap: 8px;
   margin-bottom: 8px;
 }
-.series-toolbar label {
+.series-toolbar label,
+.series-toolbar .field-label {
   margin: 0;
+}
+.field-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
 }
 button.small-btn {
   width: auto;

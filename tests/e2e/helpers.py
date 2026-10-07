@@ -96,3 +96,34 @@ def save_plot(page, timeout=120_000):
     with page.expect_download(timeout=timeout) as dl:
         page.click("#savePlotBtn")
     return dl.value
+
+
+# --- Step 5a で追加した信号 ---
+# data-font-state: "idle" | "loading" | "ready" | "failed"（日本語フォント）
+# data-load-count: 読込が成功した回数
+FONT_DONE_JS = "['ready','failed'].includes(document.documentElement.dataset.fontState)"
+STATUS_WARNINGS_JS = "[...document.querySelectorAll('#status .status-warning-item')].map(e => e.textContent)"
+
+
+def wait_font_done(page, timeout=180_000):
+    page.wait_for_function(FONT_DONE_JS, timeout=timeout)
+
+
+def load_count(page) -> int:
+    return int(page.evaluate("document.documentElement.dataset.loadCount || '0'"))
+
+
+def wait_load_count(page, n, timeout=120_000):
+    page.wait_for_function(f"Number(document.documentElement.dataset.loadCount) >= {int(n)}", timeout=timeout)
+
+
+def render_generation(page) -> str:
+    return page.evaluate("document.documentElement.dataset.renderGeneration || ''")
+
+
+def image_generation(page) -> str:
+    return page.evaluate("(document.querySelector('#plotArea img') || {dataset: {}}).dataset.generation || ''")
+
+
+def status_warnings(page) -> list[str]:
+    return page.evaluate(STATUS_WARNINGS_JS)

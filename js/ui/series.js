@@ -30,7 +30,7 @@ const cardHtml = (series, plotType) => {
   return `
     <div class="series-item-header">
       <div class="series-item-title">系列</div>
-      <button type="button" class="small-btn ghost-btn remove-series">削除</button>
+      <button type="button" id="${id("remove")}" class="small-btn ghost-btn remove-series">削除</button>
     </div>
     <div class="row group">
       <div class="series-x-wrap">
@@ -84,7 +84,7 @@ const cardHtml = (series, plotType) => {
     </div>
     <div class="group">
       <label class="inline check-label">
-        <input class="series-use-y2" type="checkbox" ${series.secondaryAxis ? "checked" : ""} />
+        <input id="${id("use-y2")}" class="series-use-y2" type="checkbox" ${series.secondaryAxis ? "checked" : ""} />
         <span>第2軸を使用</span>
       </label>
     </div>
@@ -142,6 +142,7 @@ export const renderSeriesList = () => {
     const removeBtn = item.querySelector(".remove-series");
     const disable = items.length <= 1;
     removeBtn.disabled = disable;
+    removeBtn.setAttribute("aria-label", `系列 ${idx + 1} を削除`);
     removeBtn.style.opacity = disable ? "0.5" : "1";
     removeBtn.style.cursor = disable ? "not-allowed" : "pointer";
   });

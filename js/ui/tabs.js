@@ -1,4 +1,4 @@
-// 「プロット / データ確認 / Pythonコード(beta)」のタブ切替。
+// 「プロット / データ確認 / Pythonコード(beta)」のタブ切替（WAI-ARIA tabs。矢印キーでも移動できる）。
 const TABS = [
   ["plot", "tabPlotBtn", "plotPanel"],
   ["data", "tabDataBtn", "dataPanel"],
@@ -10,15 +10,28 @@ export const switchTab = (selected) => {
     const on = name === selected;
     const btn = document.getElementById(btnId);
     const panel = document.getElementById(panelId);
-    if (btn) btn.classList.toggle("active", on);
+    if (btn) {
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+      btn.tabIndex = on ? 0 : -1;
+    }
     if (panel) panel.classList.toggle("hidden", !on);
   }
 };
 
 export const bindTabs = () => {
-  for (const [name, btnId] of TABS) {
+  TABS.forEach(([name, btnId], idx) => {
     const btn = document.getElementById(btnId);
-    if (btn) btn.addEventListener("click", () => switchTab(name));
-  }
+    if (!btn) return;
+    btn.addEventListener("click", () => switchTab(name));
+    btn.addEventListener("keydown", (event) => {
+      const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+      if (!step) return;
+      event.preventDefault();
+      const [nextName, nextBtnId] = TABS[(idx + step + TABS.length) % TABS.length];
+      switchTab(nextName);
+      document.getElementById(nextBtnId).focus();
+    });
+  });
   switchTab("plot");
 };

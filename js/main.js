@@ -11,7 +11,11 @@ import { bindTabs } from "./ui/tabs.js";
 
 const fileInput = document.getElementById("fileInput");
 if (fileInput) {
-  fileInput.addEventListener("change", () => selectFile(fileInput.files && fileInput.files[0]));
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files && fileInput.files[0];
+    selectFile(file); // File は bridge.js が保持する（再読込用）
+    fileInput.value = ""; // 空に戻すので、同じファイルをもう一度選んでも change が起きて再読込される
+  });
 }
 const savePlotBtn = document.getElementById("savePlotBtn");
 if (savePlotBtn) savePlotBtn.addEventListener("click", () => saveNow());

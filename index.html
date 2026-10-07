@@ -26,6 +26,8 @@
         <div class="group">
           <label for="fileInput">入力ファイル (.xlsx/.csv/.txt)</label>
           <input id="fileInput" type="file" accept=".xlsx,.csv,.txt" />
+          <div id="fileNameLabel" class="file-info"></div>
+          <div id="encodingLabel" class="file-info"></div>
         </div>
 
         <div class="group">
@@ -67,10 +69,10 @@
 
         <div class="group">
           <div class="series-toolbar">
-            <label>描画系列</label>
+            <span id="seriesLabel" class="field-label">描画系列</span>
             <button id="addSeriesBtn" class="small-btn secondary" type="button">+ 系列を追加</button>
           </div>
-          <div id="seriesList" class="series-list"></div>
+          <div id="seriesList" class="series-list" role="group" aria-labelledby="seriesLabel"></div>
           <div class="help-text">系列ごとにX/Y列・色・線幅・線種・点サイズ・第2軸使用を設定できます。</div>
         </div>
 
@@ -247,7 +249,7 @@
           </div>
         </div>
 
-        <div id="status" class="status"></div>
+        <div id="status" class="status" role="status" aria-live="polite"></div>
         <details id="statusDetailWrap" class="status-detail-wrap hidden">
           <summary>内部エラー詳細</summary>
           <pre id="statusDetail" class="status-detail"></pre>
@@ -255,18 +257,20 @@
       </aside>
 
       <main class="viewer">
-        <div class="tabs">
-          <button id="tabPlotBtn" class="tab-btn active" type="button">プロット</button>
-          <button id="tabDataBtn" class="tab-btn" type="button">データ確認</button>
-          <button id="tabCodeBtn" class="tab-btn" type="button">Pythonコード(beta)</button>
+        <div id="progress" class="progress-banner" role="status" aria-live="polite"></div>
+        <div class="tabs" role="tablist" aria-label="表示の切り替え">
+          <button id="tabPlotBtn" class="tab-btn active" type="button" role="tab" aria-selected="true" aria-controls="plotPanel">プロット</button>
+          <button id="tabDataBtn" class="tab-btn" type="button" role="tab" aria-selected="false" aria-controls="dataPanel" tabindex="-1">データ確認</button>
+          <button id="tabCodeBtn" class="tab-btn" type="button" role="tab" aria-selected="false" aria-controls="codePanel" tabindex="-1">Pythonコード(beta)</button>
         </div>
-        <div id="plotPanel" class="canvas-wrap tab-panel">
-          <div id="plotArea"></div>
+        <div id="plotPanel" class="canvas-wrap tab-panel" role="tabpanel" aria-labelledby="tabPlotBtn" aria-busy="false">
+          <div id="renderBusy" class="render-busy" hidden>描画中…</div>
+          <div id="plotArea" aria-busy="false"></div>
         </div>
-        <div id="dataPanel" class="canvas-wrap tab-panel hidden">
+        <div id="dataPanel" class="canvas-wrap tab-panel hidden" role="tabpanel" aria-labelledby="tabDataBtn">
           <div id="dataArea"></div>
         </div>
-        <div id="codePanel" class="canvas-wrap tab-panel hidden">
+        <div id="codePanel" class="canvas-wrap tab-panel hidden" role="tabpanel" aria-labelledby="tabCodeBtn">
           <div class="code-editor-wrap">
             <div class="code-toolbar">
               <div class="inline">
@@ -276,7 +280,7 @@
               <button id="applyCustomCodeBtn" class="small-btn secondary" type="button">コードを反映して再描画</button>
               <button id="resetCustomCodeBtn" class="small-btn ghost-btn" type="button">初期コードに戻す</button>
             </div>
-            <textarea id="customPyCode" spellcheck="false"></textarea>
+            <textarea id="customPyCode" spellcheck="false" aria-label="Pythonコード"></textarea>
             <div class="help-text">
               有効時はこのコードで描画します。<code>df</code>・<code>settings</code>・<code>plt</code>・<code>pd</code> が利用可能です。<code>fig</code> を必ず生成してください。Ctrl/Cmd + Enter でも再描画できます。
             </div>
