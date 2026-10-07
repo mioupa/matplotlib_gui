@@ -868,9 +868,16 @@
 
     <script>
       (() => {
+        const __warn = console.warn.bind(console);
         const isTargetError = (msg) =>
           typeof msg === "string" &&
           (msg.includes("parentNode") || msg.includes("'NoneType' object has no attribute 'parentNode'"));
+
+        const logSuppressed = (where, msg, stack = "") => {
+          try {
+            __warn("[mplgui] suppressed parentNode error:", where, String(msg));
+          } catch (_) {}
+        };
 
         const buildJsErrorDetail = (source, msg, stack = "", extras = []) => {
           const lines = [`source: ${source}`];
@@ -924,6 +931,7 @@
           if (isTargetError(msg)) {
             event.preventDefault();
             const stack = event?.error?.stack || "";
+            logSuppressed("window.error", msg, stack);
             const extras = [
               event?.filename ? `file: ${event.filename}` : "",
               event?.lineno ? `line: ${event.lineno}` : "",
@@ -939,6 +947,7 @@
           if (isTargetError(msg)) {
             event.preventDefault();
             const stack = reason?.stack || "";
+            logSuppressed("window.unhandledrejection", msg, stack);
             notify(buildJsErrorDetail("window.unhandledrejection", msg, stack));
           }
         });
@@ -947,6 +956,7 @@
         console.error = (...args) => {
           const msg = args.map((x) => String(x)).join(" ");
           if (isTargetError(msg)) {
+            logSuppressed("console.error", msg, new Error().stack || "");
             notify(buildJsErrorDetail("console.error", msg));
             return;
           }
@@ -1656,6 +1666,17 @@ def _is_parentnode_error(exc: Exception) -> bool:
     return ("parentNode" in text) or ("NoneType" in text and "parentNode" in text)
 
 
+def _log_suppressed(where: str, exc) -> None:
+    try:
+        from js import console
+        if False:
+            console.warn("[mplgui] suppressed parentNode error:", where, str(exc), traceback.format_exc())
+        else:
+            console.warn("[mplgui] suppressed parentNode error:", where, str(exc))
+    except Exception:
+        pass
+
+
 def _safe_close_figure(fig) -> None:
     if fig is None:
         return
@@ -1664,6 +1685,7 @@ def _safe_close_figure(fig) -> None:
     except Exception as exc:
         # Pyodide/ブラウザ描画バックエンドの後処理競合は無視する
         if _is_parentnode_error(exc):
+            _log_suppressed("_safe_close_figure", exc)
             return
         raise
 
@@ -1703,6 +1725,7 @@ def _spawn_task(coro) -> None:
             finished_task.result()
         except Exception as exc:
             if _is_parentnode_error(exc):
+                _log_suppressed("_spawn_task", exc)
                 try:
                     if _has_rendered_plot():
                         set_status("描画に成功しました。")
@@ -2519,6 +2542,7 @@ async def on_load_columns(event=None):
         CURRENT_DF = None
         _set_data_ready(False)
         if _is_parentnode_error(exc):
+            _log_suppressed("on_load_columns", exc)
             detail = _format_internal_error_detail(exc, "on_load_columns")
             set_status("内部エラーを自動回避しました。もう一度同じ操作を実行してください。", True, detail)
             return
@@ -2833,6 +2857,7 @@ async def on_render(event=None):
         set_status(f"描画に成功しました（{plotted_count}系列、スキップ{skip_rows}行）。")
     except Exception as exc:
         if _is_parentnode_error(exc):
+            _log_suppressed("on_render", exc)
             if _has_rendered_plot():
                 set_status("描画に成功しました。")
             else:
@@ -2867,6 +2892,7 @@ async def on_save_plot(event=None):
         set_status(f"描画データを保存しました: {filename}")
     except Exception as exc:
         if _is_parentnode_error(exc):
+            _log_suppressed("on_save_plot", exc)
             detail = _format_internal_error_detail(exc, "on_save_plot")
             set_status("内部エラーを自動回避しました。もう一度保存を実行してください。", True, detail)
             return
@@ -2925,6 +2951,7 @@ try:
     _bind_events()
 except Exception as exc:
     if _is_parentnode_error(exc):
+        _log_suppressed("initialization", exc)
         detail = _format_internal_error_detail(exc, "initialization")
         set_status("内部エラーを自動回避しました。ページを再読み込みして再試行してください。", True, detail)
     else:
