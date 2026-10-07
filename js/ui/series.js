@@ -1,0 +1,203 @@
+// 系列カード（追加・削除・列セレクト・種別/第2軸に応じた表示切替）。カードは state の系列リストから描く。
+import { addSeries, getSettings, hasSecondaryAxis, removeSeries, updateSeries, setPath } from "../state.js";
+import { bindSeriesColorControls } from "./colorPicker.js";
+import { readNumber } from "./forms.js";
+
+let columns = []; // [{value: "__idx__0", label: "時間 [0]"}]（読込のたびに更新）
+
+const esc = (text) =>
+  String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+const defaultMarkerSize = (plotType) => (plotType === "line" ? 0 : 24);
+const displayMarkerSize = (series, plotType) => (series.markerSize === null ? defaultMarkerSize(plotType) : series.markerSize);
+
+const fillSelect = (selectEl, options, selected) => {
+  selectEl.innerHTML = "";
+  for (const opt of options) {
+    const o = document.createElement("option");
+    o.value = opt.value;
+    o.textContent = opt.label;
+    selectEl.appendChild(o);
+  }
+  selectEl.value = options.some((o) => o.value === selected) ? selected : "";
+};
+
+const xOptions = () => [{ value: "", label: "(index)" }, ...columns];
+const yOptions = () => [{ value: "", label: "(自動)" }, ...columns];
+
+const cardHtml = (series, plotType) => {
+  const id = (name) => `series-${series.id}-${name}`;
+  return `
+    <div class="series-item-header">
+      <div class="series-item-title">系列</div>
+      <button type="button" id="${id("remove")}" class="small-btn ghost-btn remove-series">削除</button>
+    </div>
+    <div class="row group">
+      <div class="series-x-wrap">
+        <label for="${id("x")}">X列</label>
+        <select id="${id("x")}" class="series-x"></select>
+      </div>
+      <div>
+        <label for="${id("y")}">Y列</label>
+        <select id="${id("y")}" class="series-y"></select>
+      </div>
+    </div>
+    <div class="row group">
+      <div>
+        <label for="${id("color-trigger")}">色</label>
+        <div class="series-color-picker">
+          <button type="button" id="${id("color-trigger")}" class="series-color-trigger">
+            <span class="series-color-swatch-inline"></span>
+            <span>色を選択</span>
+          </button>
+          <div class="series-color-panel hidden">
+            <div class="series-color-grid"></div>
+            <button type="button" class="small-btn ghost-btn series-color-custom-toggle">カスタム</button>
+            <input class="series-color series-color-custom hidden" type="color" value="${esc(series.color)}" aria-label="カスタム色" />
+          </div>
+        </div>
+        <div class="color-value series-color-value">${esc(series.color)}</div>
+      </div>
+      <div>
+        <label for="${id("line-width")}">線幅</label>
+        <input id="${id("line-width")}" class="series-line-width" type="number" step="0.1" value="${esc(series.lineWidth ?? "")}" />
+      </div>
+    </div>
+    <div class="row group">
+      <div>
+        <label for="${id("line-style")}">線種</label>
+        <select id="${id("line-style")}" class="series-line-style">
+          <option value="solid">solid</option>
+          <option value="dashed">dashed</option>
+          <option value="dashdot">dashdot</option>
+          <option value="dotted">dotted</option>
+        </select>
+      </div>
+      <div>
+        <label for="${id("marker-size")}">点サイズ</label>
+        <input id="${id("marker-size")}" class="series-marker-size" type="number" step="1" value="${esc(displayMarkerSize(series, plotType))}" />
+      </div>
+    </div>
+    <div class="group">
+      <label for="${id("legend-name")}">凡例名（任意）</label>
+      <input id="${id("legend-name")}" class="series-legend-name" type="text" value="${esc(series.label)}" placeholder="自動" />
+    </div>
+    <div class="group">
+      <label class="inline check-label">
+        <input id="${id("use-y2")}" class="series-use-y2" type="checkbox" ${series.secondaryAxis ? "checked" : ""} />
+        <span>第2軸を使用</span>
+      </label>
+    </div>
+  `;
+};
+
+const buildCard = (series, plotType) => {
+  const item = document.createElement("div");
+  item.className = "series-item";
+  item.dataset.seriesId = series.id;
+  item.innerHTML = cardHtml(series, plotType);
+  fillSelect(item.querySelector(".series-x"), xOptions(), series.x);
+  fillSelect(item.querySelector(".series-y"), yOptions(), series.y);
+  item.querySelector(".series-line-style").value = series.lineStyle;
+  bindSeriesColorControls(item, (color) => updateSeries(series.id, { color }));
+  item.querySelector(".remove-series").addEventListener("click", () => removeSeries(series.id));
+  return item;
+};
+
+export const syncVisibility = () => {
+  const settings = getSettings();
+  const usePerSeriesX = settings.plot.type !== "bar";
+  const globalX = document.getElementById("globalXGroup");
+  if (globalX) globalX.style.display = usePerSeriesX ? "none" : "";
+  for (const group of document.querySelectorAll("#seriesList .series-x-wrap")) {
+    group.style.display = usePerSeriesX ? "block" : "none";
+  }
+  const hasY2 = hasSecondaryAxis();
+  for (const id of ["y2LabelGroup", "y2AxisSettingsGroup"]) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = hasY2 ? "" : "none";
+  }
+};
+
+// 点サイズが自動（null）の系列は、プロット種別に応じた値を表示する（ユーザーが入力した値は変えない）
+export const syncMarkerSizeDisplay = () => {
+  const { plot, series } = getSettings();
+  for (const item of document.querySelectorAll("#seriesList .series-item")) {
+    const s = series.find((x) => x.id === item.dataset.seriesId);
+    const input = item.querySelector(".series-marker-size");
+    if (s && input && s.markerSize === null && document.activeElement !== input) {
+      input.value = String(defaultMarkerSize(plot.type));
+    }
+  }
+};
+
+export const renderSeriesList = () => {
+  const list = document.getElementById("seriesList");
+  if (!list) return;
+  const { series, plot } = getSettings();
+  list.replaceChildren(...series.map((s) => buildCard(s, plot.type)));
+  const items = list.querySelectorAll(".series-item");
+  items.forEach((item, idx) => {
+    item.querySelector(".series-item-title").textContent = `系列 ${idx + 1}`;
+    const removeBtn = item.querySelector(".remove-series");
+    const disable = items.length <= 1;
+    removeBtn.disabled = disable;
+    removeBtn.setAttribute("aria-label", `系列 ${idx + 1} を削除`);
+    removeBtn.style.opacity = disable ? "0.5" : "1";
+    removeBtn.style.cursor = disable ? "not-allowed" : "pointer";
+  });
+  syncVisibility();
+};
+
+const refreshXColumnSelect = () => {
+  const select = document.getElementById("xColumn");
+  if (select) fillSelect(select, xOptions(), getSettings().plot.xColumn);
+};
+
+// 読込後の列の選択肢を更新する。もう存在しない列の選択は解除する（再描画は呼び出し側が行う）。
+export const setColumns = (newColumns) => {
+  columns = newColumns;
+  const valid = new Set(columns.map((c) => c.value));
+  const settings = getSettings();
+  if (settings.plot.xColumn && !valid.has(settings.plot.xColumn)) setPath("plot.xColumn", "", "reconcile");
+  for (const s of settings.series) {
+    const patch = {};
+    if (s.x && !valid.has(s.x)) patch.x = "";
+    if (s.y && !valid.has(s.y)) patch.y = "";
+    if (Object.keys(patch).length) updateSeries(s.id, patch, "reconcile");
+  }
+  refreshXColumnSelect();
+  renderSeriesList();
+};
+
+const FIELD_BY_CLASS = [
+  ["series-x", "x", "text"],
+  ["series-y", "y", "text"],
+  ["series-line-width", "lineWidth", "number"],
+  ["series-line-style", "lineStyle", "text"],
+  ["series-marker-size", "markerSize", "number"],
+  ["series-legend-name", "label", "text"],
+  ["series-use-y2", "secondaryAxis", "checkbox"],
+];
+
+const onSeriesInput = (event) => {
+  const target = event.target;
+  if (!target || !target.matches || !target.matches("input, select")) return;
+  const item = target.closest(".series-item");
+  if (!item) return;
+  const entry = FIELD_BY_CLASS.find(([cls]) => target.classList.contains(cls));
+  if (!entry) return;
+  const [, field, kind] = entry;
+  const value = kind === "checkbox" ? target.checked : kind === "number" ? readNumber(target) : target.value;
+  updateSeries(item.dataset.seriesId, { [field]: value });
+};
+
+export const bindSeriesEvents = () => {
+  const list = document.getElementById("seriesList");
+  const addBtn = document.getElementById("addSeriesBtn");
+  if (addBtn) addBtn.addEventListener("click", () => addSeries());
+  if (list) {
+    list.addEventListener("input", onSeriesInput);
+    list.addEventListener("change", onSeriesInput);
+  }
+};
