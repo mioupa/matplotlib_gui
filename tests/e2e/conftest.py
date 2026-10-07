@@ -13,9 +13,12 @@ FIXTURES = REPO / "tests" / "fixtures"
 
 @pytest.fixture(scope="session")
 def app_url():
-    """E2E_SERVE_DIR（既定: リポジトリルート）を配信するローカルサーバーのURL。"""
+    """E2E_SERVE_DIR（既定: リポジトリルート）を配信するローカルサーバーのURL。
+
+    E2E_BASE_PATH（例: /matplotlib_gui/）を指定すると、そのサブパス配下で配信する（既定: /）。
+    """
     root = Path(os.environ.get("E2E_SERVE_DIR") or REPO)
-    srv, url = start_server(root)
+    srv, url = start_server(root, os.environ.get("E2E_BASE_PATH"))
     yield url
     srv.shutdown()
 

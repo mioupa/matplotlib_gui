@@ -10,3 +10,4 @@ exclude:
   - pyproject.toml
   - uv.lock
   - .python-version
+  - .github/

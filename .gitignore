@@ -7,3 +7,4 @@ test-results/
 # ベンチマークの出力・生成データ
 tests/perf/out/
 tests/perf/.tmp/
+_site/
