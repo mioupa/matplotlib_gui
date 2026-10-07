@@ -20,9 +20,8 @@ TAB10 = ["#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD", "#8C564B", "#E37
 
 
 def assert_same_size(page):
-    """図の物理サイズが変わっていない（800×600）。cm / mm は 20.32 * (1 / 2.54) が 7.999… になり、整数化で 1 px 欠けることがある。"""
-    w, h = natural_size(page)
-    assert abs(w - 800) <= 1 and abs(h - 600) <= 1, (w, h)
+    """図の物理サイズが変わっていない（800×600。cm / mm でも生成コードは割り算でインチに直すので、画素数は欠けない）。"""
+    assert natural_size(page) == (800, 600)
 
 
 def start(page, app_url, fixtures_dir, fixture="utf8.csv"):
@@ -83,7 +82,7 @@ def test_preset_applies_only_on_button(page, app_url, fixtures_dir):
     wait_code_generated(page)
     open_code_tab(page)
     code = code_text(page)
-    assert "8.5 * CM" in code and "FONT_SIZE = 8" in code
+    assert "8.5 / CM_PER_INCH" in code and "FONT_SIZE = 8" in code
     page.click("#tabPlotBtn")
 
     # 適用後に追加した系列は、プリセットの線幅になる

@@ -27,7 +27,8 @@ SVG_TEXT_MODES = ("path", "text")
 DEFAULT_DPI = 300
 MIN_DPI = 50
 MAX_DPI = 1200
-_INCHES_PER_UNIT = {"in": 1.0, "cm": 1 / 2.54, "mm": 1 / 25.4}
+# 1 インチあたりの長さ。インチへは「値 / これ」で直す（生成コードと同じ割り算。1 / 2.54 を掛けると 20.32 cm が 7.999… inch になる）
+_UNITS_PER_INCH = {"in": 1.0, "cm": 2.54, "mm": 25.4}
 LEGEND_LOCATIONS = (
     "best",
     "upper right",
@@ -109,11 +110,11 @@ class FigureSettings:
 
     @property
     def width_in(self) -> float:
-        return self.width * _INCHES_PER_UNIT[self.unit]
+        return self.width / _UNITS_PER_INCH[self.unit]
 
     @property
     def height_in(self) -> float:
-        return self.height * _INCHES_PER_UNIT[self.unit]
+        return self.height / _UNITS_PER_INCH[self.unit]
 
 
 @dataclass(frozen=True)
@@ -444,7 +445,7 @@ def parse_settings(raw: dict | None) -> Settings:
 def _figure_length(value: Any, label: str, default: float, unit: str) -> float:
     """図幅・図高さ。上限は 50 inch を選んだ単位に直した値（in: 50, cm: 127, mm: 1270）。"""
     num = _number(value, label, default=default, exclusive_min=0)
-    limit = MAX_FIGURE_INCH / _INCHES_PER_UNIT[unit]
+    limit = MAX_FIGURE_INCH * _UNITS_PER_INCH[unit]
     if num > limit + 1e-9:
         raise UserError(f"「{label}」は{_fmt(round(limit, 6))}以下の数値で入力してください（単位: {unit}）。", field=label)
     return num

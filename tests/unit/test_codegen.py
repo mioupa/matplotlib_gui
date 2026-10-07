@@ -2,6 +2,7 @@ import ast
 import contextlib
 import io
 import shutil
+import struct
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +16,7 @@ from mplgui.codegen import comment_text, generate_script, literal
 from mplgui.dataprep import plan_plot
 from mplgui.fonts import SANS_SERIF_PRIORITY
 from mplgui.loader import SourceInfo, load_file
-from mplgui.runner import ScriptError, figure_summary, run_script
+from mplgui.runner import ScriptError, figure_summary, figure_to_bytes, run_script
 from mplgui.settings import default_settings, parse_settings
 
 pytestmark = pytest.mark.unit
@@ -608,6 +609,15 @@ def test_figure_size_per_unit(tmp_path, data, unit, w, h, exp_w, exp_h):
     assert (b.settings.plot.figure.width_in, b.settings.plot.figure.height_in) == pytest.approx((exp_w, exp_h))
 
 
+@pytest.mark.parametrize("unit,w,h", [("in", 8, 6), ("cm", 20.32, 15.24), ("mm", 203.2, 152.4)])
+def test_round_metric_sizes_keep_exact_pixels(tmp_path, data, unit, w, h):
+    """切りのよい cm / mm（= 8 × 6 inch）でも、保存した画像の画素数が欠けない（1 / 2.54 を掛けると 2399 px になる）。"""
+    b = Built(tmp_path, data, lambda s: s["plot"]["figure"].update(width=w, height=h, unit=unit), [S(1)])
+    with b.full() as run:
+        png, _, _ = figure_to_bytes(run.fig, "png", dpi=300)
+    assert struct.unpack(">II", png[16:24]) == (2400, 1800)
+
+
 def test_figure_section_text_per_unit(tmp_path, data):
     def section3(mut):
         text = Built(tmp_path, data, mut, [S(1)]).script.text
@@ -616,11 +626,11 @@ def test_figure_section_text_per_unit(tmp_path, data):
     assert section3(None) == "fig, ax = plt.subplots(figsize=(8.0, 6.0), dpi=100)  # 幅 8.0 × 高さ 6.0 インチ"
     cm = section3(lambda s: s["plot"]["figure"].update(width=8.5, height=6, unit="cm"))
     assert cm == (
-        "CM = 1 / 2.54  # cm → インチ（figsize はインチで指定する）\n"
-        "fig, ax = plt.subplots(figsize=(8.5 * CM, 6.0 * CM), dpi=100)  # 幅 8.5 cm × 高さ 6.0 cm"
+        "CM_PER_INCH = 2.54  # 1 インチ = 2.54 cm（figsize はインチで指定するので、cm の値をこれで割る）\n"
+        "fig, ax = plt.subplots(figsize=(8.5 / CM_PER_INCH, 6.0 / CM_PER_INCH), dpi=100)  # 幅 8.5 cm × 高さ 6.0 cm"
     )
     mm = section3(lambda s: s["plot"]["figure"].update(width=85, height=60, unit="mm"))
-    assert mm.startswith("MM = 1 / 25.4  # mm → インチ") and "figsize=(85.0 * MM, 60.0 * MM)" in mm
+    assert mm.startswith("MM_PER_INCH = 25.4  # 1 インチ = 25.4 mm") and "figsize=(85.0 / MM_PER_INCH, 60.0 / MM_PER_INCH)" in mm
 
 
 @pytest.mark.parametrize(

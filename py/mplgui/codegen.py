@@ -234,10 +234,11 @@ def _emit_figure(b: _Builder, settings: Settings) -> None:
     if fig.unit == "in":
         b.add(f"fig, ax = plt.subplots(figsize=({w}, {h}), dpi=100)  # 幅 {comment_text(w)} × 高さ {comment_text(h)} インチ")
     else:
-        const, factor = ("CM", "2.54") if fig.unit == "cm" else ("MM", "25.4")
+        # 割り算で直す（1 / 2.54 を掛けると、20.32 cm が 7.999… inch になり、画像が 1 px 欠ける）
+        const, per_inch = ("CM_PER_INCH", "2.54") if fig.unit == "cm" else ("MM_PER_INCH", "25.4")
         b.add(
-            f"{const} = 1 / {factor}  # {fig.unit} → インチ（figsize はインチで指定する）",
-            f"fig, ax = plt.subplots(figsize=({w} * {const}, {h} * {const}), dpi=100)  # 幅 {comment_text(w)} {fig.unit} × 高さ {comment_text(h)} {fig.unit}",
+            f"{const} = {per_inch}  # 1 インチ = {per_inch} {fig.unit}（figsize はインチで指定するので、{fig.unit} の値をこれで割る）",
+            f"fig, ax = plt.subplots(figsize=({w} / {const}, {h} / {const}), dpi=100)  # 幅 {comment_text(w)} {fig.unit} × 高さ {comment_text(h)} {fig.unit}",
         )
 
 

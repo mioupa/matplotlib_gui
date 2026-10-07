@@ -122,4 +122,4 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
     if case.startswith("scatter"):
         assert browser[0]["collections"] == 1 and browser[0]["lines"] == 0
     if case == "scatter_paper1":
-        assert "8.5 * CM" in script.read_text(encoding="utf-8")  # cm で指定した図サイズのまま書き出される
+        assert "8.5 / CM_PER_INCH" in script.read_text(encoding="utf-8")  # cm で指定した図サイズのまま書き出される
