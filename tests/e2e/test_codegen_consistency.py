@@ -57,10 +57,17 @@ def _configure_bar(page):
     page.fill("#yLabel", "売上")
 
 
+def _configure_scatter_paper1(page):
+    _configure_scatter(page)
+    page.select_option("#stylePreset", "paper1")
+    page.click("#applyPresetBtn")  # 図のサイズ（cm）、フォント 8 pt、線幅、点サイズ 9
+
+
 CASES = {
     "line": ("growth.csv", _configure_line),
     "scatter": ("utf8.csv", _configure_scatter),
     "bar": ("categories.csv", _configure_bar),
+    "scatter_paper1": ("utf8.csv", _configure_scatter_paper1),
 }
 
 
@@ -112,5 +119,7 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
     if case == "line":
         assert browser[0]["yscale"] == "log" and browser[0]["lines"] == 1 and browser[1]["lines"] == 1
         assert browser[0]["legend"] == ["指数 [1]", "線形 [2]"]
-    if case == "scatter":
+    if case.startswith("scatter"):
         assert browser[0]["collections"] == 1 and browser[0]["lines"] == 0
+    if case == "scatter_paper1":
+        assert "8.5 * CM" in script.read_text(encoding="utf-8")  # cm で指定した図サイズのまま書き出される

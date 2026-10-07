@@ -7,6 +7,7 @@ import { bindCodeTab } from "./ui/codeTab.js";
 import { applyStateToForm, bindForms } from "./ui/forms.js";
 import { bindSaveFormatEvents, syncSaveFormatOptions } from "./ui/saveFormat.js";
 import { bindSeriesEvents, renderSeriesList, setColumns, syncMarkerSizeDisplay, syncVisibility } from "./ui/series.js";
+import { bindStyleSection } from "./ui/styleSection.js";
 import { initPanelSections } from "./ui/panelSections.js";
 import { bindTabs } from "./ui/tabs.js";
 
@@ -28,11 +29,14 @@ bindSeriesEvents();
 bindSaveFormatEvents();
 bindCodeTab();
 bindColorPanelOutsideClick();
+bindStyleSection();
 
 // state の変更に応じた画面の更新（再描画・読込の予約は bridge.js が購読して行う）
 subscribe((_settings, change) => {
   if (change.kind === "series-list") {
     renderSeriesList();
+  } else if (change.kind === "path" && change.path === "plot.palette") {
+    renderSeriesList(); // 色の選択肢と各系列の色を、新しいパレットで描き直す
   } else {
     syncVisibility();
     if (change.kind === "path" && change.path === "plot.type") syncMarkerSizeDisplay();

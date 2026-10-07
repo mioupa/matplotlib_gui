@@ -1,10 +1,13 @@
 // 設定オブジェクト（単一の正）。画面の入力はすべてここへ書き込み、描画・読込はここから JSON を作る。
 // DOM には触れない。変更は subscribe で購読する。
-import { DEFAULT_SERIES, DEFAULT_SETTINGS, PALETTE } from "./defaults.js";
+import { DEFAULT_SERIES, DEFAULT_SETTINGS } from "./defaults.js";
+import { getPalette, paletteColor } from "./palettes.js";
+import { newSeriesDefaults } from "./presets.js";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
 let settings = clone(DEFAULT_SETTINGS);
+let lastPreset = null; // 最後に適用したスタイルプリセット（このセッションの間だけ。設定オブジェクトには入れない）
 let seriesCounter = 1; // 系列 id は連番で払い出し、削除しても再利用しない
 const listeners = new Set();
 
@@ -53,16 +56,35 @@ export const updateSeries = (id, patch, origin = "user") => {
   if (changed) notify({ kind: "series-field", id, fields: Object.keys(patch), origin });
 };
 
-// 既定色: パレットのうち未使用の最初の色。すべて使用済みなら系列数で循環する。
+// 既定色: 現在のパレットのうち未使用の最初の色。すべて使用済みなら系列数で循環する。
 export const nextSeriesColor = () => {
+  const palette = getPalette(settings.plot.palette);
   const used = new Set(settings.series.map((s) => String(s.color).toUpperCase()));
-  const free = PALETTE.find((c) => !used.has(c.toUpperCase()));
-  return free || PALETTE[settings.series.length % PALETTE.length];
+  const free = palette.find((c) => !used.has(c.toUpperCase()));
+  return free || palette[settings.series.length % palette.length];
 };
 
-export const addSeries = (preset = {}) => {
+// パレットを替え、すべての系列を系列の順に新しいパレットの色で塗り直す（個別に選んだ色も上書きする）。
+// パレットの変更を最後に通知するので、購読側は塗り直し後の色で画面を描ける。
+export const applyPalette = (id) => {
+  settings.series.forEach((s, i) => updateSeries(s.id, { color: paletteColor(id, i) }));
+  setPath("plot.palette", id);
+};
+
+export const setLastPreset = (preset) => {
+  lastPreset = preset;
+};
+export const getLastPreset = () => lastPreset;
+
+export const addSeries = (overrides = {}) => {
   seriesCounter += 1;
-  const series = { ...clone(DEFAULT_SERIES), color: nextSeriesColor(), ...preset, id: `s${seriesCounter}` };
+  const series = {
+    ...clone(DEFAULT_SERIES),
+    color: nextSeriesColor(),
+    ...newSeriesDefaults(lastPreset, settings.plot.type),
+    ...overrides,
+    id: `s${seriesCounter}`,
+  };
   settings.series.push(series);
   notify({ kind: "series-list", origin: "user" });
   return series;

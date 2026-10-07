@@ -830,3 +830,21 @@ button.series-color-chip.active {
     font-size: 13px;
   }
 }
+
+.preset-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+.preset-row button {
+  width: auto;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+.row-size {
+  grid-template-columns: 1fr 1fr 5.5rem;
+}
+#mathtextHelp a {
+  color: var(--accent, inherit);
+  text-decoration: underline;
+}

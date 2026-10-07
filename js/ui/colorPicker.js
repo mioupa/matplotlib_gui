@@ -1,5 +1,6 @@
 // 系列ごとの色選択UI（オーバーレイパネル）。選んだ色は onChange(color) で呼び出し側（state）へ渡す。
-import { PALETTE } from "../defaults.js";
+import { getPalette } from "../palettes.js";
+import { getSettings } from "../state.js";
 
 const normalizeColor = (value) => String(value || "").trim().toUpperCase();
 
@@ -27,7 +28,7 @@ export const bindSeriesColorControls = (item, onChange) => {
     swatch.style.backgroundColor = current || "#000000";
     valueLabel.textContent = current || "#000000";
 
-    const isPaletteColor = PALETTE.some((c) => normalizeColor(c) === current);
+    const isPaletteColor = getPalette(getSettings().plot.palette).some((c) => normalizeColor(c) === current);
     colorInput.classList.toggle("hidden", isPaletteColor);
     for (const chip of grid.querySelectorAll(".series-color-chip")) {
       chip.classList.toggle("active", normalizeColor(chip.dataset.color) === current);
@@ -35,7 +36,7 @@ export const bindSeriesColorControls = (item, onChange) => {
   };
 
   grid.innerHTML = "";
-  for (const color of PALETTE) {
+  for (const color of getPalette(getSettings().plot.palette)) {
     const chip = document.createElement("button");
     chip.type = "button";
     chip.className = "series-color-chip";

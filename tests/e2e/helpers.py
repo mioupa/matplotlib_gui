@@ -210,3 +210,29 @@ def code_output(page) -> str:
 
 def code_output_kind(page) -> str:
     return page.get_attribute("#codeOutput", "data-kind") or ""
+
+
+# --- 体裁セクション（プリセット・パレット・図サイズの単位） ---
+def natural_size(page) -> tuple[int, int]:
+    """表示中のプレビュー画像の実寸（ピクセル）。"""
+    w, h = page.evaluate("(() => { const i = document.querySelector('#plotArea img'); return [i.naturalWidth, i.naturalHeight]; })()")
+    return w, h
+
+
+def act_and_wait_render(page, action):
+    """action() を実行し、設定変更による再描画が終わる（画像の世代が進む）まで待つ。"""
+    previous = image_generation(page)
+    action()
+    wait_image_generation_changed(page, previous)
+
+
+def series_color(page, series_id) -> str:
+    return page.evaluate("(id) => document.querySelector(`#series-${id}-color-trigger`).closest('.series-item').querySelector('.series-color-value').textContent", series_id)
+
+
+def palette_grid_colors(page, series_id) -> list[str]:
+    """系列の色選択パネルに並ぶ色（パネルを開かなくても DOM にある）。"""
+    return page.evaluate(
+        "(id) => [...document.querySelector(`#series-${id}-color-trigger`).closest('.series-item').querySelectorAll('.series-color-chip')].map(c => c.dataset.color.toUpperCase())",
+        series_id,
+    )

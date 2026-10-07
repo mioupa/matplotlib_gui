@@ -203,8 +203,50 @@
           <summary class="section-header"><span class="section-title">体裁</span></summary>
           <div class="section-body">
           <div class="group">
+            <label for="stylePreset">プリセット</label>
+            <div class="preset-row">
+              <select id="stylePreset" aria-describedby="presetHelp">
+                <option value="standard">標準（8 × 6 inch、15 pt）</option>
+                <option value="paper1">論文1段組（幅 8.5 cm、8 pt）</option>
+                <option value="paper2">論文2段組（幅 17 cm、8 pt）</option>
+                <option value="slide">スライド16:9（24 × 13.5 cm、18 pt）</option>
+              </select>
+              <button id="applyPresetBtn" class="secondary" type="button">適用</button>
+            </div>
+            <div id="presetHelp" class="help-text">図のサイズ・フォントサイズ・線幅・点サイズをまとめて設定します。</div>
+          </div>
+
+          <div class="group">
+            <label for="colorPalette">カラーパレット</label>
+            <select id="colorPalette">
+              <option value="ud">UD カラー</option>
+              <option value="tab10">tab10（matplotlib 標準）</option>
+              <option value="gray">グレースケール</option>
+            </select>
+          </div>
+
+          <div class="group">
             <label for="fontSize">フォントサイズ</label>
             <input id="fontSize" type="number" step="1" value="15" />
+          </div>
+
+          <div class="row row-size group">
+            <div>
+              <label for="figWidth">図幅(inch)</label>
+              <input id="figWidth" type="number" step="0.1" value="8" />
+            </div>
+            <div>
+              <label for="figHeight">図高さ(inch)</label>
+              <input id="figHeight" type="number" step="0.1" value="6" />
+            </div>
+            <div>
+              <label for="figUnit">単位</label>
+              <select id="figUnit">
+                <option value="in">inch</option>
+                <option value="cm">cm</option>
+                <option value="mm">mm</option>
+              </select>
+            </div>
           </div>
 
           <div class="group">
@@ -222,17 +264,6 @@
               <option value="center">中央</option>
               <option value="none">表示しない</option>
             </select>
-          </div>
-
-          <div class="row group">
-            <div>
-              <label for="figWidth">図幅(inch)</label>
-              <input id="figWidth" type="number" step="0.1" value="8" />
-            </div>
-            <div>
-              <label for="figHeight">図高さ(inch)</label>
-              <input id="figHeight" type="number" step="0.1" value="6" />
-            </div>
           </div>
 
           <div class="row group">
