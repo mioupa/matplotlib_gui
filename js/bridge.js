@@ -3,9 +3,13 @@
 // - 描画要求には世代番号を振る。同時に走る Python 描画は最大1つで、実行中の要求は「やり直し」の印だけ付け、
 //   終わったあと最新の設定で1回だけ描画する。古い世代の結果は画像・ステータスに反映しない。
 // - Python の起動前に選んだファイル・変えた設定は保持され、起動後に最新の内容で1回読込・描画する。
+// - Pythonコードタブのモード（code-state.js）: sync は GUI の設定から生成したコードで描く。edit は利用者が編集したコードを
+//   「実行」したときだけ描き、GUI の変更では再描画しない（読込は行うが自動実行しない）。
 import { subscribe, toJson, getSettings } from "./state.js";
 import { addStickyWarning, setStatus, warningTexts } from "./ui/notify.js";
 import { showPlot } from "./ui/plotView.js";
+import { showCodeOutput } from "./ui/codeOutput.js";
+import { isEditMode, setCodeMode, setGeneratedCode } from "./code-state.js";
 import { applySkipRows, showPreview } from "./ui/dataPreview.js";
 import { setColumns } from "./ui/series.js";
 import { showEncoding, showFileName } from "./ui/fileInfo.js";
@@ -30,8 +34,8 @@ let renderDirty = false;
 let loadSeq = 0;
 let loadCount = 0;
 let loadWarnings = [];
-let customCodeProvider = () => null; // 有効なカスタムコードの文字列、無効なら null
-let generatedCodeListener = () => {}; // GUI 設定から生成したスクリプトを受け取る（Pythonコードタブ用）
+let editCodeProvider = () => ""; // 編集モードのコード（Pythonコードタブの textarea の内容）
+let editHasRun = false; // 編集モードに入ってから「実行」したことがある（フォント取得後の描き直しの判断に使う）
 let readyCallbacks = [];
 let fontState = "idle"; // idle | loading | ready | failed
 let fontPercent = null;
@@ -57,20 +61,26 @@ const setFontState = (state) => {
 };
 
 export const isPythonReady = () => api !== null;
-export const canAutoRender = () => dataReady;
-export const setCustomCodeProvider = (fn) => {
-  customCodeProvider = fn;
+export const isDataReady = () => dataReady;
+export const setEditCodeProvider = (fn) => {
+  editCodeProvider = fn;
 };
-export const onGeneratedCode = (fn) => {
-  generatedCodeListener = fn;
-};
+
+const EDIT_MODE_MESSAGE =
+  "Pythonコードを編集中のため、GUI の変更は図に反映されません。「Pythonコード」タブの「GUI から再生成」で戻せます。";
+const PYTHON_NOT_READY_MESSAGE = "Python の起動が終わってから実行してください。";
+
+// 描画に渡すコード: GUI 同期なら null（設定から生成）、編集モードなら textarea の内容
+const currentCode = () => (isEditMode() ? String(editCodeProvider() || "") : null);
+// sync は読込済みデータが必要。edit は Python が動いていればよい（コードが自分でファイルを読む）
+const canRender = () => api !== null && (isEditMode() || dataReady);
 
 const EXCEL_LOADING_MESSAGE = "Excel 読込用のライブラリを取得中…";
 
 const callPython = (name, ...args) => JSON.parse(api[name](...args));
 
 const reportError = (error) => {
-  setStatus(error.message, "error", error.traceback || error.detail || "");
+  setStatus(error.message, "error", error.detail || error.traceback || "");
 };
 const reportException = (err, context) => {
   const detail = `context: ${context}\n${err && err.stack ? err.stack : String(err)}`;
@@ -113,7 +123,7 @@ const startFont = () => {
       try {
         api.registerFont(bytes);
         setFontState("ready");
-        if (fontWaitGaveUp) renderNow(); // フォント無しで描いた図を、現在の設定で1回だけ描き直す（通常の合流処理・新しい世代）
+        if (fontWaitGaveUp && (!isEditMode() || editHasRun)) renderNow(); // フォント無しで描いた図を、現在の設定で1回だけ描き直す（通常の合流処理・新しい世代）
       } catch (_) {
         setFontState("failed");
         addStickyWarning(FONT_FAILED_MESSAGE);
@@ -145,17 +155,19 @@ const waitForFont = async () => {
 
 // ---- 描画 ----
 const executeRender = async (generation) => {
-  const stale = () => generation !== latestGeneration || !dataReady;
+  const stale = () => generation !== latestGeneration || !canRender();
   try {
     await waitForFont(); // 最初の描画だけがここで待つ（取得済みなら即通過）
     if (stale()) return;
     await nextPaint(); // 「描画中…」を先に描かせる（Python の実行は同期でメインスレッドを塞ぐ）
     if (stale()) return;
-    const result = callPython("render", toJson(), customCodeProvider());
+    const editing = isEditMode();
+    const result = callPython("render", toJson(), currentCode());
     if (stale()) return;
     if (result.ok) {
-      showPlot(result.image, generation);
-      if (typeof result.code === "string") generatedCodeListener(result.code);
+      showPlot(result.image, generation, result.summary);
+      showCodeOutput({ output: result.output, kind: "ok" });
+      if (!editing && typeof result.code === "string" && !isEditMode()) setGeneratedCode(result.code, generation);
       if (Number.isInteger(result.seriesCount)) {
         const skipped = Number.isInteger(result.skipRows) ? result.skipRows : 0;
         setStatus(`描画に成功しました（${result.seriesCount}系列、スキップ${skipped}行）。`, "ok", "", [
@@ -166,6 +178,8 @@ const executeRender = async (generation) => {
         setStatus("コードの実行に成功しました。", "ok", result.output || "", loadWarnings);
       }
     } else {
+      const traceback = result.error && result.error.traceback ? result.error.traceback : "";
+      showCodeOutput({ output: result.output, traceback, kind: traceback ? "error" : "ok" });
       reportError(result.error);
     }
   } catch (err) {
@@ -189,7 +203,7 @@ const runRenderLoop = async () => {
 
 // 描画を要求する。実行中なら「やり直し」の印だけ付け、最新の設定で終了後に1回だけ走る。
 const requestRender = () => {
-  if (!api || !dataReady) return;
+  if (!canRender()) return;
   latestGeneration += 1;
   root.dataset.renderGeneration = String(latestGeneration);
   if (renderRunning) {
@@ -204,13 +218,13 @@ export const scheduleRender = (delay = RENDER_DELAY_MS) => {
   if (!renderRunning) setRenderState("pending");
   renderTimer = window.setTimeout(() => {
     renderTimer = null;
-    if (api && dataReady) requestRender();
+    if (canRender()) requestRender();
     else if (!renderRunning) setRenderState("idle");
   }, delay);
 };
 
 export const renderNow = () => {
-  if (api && dataReady) {
+  if (canRender()) {
     if (renderTimer) {
       window.clearTimeout(renderTimer);
       renderTimer = null;
@@ -272,8 +286,12 @@ const doLoad = async () => {
     setDataState("ready");
     loadCount += 1;
     root.dataset.loadCount = String(loadCount);
-    setStatus("");
-    renderNow();
+    if (isEditMode()) {
+      setStatus(EDIT_MODE_MESSAGE, "warning"); // 編集中は自動で実行しない（ファイルは作業フォルダに置かれている）
+    } else {
+      setStatus("");
+      renderNow();
+    }
   } catch (err) {
     if (seq === loadSeq) {
       setDataState("error");
@@ -302,6 +320,54 @@ export const selectFile = (file) => {
   scheduleLoad(LOAD_DELAY_MS.file);
 };
 
+// ---- Pythonコードタブのモード切替・実行 ----
+// 予約済み・実行中の GUI 同期描画を無効にする（世代を進める。結果は画像にもコードにもステータスにも反映されない）
+const invalidatePendingRender = () => {
+  const pending = renderTimer !== null;
+  if (renderTimer) {
+    window.clearTimeout(renderTimer);
+    renderTimer = null;
+  }
+  if (pending || renderRunning) {
+    latestGeneration += 1;
+    root.dataset.renderGeneration = String(latestGeneration);
+  }
+  renderDirty = false;
+  setRenderState(renderRunning ? "rendering" : "idle");
+};
+
+export const enterEditMode = () => {
+  if (isEditMode()) return;
+  invalidatePendingRender();
+  editHasRun = false;
+  setCodeMode("edit");
+};
+
+// 「GUI から再生成」: 同期に戻し、現在の設定でコードと図を作り直す（データが無ければモードだけ戻す）
+export const leaveEditMode = () => {
+  if (!isEditMode()) return;
+  invalidatePendingRender();
+  setCodeMode("sync");
+  setStatus("");
+  if (api && dataReady) requestRender(); // 実行中の編集コードの結果は、世代が進むので捨てられる
+};
+
+// 編集モードのコードを実行する（同期モードでは GUI の設定で再描画する）
+export const runCode = () => {
+  if (!api) {
+    setStatus(PYTHON_NOT_READY_MESSAGE, "info");
+    return;
+  }
+  if (isEditMode()) editHasRun = true;
+  renderNow();
+};
+
+// 「.py で保存」のファイル名。Python の formats.build_filename と同じ規則（Python が使えないときだけ既定名）
+export const scriptFilename = () => {
+  if (!api || typeof api.scriptFilename !== "function") return "plot.py";
+  return String(api.scriptFilename(getSettings().save.filename));
+};
+
 const downloadDataUri = (filename, dataUri) => {
   if (!filename || !dataUri) return;
   const link = document.createElement("a");
@@ -316,7 +382,7 @@ export const saveNow = async () => {
   if (!api) return;
   try {
     await waitForFont();
-    const result = callPython("save", toJson(), customCodeProvider());
+    const result = callPython("save", toJson(), currentCode());
     if (!result.ok) {
       reportError(result.error);
       return;
@@ -355,7 +421,8 @@ const routeChange = (_settings, change) => {
   if (path.startsWith("load.")) {
     scheduleLoad(path === "load.delimiter" ? LOAD_DELAY_MS.delimiter : LOAD_DELAY_MS.header);
   } else if (!path.startsWith("save.")) {
-    scheduleRender();
+    if (isEditMode()) setStatus(EDIT_MODE_MESSAGE, "warning"); // 編集中は再描画もコードの更新もしない
+    else scheduleRender();
   }
 };
 

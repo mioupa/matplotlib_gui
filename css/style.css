@@ -491,11 +491,13 @@ button.secondary:hover {
   margin-bottom: 8px;
   font-size: 13px;
 }
+#codePanel {
+  overflow: auto;
+}
 .code-editor-wrap {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  height: 100%;
   min-height: 0;
 }
 .code-toolbar {
@@ -504,25 +506,106 @@ button.secondary:hover {
   flex-wrap: wrap;
   gap: 8px;
 }
-.code-toolbar .inline {
-  margin-right: auto;
-}
 .code-toolbar button {
   width: auto;
 }
-#customPyCode {
-  width: 100%;
-  height: 100%;
-  min-height: 360px;
-  resize: vertical;
+.code-toolbar button[hidden] {
+  display: none;
+}
+.code-sync-badge {
+  margin-right: auto;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--surface);
+}
+.code-sync-badge[data-state="edit"] {
+  color: var(--status-warning);
+  border-color: var(--status-warning);
+  background: var(--warning-bg);
+}
+.code-editor-box {
+  display: flex;
+  height: clamp(260px, 52vh, 560px);
+  min-height: 0;
   border: 1px solid var(--line);
   border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.is-edit .code-editor-box {
+  border-color: var(--status-warning);
+  box-shadow: 0 0 0 1px var(--status-warning);
+}
+.code-gutter,
+#customPyCode {
+  margin: 0;
+  padding: 12px 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre;
+}
+.code-gutter {
+  flex: none;
+  min-width: 3.4em;
+  padding: 12px 8px 32px;
+  overflow: hidden;
+  text-align: right;
+  color: var(--table-rownum-text);
+  background: var(--table-rownum-bg);
+  border-right: 1px solid var(--line-soft);
+  user-select: none;
+}
+#customPyCode {
+  flex: 1;
+  min-width: 0;
+  width: auto;
   padding: 12px;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: auto;
+  background: transparent;
+  color: var(--text);
+  tab-size: 4;
+}
+#customPyCode:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.code-output-title {
+  margin: 6px 0 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.code-output {
+  margin: 0;
+  max-height: 260px;
+  min-height: 44px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
   background: var(--surface);
   color: var(--text);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.code-output:empty::before {
+  content: "（出力はありません）";
+  color: var(--text-muted);
+}
+.code-output[data-kind="error"] {
+  border-color: var(--error-border);
+  background: var(--error-bg);
+  color: var(--error-text);
 }
 .help-text {
   margin-top: 6px;

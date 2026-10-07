@@ -287,7 +287,7 @@
         <div class="tabs" role="tablist" aria-label="表示の切り替え">
           <button id="tabPlotBtn" class="tab-btn active" type="button" role="tab" aria-selected="true" aria-controls="plotPanel">プロット</button>
           <button id="tabDataBtn" class="tab-btn" type="button" role="tab" aria-selected="false" aria-controls="dataPanel" tabindex="-1">データ確認</button>
-          <button id="tabCodeBtn" class="tab-btn" type="button" role="tab" aria-selected="false" aria-controls="codePanel" tabindex="-1">Pythonコード(beta)</button>
+          <button id="tabCodeBtn" class="tab-btn" type="button" role="tab" aria-selected="false" aria-controls="codePanel" tabindex="-1">Pythonコード</button>
         </div>
         <div id="plotPanel" class="canvas-wrap tab-panel" role="tabpanel" aria-labelledby="tabPlotBtn" aria-busy="false">
           <div id="renderBusy" class="render-busy" hidden>描画中…</div>
@@ -299,17 +299,22 @@
         <div id="codePanel" class="canvas-wrap tab-panel hidden" role="tabpanel" aria-labelledby="tabCodeBtn">
           <div class="code-editor-wrap">
             <div class="code-toolbar">
-              <div class="inline">
-                <input id="useCustomCode" type="checkbox" />
-                <label for="useCustomCode">カスタムコードを使用</label>
-              </div>
-              <button id="applyCustomCodeBtn" class="small-btn secondary" type="button">コードを反映して再描画</button>
-              <button id="resetCustomCodeBtn" class="small-btn ghost-btn" type="button">初期コードに戻す</button>
+              <span id="codeSyncStatus" class="code-sync-badge" data-state="sync" role="status">GUI と同期しています</span>
+              <button id="editCodeBtn" class="small-btn secondary" type="button">編集</button>
+              <button id="applyCustomCodeBtn" class="small-btn secondary" type="button" hidden>実行</button>
+              <button id="resetCustomCodeBtn" class="small-btn ghost-btn" type="button" hidden>GUI から再生成</button>
+              <button id="copyCodeBtn" class="small-btn ghost-btn" type="button">コピー</button>
+              <button id="downloadCodeBtn" class="small-btn ghost-btn" type="button">.py で保存</button>
             </div>
-            <textarea id="customPyCode" spellcheck="false" aria-label="Pythonコード"></textarea>
+            <div class="code-editor-box">
+              <div id="codeLineNumbers" class="code-gutter" aria-hidden="true">1</div>
+              <textarea id="customPyCode" spellcheck="false" wrap="off" readonly aria-label="Pythonコード" placeholder="ファイルを読み込むと、ここに Python コードが表示されます。"></textarea>
+            </div>
             <div class="help-text">
-              有効時はこのコードで描画します。<code>df</code>・<code>settings</code>・<code>plt</code>・<code>pd</code> が利用可能です。<code>fig</code> を必ず生成してください。Ctrl/Cmd + Enter でも再描画できます。
+              このコードは GUI の設定から自動で作られ、設定を変えると更新されます。「編集」を押すとコードを書き換えて実行できます（Ctrl/Cmd + Enter でも実行）。編集中は GUI の変更が図に反映されません。「GUI から再生成」で元に戻せます。「.py で保存」したファイルは、データファイルと同じフォルダに置けばローカルの Python でそのまま実行できます。
             </div>
+            <h3 class="code-output-title">実行結果</h3>
+            <pre id="codeOutput" class="code-output" data-kind="ok" aria-live="polite"></pre>
           </div>
         </div>
       </main>

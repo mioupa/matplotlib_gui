@@ -3,7 +3,7 @@
 import { subscribe } from "./state.js";
 import { initBridge, saveNow, selectFile } from "./bridge.js";
 import { bindColorPanelOutsideClick } from "./ui/colorPicker.js";
-import { bindCustomCodeEvents } from "./ui/customCode.js";
+import { bindCodeTab } from "./ui/codeTab.js";
 import { applyStateToForm, bindForms } from "./ui/forms.js";
 import { bindSaveFormatEvents, syncSaveFormatOptions } from "./ui/saveFormat.js";
 import { bindSeriesEvents, renderSeriesList, setColumns, syncMarkerSizeDisplay, syncVisibility } from "./ui/series.js";
@@ -24,7 +24,7 @@ bindTabs();
 bindForms();
 bindSeriesEvents();
 bindSaveFormatEvents();
-bindCustomCodeEvents();
+bindCodeTab();
 bindColorPanelOutsideClick();
 
 // state の変更に応じた画面の更新（再描画・読込の予約は bridge.js が購読して行う）
