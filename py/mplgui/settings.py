@@ -1,4 +1,4 @@
-"""設定オブジェクト（JSON, camelCase, version=1）の既定値・検証・型付きデータクラス。
+"""設定オブジェクト（JSON, camelCase, version=2）の既定値・検証・型付きデータクラス。
 
 JS 側の js/defaults.js と default_settings() は同一でなければならない（単体テストで比較する）。
 このモジュールは js / pyodide / pyscript に依存しない。
@@ -14,12 +14,20 @@ from matplotlib.colors import is_color_like
 
 from .errors import UserError
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 PLOT_TYPES = ("line", "scatter", "bar")
 LINE_STYLES = ("solid", "dashed", "dashdot", "dotted")
 SCALES = ("linear", "log")
 SAVE_FORMATS = ("png", "jpg", "svg", "pdf")
+FIGURE_UNITS = ("in", "cm", "mm")
+LATIN_FONTS = ("default", "arimo", "tinos")
+PALETTES = ("ud", "tab10", "gray")  # 色そのものは JS 側だけが持つ。Python は選択肢を検証するだけ
+SVG_TEXT_MODES = ("path", "text")
+DEFAULT_DPI = 300
+MIN_DPI = 50
+MAX_DPI = 1200
+_INCHES_PER_UNIT = {"in": 1.0, "cm": 1 / 2.54, "mm": 1 / 25.4}
 LEGEND_LOCATIONS = (
     "best",
     "upper right",
@@ -59,7 +67,9 @@ def default_settings() -> dict:
             "xColumn": "",
             "title": "",
             "fontSize": 15,
-            "figure": {"width": 8, "height": 6},
+            "figure": {"width": 8, "height": 6, "unit": "in"},
+            "latinFont": "default",
+            "palette": "ud",
             "legend": {"location": "best"},
             "grid": {"major": False, "minor": False},
             "margins": {"left": None, "right": None, "bottom": None, "top": None},
@@ -70,7 +80,7 @@ def default_settings() -> dict:
             "y2": {"label": "", "scale": "linear", "min": None, "max": None},
         },
         "series": [copy.deepcopy(_DEFAULT_SERIES)],
-        "save": {"filename": "", "format": "png", "transparent": False},
+        "save": {"filename": "", "format": "png", "transparent": False, "dpi": DEFAULT_DPI, "svgText": "path"},
     }
 
 
@@ -93,8 +103,17 @@ class AxisSettings:
 
 @dataclass(frozen=True)
 class FigureSettings:
-    width: float = 8.0
+    width: float = 8.0  # unit で指定した単位の値
     height: float = 6.0
+    unit: str = "in"
+
+    @property
+    def width_in(self) -> float:
+        return self.width * _INCHES_PER_UNIT[self.unit]
+
+    @property
+    def height_in(self) -> float:
+        return self.height * _INCHES_PER_UNIT[self.unit]
 
 
 @dataclass(frozen=True)
@@ -116,6 +135,8 @@ class PlotSettings:
     title: str = ""
     font_size: float = 15.0
     figure: FigureSettings = field(default_factory=FigureSettings)
+    latin_font: str = "default"
+    palette: str = "ud"
     legend_location: str = "best"
     grid_major: bool = False
     grid_minor: bool = False
@@ -156,6 +177,8 @@ class SaveSettings:
     filename: str = ""
     format: str = "png"
     transparent: bool = False
+    dpi: int = DEFAULT_DPI
+    svg_text: str = "path"
 
 
 @dataclass(frozen=True)
@@ -264,10 +287,26 @@ def _merge(defaults: dict, given: Any) -> dict:
 MAX_FIGURE_INCH = 50  # これより大きいと画像サイズが過大になり描画できない
 
 
-def _check_version(raw: dict) -> None:
+def migrate_settings(raw: dict) -> dict:
+    """古いバージョンの設定を現在のバージョンにする（純粋。引数は変更しない）。
+
+    バージョンが無いものは現在のバージョンとして扱う。対応していないバージョンは UserError。
+    - 1 → 2: 保存 DPI を追加する。v1 は常に 120 dpi で保存していたので、同じ出力になるよう 120 にする。
+      図の単位・欧文フォント・カラーパレット・SVG の文字は、既定値で補われる。
+    """
     version = raw.get("version", SCHEMA_VERSION)
-    if isinstance(version, bool) or version != SCHEMA_VERSION:
+    if isinstance(version, bool) or version not in (1, SCHEMA_VERSION):
         raise UserError(f"設定のバージョン（{version}）に対応していません。ページを再読み込みしてください。", field="version")
+    out = copy.deepcopy(raw)
+    if version == 1:
+        out["version"] = SCHEMA_VERSION
+        save = out.get("save")
+        if not isinstance(save, dict):
+            save = {}
+        if "dpi" not in save:
+            save["dpi"] = 120
+        out["save"] = save
+    return out
 
 
 # ---------------------------------------------------------------- parsing
@@ -275,8 +314,7 @@ def _check_version(raw: dict) -> None:
 
 def parse_load_settings(raw: dict | None) -> LoadSettings:
     """読み込み設定だけを検証する（描画設定の不備でファイル読込を止めないため）。"""
-    raw = raw if isinstance(raw, dict) else {}
-    _check_version(raw)
+    raw = migrate_settings(raw if isinstance(raw, dict) else {})
     load = _merge(default_settings()["load"], raw.get("load"))
     return LoadSettings(
         delimiter=_string(load["delimiter"], "区切り文字"),
@@ -338,8 +376,7 @@ def parse_settings(raw: dict | None) -> Settings:
 
     不正な値は UserError（日本語・項目名つき）。
     """
-    raw = raw if isinstance(raw, dict) else {}
-    _check_version(raw)
+    raw = migrate_settings(raw if isinstance(raw, dict) else {})
     d = default_settings()
     merged = {
         "load": _merge(d["load"], raw.get("load")),
@@ -351,9 +388,11 @@ def parse_settings(raw: dict | None) -> Settings:
 
     p = merged["plot"]
     fig = p["figure"] if isinstance(p["figure"], dict) else {}
+    unit = _choice(fig.get("unit", "in"), "図のサイズの単位", FIGURE_UNITS)
     figure = FigureSettings(
-        width=_number(fig.get("width"), "図幅", default=8.0, exclusive_min=0, maximum=MAX_FIGURE_INCH),
-        height=_number(fig.get("height"), "図高さ", default=6.0, exclusive_min=0, maximum=MAX_FIGURE_INCH),
+        width=_figure_length(fig.get("width"), "図幅", 8.0, unit),
+        height=_figure_length(fig.get("height"), "図高さ", 6.0, unit),
+        unit=unit,
     )
     legend = p["legend"] if isinstance(p["legend"], dict) else {}
     grid = p["grid"] if isinstance(p["grid"], dict) else {}
@@ -378,6 +417,8 @@ def parse_settings(raw: dict | None) -> Settings:
         title=_string(p["title"], "タイトル").strip(),
         font_size=_number(p["fontSize"], "フォントサイズ", default=15.0, exclusive_min=0),
         figure=figure,
+        latin_font=_choice(p["latinFont"], "欧文フォント", LATIN_FONTS),
+        palette=_choice(p["palette"], "カラーパレット", PALETTES),
         legend_location=_choice(legend.get("location", "best"), "凡例位置", LEGEND_LOCATIONS),
         grid_major=_boolean(grid.get("major", False), "主目盛線を表示"),
         grid_minor=_boolean(grid.get("minor", False), "副目盛線を表示"),
@@ -400,16 +441,36 @@ def parse_settings(raw: dict | None) -> Settings:
     return Settings(version=SCHEMA_VERSION, load=load, plot=plot, axes=axes, series=series, save=save)
 
 
+def _figure_length(value: Any, label: str, default: float, unit: str) -> float:
+    """図幅・図高さ。上限は 50 inch を選んだ単位に直した値（in: 50, cm: 127, mm: 1270）。"""
+    num = _number(value, label, default=default, exclusive_min=0)
+    limit = MAX_FIGURE_INCH / _INCHES_PER_UNIT[unit]
+    if num > limit + 1e-9:
+        raise UserError(f"「{label}」は{_fmt(round(limit, 6))}以下の数値で入力してください（単位: {unit}）。", field=label)
+    return num
+
+
+def _dpi(value: Any) -> int:
+    label = "保存 DPI"
+    if _is_blank(value):
+        return DEFAULT_DPI
+    num = _to_float(value)
+    if num is None or not num.is_integer() or not MIN_DPI <= num <= MAX_DPI:
+        raise UserError(f"「{label}」は{MIN_DPI}〜{MAX_DPI}の整数で入力してください。", field=label)
+    return int(num)
+
+
 def _parse_save(sv: dict) -> SaveSettings:
     return SaveSettings(
         filename=_string(sv["filename"], "保存ファイル名").strip(),
         format=_choice(str(sv["format"]).strip().lower() if isinstance(sv["format"], str) else sv["format"], "保存形式", SAVE_FORMATS),
         transparent=_boolean(sv["transparent"], "背景を透過して保存"),
+        dpi=_dpi(sv["dpi"]),
+        svg_text=_choice(sv["svgText"], "SVG の文字", SVG_TEXT_MODES),
     )
 
 
 def parse_save_settings(raw: dict | None) -> SaveSettings:
     """保存設定だけを検証する（編集モードの保存を、使わない描画設定の不備で止めないため）。"""
-    raw = raw if isinstance(raw, dict) else {}
-    _check_version(raw)
+    raw = migrate_settings(raw if isinstance(raw, dict) else {})
     return _parse_save(_merge(default_settings()["save"], raw.get("save")))
