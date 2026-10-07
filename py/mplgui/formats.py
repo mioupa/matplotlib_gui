@@ -1,7 +1,6 @@
 """保存形式の表と保存ファイル名（runner と codegen が共有する。js / pyodide には依存しない）。"""
 from __future__ import annotations
 
-import math
 import re
 
 from .errors import UserError
@@ -62,7 +61,8 @@ def savefig_rc(file_format: str, svg_text: str = "path") -> dict:
 
 
 def raster_pixels(width_in: float, height_in: float, dpi: float) -> tuple[int, int]:
-    return math.ceil(width_in * dpi), math.ceil(height_in * dpi)
+    # Agg は int(width), int(height) で画素数を決める（切り捨て）
+    return int(width_in * dpi), int(height_in * dpi)
 
 
 def check_raster_size(width_in: float, height_in: float, dpi: float) -> None:

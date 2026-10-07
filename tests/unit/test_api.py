@@ -625,3 +625,30 @@ def test_valid_mathtext_renders():
     s["plot"]["margins"] = {"left": None, "right": None, "bottom": None, "top": None}
     assert json.loads(api.render_json(json.dumps(s)))["ok"]
     assert json.loads(api.save_json(json.dumps(s)))["ok"]
+
+
+def test_script_json_returns_code_without_running():
+    load()
+    s = default_settings()
+    s["save"]["format"] = "pdf"
+    s["save"]["dpi"] = 600
+    r = json.loads(api.script_json(json.dumps(s)))
+    assert r["ok"] is True and set(r) == {"ok", "code"}
+    assert 'plt.rcParams["pdf.fonttype"] = 42' in r["code"] and 'fig.savefig("plot.pdf")' in r["code"]
+    s["save"]["format"] = "png"
+    r = json.loads(api.script_json(json.dumps(s)))
+    assert "dpi=600" in r["code"]
+    # render が返すコードと同じ
+    assert r["code"] == json.loads(api.render_json(json.dumps(s)))["code"]
+
+
+def test_script_json_errors():
+    r = json.loads(api.script_json(json.dumps(default_settings())))
+    assert r["ok"] is False and "ファイルを読み込んで" in r["error"]["message"]
+    load()
+    s = default_settings()
+    s["save"]["dpi"] = 2000
+    r = json.loads(api.script_json(json.dumps(s)))
+    assert r["ok"] is False and "保存 DPI" in r["error"]["message"] and r["error"]["field"] == "保存 DPI"
+    r = json.loads(api.script_json("{broken"))
+    assert r["ok"] is False and r["error"]["message"]

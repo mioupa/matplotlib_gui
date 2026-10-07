@@ -190,6 +190,14 @@ def _data_uri(result) -> str:
     return f"data:{result.mime};base64,{base64.b64encode(result.data).decode('ascii')}"
 
 
+@_guard("script")
+def script_json(settings_json: str) -> dict:
+    """設定から生成したスクリプトだけを返す（実行しない）。保存設定の変更で、表示中のコードを更新するのに使う。"""
+    settings = parse_settings(_parse_json(settings_json))
+    _, script = _generate(settings)
+    return {"ok": True, "code": script.text}
+
+
 @_guard("render")
 def render_json(settings_json: str, code: str | None = None) -> dict:
     """PNG（data URI）を返す。code が None なら設定どおりに描き、文字列ならそのコードを実行する。"""

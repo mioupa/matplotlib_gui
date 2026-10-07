@@ -464,3 +464,10 @@ def test_mathtext_error_during_conversion_is_a_user_error_with_field():
     with pytest.raises(MathtextError) as info:
         run_to_image(SIMPLE + "ax.set_title('m$^$')\n")
     assert info.value.field == "数式" and "数式" in info.value.message
+
+
+def test_raster_pixels_truncates_like_agg():
+    from mplgui.formats import raster_pixels
+
+    assert raster_pixels(8, 6, 300) == (2400, 1800)
+    assert raster_pixels(3.3333, 2, 100) == (333, 200)  # 切り捨て（Agg は int(width)）

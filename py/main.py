@@ -89,6 +89,10 @@ def _save(settings_json, custom_code=None):
     return api.save_json(str(settings_json), _code(custom_code))
 
 
+def _script(settings_json):
+    return api.script_json(str(settings_json))
+
+
 def _copy_image(settings_json, custom_code=None):
     return api.copy_image_json(str(settings_json), _code(custom_code))
 
@@ -109,6 +113,7 @@ _PROXIES = {
     "render": create_proxy(_render),
     "save": create_proxy(_save),
     "copyImage": create_proxy(_copy_image),
+    "script": create_proxy(_script),
     "scriptFilename": create_proxy(_script_filename),
     "registerFont": create_proxy(_register_font),
     "fontStatus": create_proxy(api.font_status),
