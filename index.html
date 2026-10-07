@@ -8,8 +8,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="https://pyscript.net/releases/2024.11.1/core.css" />
-    <script type="module" src="https://pyscript.net/releases/2024.11.1/core.js"></script>
+    <link rel="stylesheet" href="https://pyscript.net/releases/2026.7.3/core.css" />
+    <script type="module" src="https://pyscript.net/releases/2026.7.3/core.js"></script>
     <style>
       :root {
         color-scheme: light;
@@ -594,9 +594,6 @@
         }
       }
     </style>
-    <py-config>
-      packages = ["pandas", "matplotlib", "openpyxl"]
-    </py-config>
   </head>
   <body>
     <div class="layout">
@@ -1498,7 +1495,7 @@
       })();
     </script>
 
-    <py-script>
+    <script type="py" config="./pyscript.toml">
 import io
 import base64
 import asyncio
@@ -2932,6 +2929,6 @@ except Exception as exc:
         set_status("内部エラーを自動回避しました。ページを再読み込みして再試行してください。", True, detail)
     else:
         set_status(f"初期化エラー: {exc}", True)
-    </py-script>
+    </script>
   </body>
 </html>

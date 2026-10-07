@@ -1,0 +1,2 @@
+# PyScript 2026.7.3 (Pyodide 314.0.3 / Python 3.14)。openpyxl は Pyodide 同梱ではないため PyPI から micropip で導入する。
+packages = ["pandas", "matplotlib", "openpyxl==3.1.5", "et_xmlfile==2.0.0"]
