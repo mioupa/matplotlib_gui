@@ -16,10 +16,23 @@ SUPPORTED = {".xlsx", ".csv", ".txt"}
 PREVIEW_ROWS = 100
 
 
+@dataclass(frozen=True)
+class SourceInfo:
+    """読み込んだファイルの情報。codegen が生成スクリプトの「データの読み込み」部に使う。"""
+
+    filename: str
+    kind: str  # "csv" | "txt" | "xlsx"
+    encoding: str | None = None  # xlsx は None
+    separator: str | None = None  # デコード後の区切り文字（csv / txt）。xlsx は None
+    has_header: bool = True
+    sheet_name: str | None = None  # xlsx のみ（先頭シート）
+
+
 @dataclass
 class LoadedData:
     df: pd.DataFrame
     encoding: str | None  # xlsx は None
+    source: SourceInfo | None = None
 
 
 # バックスロッシュ表記（\t, \x41, \u3001 など）だけを解釈する。それ以外（「、」などの非 ASCII 文字）は変更しない。
@@ -117,11 +130,15 @@ def load_file(file_bytes: bytes, filename: str, delimiter: str, has_header: bool
 
     header = 0 if has_header else None
     used_encoding: str | None = None
+    sep: str | None = None
+    sheet_name: str | None = None
 
     try:
         if suffix == ".xlsx":
             try:
-                df = pd.read_excel(io.BytesIO(file_bytes), header=header)
+                excel = pd.ExcelFile(io.BytesIO(file_bytes))
+                sheet_name = str(excel.sheet_names[0])
+                df = excel.parse(sheet_name=excel.sheet_names[0], header=header)
             except Exception as exc:
                 raise UserError(
                     "Excelファイル（.xlsx）を読み込めませんでした。ファイルが壊れていないか、パスワードが掛かっていないかを確認し、"
@@ -152,7 +169,15 @@ def load_file(file_bytes: bytes, filename: str, delimiter: str, has_header: bool
     if not has_header:
         df.columns = [f"column_{i}" for i in range(len(df.columns))]
 
-    return LoadedData(df=df, encoding=used_encoding)
+    source = SourceInfo(
+        filename=Path(filename).name,
+        kind=suffix.lstrip("."),
+        encoding=used_encoding,
+        separator=sep,
+        has_header=has_header,
+        sheet_name=sheet_name,
+    )
+    return LoadedData(df=df, encoding=used_encoding, source=source)
 
 
 def load_dataframe(file_bytes: bytes, filename: str, delimiter: str, has_header: bool) -> pd.DataFrame:

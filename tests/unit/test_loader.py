@@ -210,3 +210,29 @@ def test_ideographic_comma_delimited_file_loads():
     loaded = load_file(data, "comma.txt", "、", True)
     assert list(loaded.df.columns) == ["時間", "電圧", "電流"]
     assert loaded.df.shape == (2, 3)
+
+
+# ---------------------------------------------------------------- source info (codegen の読込部に使う)
+
+
+def test_source_info_for_csv_and_txt():
+    src = _load("cp932.csv").source
+    assert (src.filename, src.kind, src.encoding, src.separator, src.has_header, src.sheet_name) == (
+        "cp932.csv", "csv", "cp932", ",", True, None,
+    )
+    src = _load("tab.txt").source
+    assert (src.kind, src.separator) == ("txt", r"\s+")
+    assert _load("tab.txt", delimiter=r"\t", has_header=False).source.separator == "\t"
+    assert _load("tab.txt", has_header=False).source.has_header is False
+
+
+def test_source_info_filename_is_base_name():
+    assert load_file(b"a,b\n1,2\n", "dir/sub/x.csv", "", True).source.filename == "x.csv"
+
+
+def test_source_info_for_xlsx_uses_first_sheet():
+    pytest.importorskip("openpyxl")
+    loaded = _load("multi_sheet.xlsx")
+    src = loaded.source
+    assert (src.kind, src.encoding, src.separator, src.sheet_name) == ("xlsx", None, None, "Sheet1")
+    assert list(loaded.df.columns) == ["時間", "電圧", "電流"]
