@@ -15,6 +15,8 @@ PINNED = [
     ("cdn.jsdelivr.net", re.compile(r"^/npm/(@[\w.-]+/)?[\w.-]+@\d+\.\d+\.\d+(?:[-+.\w]*)?/")),
     # 遅延導入する Excel 用 wheel: ハッシュ付きの正規パスで、ファイル名にバージョンを含むもののみ
     ("files.pythonhosted.org", re.compile(r"^/packages/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{60}/[\w.]+-\d+(?:\.\d+)+-[\w.]+-[\w.]+-[\w.]+\.whl$")),
+    # 説明ページへのリンク（取得はしない）。matplotlib のバージョンを含むパスだけ許可する
+    ("matplotlib.org", re.compile(r"^/\d+\.\d+\.\d+/")),
     ("cdn.jsdelivr.net", re.compile(r"^/gh/[\w.-]+/[\w.-]+@(?!main\b|master\b|latest\b)[\w.-]*\d[\w.-]*/")),
 ]
 NAMESPACE_HOSTS = {"www.w3.org"}  # SVG などの名前空間 URI（取得されない）
