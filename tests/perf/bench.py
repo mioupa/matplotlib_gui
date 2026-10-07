@@ -130,6 +130,31 @@ def bench_render(browser, url, reps, csv_path):
     return first_plot, change, save
 
 
+def bench_xlsx(browser, url, reps, xlsx_path):
+    """初回の .xlsx 読込 → 最初のプロット（Excel 用 wheel の遅延取得を含む。HTTP キャッシュは温めた状態）。"""
+    out = []
+    ctx = browser.new_context()
+    p0 = ctx.new_page()
+    p0.goto(url, timeout=TIMEOUT)
+    wait_app_ready(p0, TIMEOUT)
+    load_fixture(p0, xlsx_path)
+    wait_plot_changed(p0, "", TIMEOUT)
+    p0.close()
+    for _ in range(reps):
+        page = ctx.new_page()
+        page.set_default_timeout(TIMEOUT)
+        page.goto(url)
+        wait_app_ready(page, TIMEOUT)
+        t = time.perf_counter()
+        page.set_input_files("#fileInput", str(xlsx_path))
+        wait_data_ready(page, TIMEOUT)
+        wait_plot_changed(page, "", TIMEOUT)
+        out.append((time.perf_counter() - t) * 1000)
+        page.close()
+    ctx.close()
+    return out
+
+
 def fmt(name, xs):
     s = stats(xs)
     return f"{name:<44} median {s['median']:9.0f}  min {s['min']:9.0f}  max {s['max']:9.0f}  (ms, n={s['n']})"
@@ -151,12 +176,14 @@ def main():
         print("chromium", browser.version, "headed" if a.headed else "headless", "platform", platform.platform())
         cold, warm = bench_startup(browser, url, a.reps)
         first, change, save = bench_render(browser, url, a.reps, csv_path)
+        xlsx = bench_xlsx(browser, url, a.reps, REPO / "tests" / "fixtures" / "multi_sheet.xlsx")
         browser.close()
     res = {
         "cold_startup_ms": cold, "warm_startup_ms": warm,
         "first_plot_ms": first, "change_to_plot_ms": change,
         "change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in change],
         "save_png_ms": save,
+        "first_xlsx_plot_ms": xlsx,
     }
     for k, v in res.items():
         print(fmt(k, v))
