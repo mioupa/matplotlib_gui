@@ -159,28 +159,56 @@ button {
   background: var(--card);
   color: var(--text);
 }
-input[type="file"] {
+.file-picker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   background: var(--surface);
+  font-size: 14px;
 }
-input[type="file"]::file-selector-button {
-  border: none;
+.file-picker:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.file-picker-btn {
+  flex: none;
   border-radius: 6px;
   padding: 8px 12px;
-  margin-right: 10px;
   background: var(--file-button-bg);
   color: var(--file-button-text);
   font-weight: 700;
+  white-space: nowrap;
+}
+.file-picker:hover .file-picker-btn {
+  background: var(--button-ghost-hover);
+}
+.file-picker-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.file-picker-name[data-selected="false"] {
+  color: var(--text-muted);
+}
+.file-picker input[type="file"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  opacity: 0;
   cursor: pointer;
 }
-input[type="file"]::-webkit-file-upload-button {
-  border: none;
-  border-radius: 6px;
-  padding: 8px 12px;
-  margin-right: 10px;
-  background: var(--file-button-bg);
-  color: var(--file-button-text);
-  font-weight: 700;
+.file-picker input[type="file"]::file-selector-button {
   cursor: pointer;
 }
 input[type="color"] {
@@ -653,7 +681,7 @@ button.series-color-chip.active {
     overflow: auto;
   }
   .layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     height: auto;
   }
   .panel {
