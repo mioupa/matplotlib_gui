@@ -199,6 +199,11 @@ def save_json(settings_json: str, code: str | None = None) -> dict:
     }
 
 
+def script_filename(save_filename: str) -> str:
+    """「.py で保存」のファイル名。保存ファイル名と同じ規則（formats.build_filename）で拡張子を .py にする。"""
+    return build_filename(str(save_filename or ""), "py")
+
+
 def register_font(data: bytes) -> str:
     """JS が取得した日本語フォントを登録する。"""
     try:

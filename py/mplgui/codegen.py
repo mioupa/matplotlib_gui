@@ -261,7 +261,9 @@ def _style_args(s: SeriesSettings) -> str:
 
 def _emit_line_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
     ax2 = _Axes2State()
-    for s, p in zip(settings.series, plan.series):
+    for i, (s, p) in enumerate(zip(settings.series, plan.series)):
+        if i > 0:
+            b.blank()  # 系列ごとに1行あける
         b.add(_series_comment(p))
         if not p.has_points:
             b.add("# 描ける点（X・Y とも数値の行）が無いため、この系列は描かない")
@@ -280,7 +282,9 @@ def _emit_line_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
 
 def _emit_scatter_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
     ax2 = _Axes2State()
-    for s, p in zip(settings.series, plan.series):
+    for i, (s, p) in enumerate(zip(settings.series, plan.series)):
+        if i > 0:
+            b.blank()  # 系列ごとに1行あける
         b.add(_series_comment(p))
         if not p.has_points:
             b.add("# 描ける点（X・Y とも数値の行）が無いため、この系列は描かない")
@@ -382,7 +386,7 @@ def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
             continue
         lines = _axis_lines(var, which, axis.scale, axis.min, axis.max)
         if var == "ax" and which == "x" and axis.scale == "linear" and any(p.categorical_x and p.has_points for p in plan.series):
-            lines.insert(0, 'ax.set_xscale("linear")  # X が文字列・日時の列: 目盛りは位置の番号になる（値を目盛りにするには、この行を消す）')
+            lines.insert(0, 'ax.set_xscale("linear")  # X が文字列・日時の列: 目盛は位置の番号になる（値を目盛にするには、この行を消す）')
         if lines:
             with b.step(axis_error_message(label), f"{label}軸の範囲"):
                 b.add(*lines)
@@ -427,6 +431,9 @@ def _emit_grid_and_legend(b: _Builder, settings: Settings, plan: PlotPlan) -> No
 
     if plot.legend_location == "none":
         b.add("# 凡例は表示しない")
+        return
+    if not any(p.has_points and p.legend_label and not p.legend_label.startswith("_") for p in plan.series):
+        b.add("# 凡例に出せるラベルが無い（空、または _ で始まる）ため、凡例は表示しない")
         return
     size = _label_size_expr(plot.font_size)
     loc = literal(plot.legend_location)

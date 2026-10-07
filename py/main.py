@@ -93,12 +93,17 @@ def _register_font(data):
     return api.register_font(data.to_py())
 
 
+def _script_filename(save_filename):
+    return api.script_filename(save_filename if isinstance(save_filename, str) else "")
+
+
 # create_proxy の参照を保持しておく（GC されると JS から呼べなくなる）
 _PROXIES = {
     "ensureExcel": create_proxy(_ensure_excel),
     "loadFile": create_proxy(_load_file),
     "render": create_proxy(_render),
     "save": create_proxy(_save),
+    "scriptFilename": create_proxy(_script_filename),
     "registerFont": create_proxy(_register_font),
     "fontStatus": create_proxy(api.font_status),
 }

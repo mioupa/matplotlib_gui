@@ -375,3 +375,14 @@ def test_unexpected_mismatch_error_is_wrapped_with_detail(monkeypatch):  # 描�
     r = json.loads(api.render_json(json.dumps(default_settings())))
     _assert_japanese_clean(r)
     assert "cannot cast" in r["error"]["detail"]
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [("", "plot.py"), ("   ", "plot.py"), ("figure1", "figure1.py"), ("fig.png", "fig.py"), ("a/b:c", "a_b_c.py"),
+     ("結果.svg", "結果.py"), ("...", "plot.py"), (None, "plot.py")],
+)
+def test_script_filename_uses_save_filename_rules(raw, expected):
+    assert api.script_filename(raw) == expected
+    # 保存ファイル名と同じ規則: 拡張子だけが違う
+    assert api.script_filename(raw or "").rsplit(".", 1)[0] == api.build_filename(raw or "", "png").rsplit(".", 1)[0]

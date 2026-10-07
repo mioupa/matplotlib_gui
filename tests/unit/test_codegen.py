@@ -551,3 +551,32 @@ def test_comment_text_replaces_line_breaks_and_control_chars():
     text = comment_text("a\nb\rc d e\x85f\x0bg\x0ch\x00i\x1bj\tk")
     assert text == "a b c d e f g h i j k"
     assert comment_text("温度 [1]") == "温度 [1]"
+
+
+def test_legend_is_not_emitted_when_no_label_can_be_shown(tmp_path, data):
+    series = [S(1, x="__idx__0", label="_hidden"), S(2, x="__idx__0", label="_also")]
+    b = Built(tmp_path, data, None, series)
+    assert "ax.legend(" not in b.script.text and "get_legend_handles_labels" not in b.script.text
+    assert "凡例は表示しない" in b.script.text or "凡例に出せるラベルが無い" in b.script.text
+    full, auto = b.summaries()
+    assert full[0]["legend"] == [] and auto[0]["legend"] == []
+
+
+def test_legend_is_kept_when_one_label_is_visible(tmp_path, data):
+    b = Built(tmp_path, data, None, [S(1, x="__idx__0", label="_hidden"), S(2, x="__idx__0", label="見える")])
+    assert "ax.legend(" in b.script.text
+    full, _ = b.summaries()
+    assert full[0]["legend"] == ["見える"]
+
+
+def test_series_blocks_are_separated_by_a_blank_line(tmp_path, data):
+    for plot_type in ("line", "scatter"):
+        b = Built(tmp_path, data, lambda s, t=plot_type: s["plot"].update(type=t), [S(1, x="__idx__0"), S(2, x="__idx__0")])
+        lines_ = b.script.text.split("\n")
+        i = next(n for n, line in enumerate(lines_) if line.startswith("# 系列2"))
+        assert lines_[i - 1] == "" and lines_[i - 2] != ""
+
+
+def test_comments_use_the_same_word_for_tick_marks(tmp_path, data):
+    b = Built(tmp_path, data, None, [S(1, x="__idx__3")])
+    assert "set_xscale" in b.script.text and "目盛り" not in b.script.text
