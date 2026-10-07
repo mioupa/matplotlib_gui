@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+test-results/
+*.pyc
+.DS_Store
+# ベンチマークの出力・生成データ
+tests/perf/out/
+tests/perf/.tmp/
