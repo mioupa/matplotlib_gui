@@ -261,6 +261,9 @@ def _merge(defaults: dict, given: Any) -> dict:
     return out
 
 
+MAX_FIGURE_INCH = 50  # これより大きいと画像サイズが過大になり描画できない
+
+
 def _check_version(raw: dict) -> None:
     version = raw.get("version", SCHEMA_VERSION)
     if isinstance(version, bool) or version != SCHEMA_VERSION:
@@ -349,8 +352,8 @@ def parse_settings(raw: dict | None) -> Settings:
     p = merged["plot"]
     fig = p["figure"] if isinstance(p["figure"], dict) else {}
     figure = FigureSettings(
-        width=_number(fig.get("width"), "図幅", default=8.0, exclusive_min=0),
-        height=_number(fig.get("height"), "図高さ", default=6.0, exclusive_min=0),
+        width=_number(fig.get("width"), "図幅", default=8.0, exclusive_min=0, maximum=MAX_FIGURE_INCH),
+        height=_number(fig.get("height"), "図高さ", default=6.0, exclusive_min=0, maximum=MAX_FIGURE_INCH),
     )
     legend = p["legend"] if isinstance(p["legend"], dict) else {}
     grid = p["grid"] if isinstance(p["grid"], dict) else {}

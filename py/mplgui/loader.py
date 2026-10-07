@@ -39,6 +39,11 @@ def decode_delimiter(delimiter: str, suffix: str) -> str:
 _BOM_UTF8 = b"\xef\xbb\xbf"
 
 
+# Python の cp932 は未定義の単一バイト（0x80, 0xA0, 0xFD-0xFF）を C1 制御文字・私用領域 U+F8F0-F8F3 に
+# 「デコードできてしまう」。これらを含む候補は文字コードの誤りとみなして除外する。
+_IMPLAUSIBLE = re.compile("[\u0080-\u009f\uf8f0-\uf8f3\ufffd]")
+
+
 def _suspicion(text: str) -> int:
     """文字化けらしさ。半角カナ・私用領域・置換文字・制御文字の数（少ないほど自然な日本語）。"""
     n = 0
@@ -74,9 +79,11 @@ def detect_encoding(data: bytes) -> tuple[str, str]:
     candidates = []
     for code in ("cp932", "euc-jp"):  # 同点のときは先に並べたほうが勝つ
         try:
-            candidates.append((code, data.decode(code)))
+            text = data.decode(code)
         except UnicodeDecodeError:
             continue
+        if not _IMPLAUSIBLE.search(text):
+            candidates.append((code, text))
     if not candidates:
         raise UserError(
             "文字コードを判定できませんでした（UTF-8 / Shift_JIS(CP932) / EUC-JP のいずれでもありません）。"

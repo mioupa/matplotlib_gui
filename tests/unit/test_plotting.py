@@ -291,7 +291,7 @@ def test_no_plottable_data_raises_and_closes_figure():
 def test_column_out_of_range_is_user_error(df):
     with pytest.raises(UserError) as info:
         build(df, series=[{"y": "__idx__99"}])
-    assert "99" in info.value.message
+    assert "100列目" in info.value.message
 
 
 def test_duplicate_column_names_resolved_by_index():

@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import builtins
 import io
+import re
 import traceback
 from functools import partial
 
@@ -87,7 +88,7 @@ def figure_to_bytes(fig, file_format: str, transparent: bool = False, dpi: int =
     """Figure を指定形式のバイト列にする。戻り値は (bytes, mime, 拡張子)。"""
     fmt = (file_format or "").lower()
     if fmt not in _FORMATS:
-        raise UserError("保存形式が不正です。", field="保存形式")
+        raise UserError("「保存形式」の値が不正です。png / jpg / svg / pdf から選んでください。", field="保存形式")
     if transparent and fmt not in {"png", "svg"}:
         raise UserError("背景透過を有効にした場合、保存形式はpngまたはsvgを選択してください。", field="保存形式")
     save_format, mime, ext = _FORMATS[fmt]
@@ -101,7 +102,14 @@ def figure_to_bytes(fig, file_format: str, transparent: bool = False, dpi: int =
         save_kwargs["transparent"] = True
 
     buffer = io.BytesIO()
-    fig.savefig(buffer, format=save_format, **save_kwargs)
+    try:
+        fig.savefig(buffer, format=save_format, **save_kwargs)
+    except (ValueError, OverflowError, MemoryError) as exc:
+        raise UserError(
+            "画像を書き出せませんでした。図幅・図高さを小さくするか、保存形式を変えてください。",
+            field="図幅",
+            detail=f"{type(exc).__name__}: {exc}",
+        ) from exc
     return buffer.getvalue(), mime, ext
 
 
@@ -110,9 +118,12 @@ def figure_to_data_uri(fig, file_format: str, transparent: bool = False, dpi: in
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}", ext
 
 
+_INVALID_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
 def build_filename(raw_filename: str, ext: str) -> str:
     """保存ファイル名を作る。空欄時は plot.<ext>。入力中の拡張子は取り除いて ext を付ける。"""
-    raw_filename = (raw_filename or "").strip()
+    raw_filename = _INVALID_FILENAME_CHARS.sub("_", (raw_filename or "").strip())
     if raw_filename:
         filename_base = raw_filename.rstrip(".")
         if "." in filename_base:
@@ -251,7 +262,7 @@ def run_custom_code(code: str, df_full: pd.DataFrame, settings: Settings) -> Fig
             try:
                 plotted_count = int(plotted_raw)
             except Exception:
-                raise UserError("plotted_count は整数で指定してください。", field="カスタムコード")
+                raise UserError("plotted_count は整数で指定してください。", field="カスタムコード") from None
         if plotted_count <= 0 and figure_has_visible_artists(fig):
             plotted_count = 1
         if plotted_count <= 0:

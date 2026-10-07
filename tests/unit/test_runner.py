@@ -169,3 +169,19 @@ def test_make_figure_dispatch(df):
     r = make_figure(df, settings(), "fig, ax = plt.subplots()\nax.plot([0,1],[0,1])")
     plt.close(r.fig)
     assert r.plotted_count == 1
+
+
+def test_filename_invalid_characters_are_replaced():
+    assert build_filename('a/b:c*?.png', "svg") == "a_b_c__.svg"
+
+
+def test_tight_layout_failure_is_japanese_user_error(monkeypatch, df):
+    from matplotlib.figure import Figure
+
+    def boom(self, *a, **k):
+        raise RuntimeError("tight failed")
+
+    monkeypatch.setattr(Figure, "tight_layout", boom)
+    with pytest.raises(UserError) as info:
+        make_figure(df, settings())
+    assert "レイアウト" in info.value.message and "tight failed" in info.value.detail

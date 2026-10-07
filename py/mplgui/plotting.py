@@ -5,6 +5,7 @@ DOM / js には依存しない。呼び出し側が戻り値の Figure を必ず
 """
 from __future__ import annotations
 
+import traceback
 from dataclasses import dataclass, field
 
 import matplotlib.pyplot as plt
@@ -92,14 +93,18 @@ def parse_column_index(requested: str) -> int | None:
     return int(idx_text)
 
 
+def _column_out_of_range(idx: int, ncols: int) -> str:
+    return f"選択した列（{idx + 1}列目）がデータにありません（データは{ncols}列です）。別のファイルを読み込んだ場合は、列を選び直してください。"
+
+
 def resolve_column(df: pd.DataFrame, requested: str):
     if requested.startswith("__idx__"):
         idx_text = requested.replace("__idx__", "", 1)
         if not idx_text.isdigit():
-            raise UserError(f"列の指定が不正です: {requested}")
+            raise UserError("列の指定が正しくありません。列を選び直してください。", detail=requested)
         idx = int(idx_text)
         if idx < 0 or idx >= len(df.columns):
-            raise UserError(f"列番号 {idx} がデータの列数を超えています。")
+            raise UserError(_column_out_of_range(idx, len(df.columns)))
         return df.columns[idx]
 
     if requested in df.columns:
@@ -107,14 +112,14 @@ def resolve_column(df: pd.DataFrame, requested: str):
     matched = [col for col in df.columns if str(col) == requested]
     if len(matched) == 1:
         return matched[0]
-    raise UserError(f"列が見つかりません: {requested}")
+    raise UserError(f"列「{requested}」がデータに見つかりません。列を選び直してください。")
 
 
 def get_series_from_request(df: pd.DataFrame, requested: str) -> tuple[pd.Series, str, int]:
     idx = parse_column_index(requested)
     if idx is not None:
         if idx < 0 or idx >= len(df.columns):
-            raise UserError(f"列番号 {idx} がデータの列数を超えています。")
+            raise UserError(_column_out_of_range(idx, len(df.columns)))
         return df.iloc[:, idx], str(df.columns[idx]), idx
 
     resolved = resolve_column(df, requested)
@@ -251,11 +256,11 @@ def get_per_series_xy_data(df: pd.DataFrame, series_settings: list[dict]) -> tup
 def apply_axis_scale_and_limits(target_ax, axis_kind: str, axis_label: str, scale: str,
                                 min_value: float | None, max_value: float | None) -> None:
     if scale not in {"linear", "log"}:
-        raise UserError(f"{axis_label}軸スケールが不正です。")
+        raise UserError(f"「{axis_label}軸スケール」の値が不正です。linear（線形）か log（対数）を選んでください。", field=f"{axis_label}軸スケール")
     if min_value is not None and max_value is not None and min_value >= max_value:
-        raise UserError(f"{axis_label}軸の範囲は最小値 < 最大値で指定してください。")
+        raise UserError(f"{axis_label}軸の範囲は最小値 < 最大値で指定してください。", field=f"{axis_label}軸の範囲")
     if scale == "log" and ((min_value is not None and min_value <= 0) or (max_value is not None and max_value <= 0)):
-        raise UserError(f"{axis_label}軸を対数にする場合、範囲は0より大きい値で指定してください。")
+        raise UserError(f"{axis_label}軸を対数にする場合、範囲は0より大きい値で指定してください。", field=f"{axis_label}軸の範囲")
 
     try:
         if axis_kind == "x":
@@ -267,11 +272,25 @@ def apply_axis_scale_and_limits(target_ax, axis_kind: str, axis_label: str, scal
             if min_value is not None or max_value is not None:
                 target_ax.set_ylim(bottom=min_value, top=max_value)
         else:
-            raise UserError(f"軸種別が不正です: {axis_kind}")
+            raise UserError("軸の種類が正しくありません。", detail=str(axis_kind))
     except UserError:
         raise
     except Exception as exc:
-        raise UserError(f"{axis_label}軸設定の適用に失敗しました。", detail=str(exc)) from exc
+        raise UserError(
+            f"{axis_label}軸のスケールまたは範囲を適用できませんでした。範囲の値を確認してください。",
+            field=f"{axis_label}軸の範囲",
+            detail=f"{type(exc).__name__}: {exc}",
+        ) from exc
+
+
+_TIGHT_LAYOUT_ERROR = "レイアウトの自動調整に失敗しました。余白を手動で指定するか、図の大きさ・フォントサイズを小さくしてください。"
+
+
+def _tight_layout(fig) -> None:
+    try:
+        fig.tight_layout()
+    except Exception as exc:
+        raise UserError(_TIGHT_LAYOUT_ERROR, field="余白", detail=f"{type(exc).__name__}: {exc}") from exc
 
 
 def apply_subplot_margins(fig, margins: dict, use_tight_layout_if_auto: bool = False) -> None:
@@ -294,9 +313,13 @@ def apply_subplot_margins(fig, margins: dict, use_tight_layout_if_auto: bool = F
         try:
             fig.subplots_adjust(**provided)
         except Exception as exc:
-            raise UserError("余白設定の適用に失敗しました。", detail=str(exc)) from exc
+            raise UserError(
+                "余白の設定を適用できませんでした。左 < 右、下 < 上 になるように、0〜1の値で指定してください。",
+                field="余白",
+                detail=f"{type(exc).__name__}: {exc}",
+            ) from exc
     elif use_tight_layout_if_auto:
-        fig.tight_layout()
+        _tight_layout(fig)
 
 
 def apply_axes_decoration(ax, ax2, *, font_size: float, scales: dict, limits: dict,
@@ -483,6 +506,15 @@ def create_figure(df_full: pd.DataFrame, settings: Settings) -> FigureResult:
         apply_subplot_margins(
             fig, {"left": m.left, "right": m.right, "bottom": m.bottom, "top": m.top}, use_tight_layout_if_auto=True,
         )
+    except UserError:
+        plt.close(fig)
+        raise
+    except (TypeError, ValueError, OverflowError) as exc:
+        plt.close(fig)
+        raise UserError(
+            "グラフを描画できませんでした。X列・Y列に指定した列の値の形式（数値と文字列の混在など）や、設定の値を確認してください。",
+            detail=f"{type(exc).__name__}: {exc}\n\n{traceback.format_exc().strip()}",
+        ) from exc
     except BaseException:
         plt.close(fig)
         raise
