@@ -22,7 +22,7 @@ from matplotlib.figure import Figure
 from matplotlib.layout_engine import PlaceHolderLayoutEngine
 
 from .errors import UserError
-from .formats import FORMATS, build_filename, savefig_kwargs  # noqa: F401  (build_filename は runner からも使えるようにする)
+from .formats import DEFAULT_SAVE_DPI, FORMATS, build_filename, check_raster_size, savefig_kwargs, savefig_rc  # noqa: F401  (build_filename は runner からも使えるようにする)
 
 SCRIPT_FILENAME = "plot.py"
 CODE_FIELD = "Pythonコード"
@@ -45,8 +45,14 @@ def drop_placeholder_layout_engine(fig) -> None:
         fig.set_layout_engine(None)
 
 
-def figure_to_bytes(fig, file_format: str, transparent: bool = False, dpi: int = 120) -> tuple[bytes, str, str]:
-    """Figure を指定形式のバイト列にする。戻り値は (bytes, mime, 拡張子)。"""
+def figure_to_bytes(
+    fig, file_format: str, transparent: bool = False, dpi: int = DEFAULT_SAVE_DPI, svg_text: str = "path"
+) -> tuple[bytes, str, str]:
+    """Figure を指定形式のバイト列にする。戻り値は (bytes, mime, 拡張子)。
+
+    保存形式ごとの rcParams（PDF の fonttype、SVG の文字）は savefig の間だけ適用する（生成スクリプトと同じ値）。
+    PNG / JPG は、画素数が大きすぎるときは書き出す前に UserError にする。
+    """
     fmt = (file_format or "").lower()
     if fmt not in FORMATS:
         raise UserError("「保存形式」の値が不正です。png / jpg / svg / pdf から選んでください。", field="保存形式")
@@ -54,10 +60,15 @@ def figure_to_bytes(fig, file_format: str, transparent: bool = False, dpi: int =
         raise UserError("背景透過を有効にした場合、保存形式はpngまたはsvgを選択してください。", field="保存形式")
     save_format, mime, ext = FORMATS[fmt]
 
+    if save_format in {"png", "jpeg"}:
+        width_in, height_in = fig.get_size_inches()
+        check_raster_size(float(width_in), float(height_in), dpi)
+
     buffer = io.BytesIO()
     drop_placeholder_layout_engine(fig)
     try:
-        fig.savefig(buffer, format=save_format, **savefig_kwargs(fmt, transparent, dpi))
+        with matplotlib.rc_context(savefig_rc(fmt, svg_text)):
+            fig.savefig(buffer, format=save_format, **savefig_kwargs(fmt, transparent, dpi))
     except (ValueError, OverflowError, MemoryError) as exc:
         raise UserError(
             "画像を書き出せませんでした。図幅・図高さを小さくするか、保存形式を変えてください。",
@@ -67,8 +78,10 @@ def figure_to_bytes(fig, file_format: str, transparent: bool = False, dpi: int =
     return buffer.getvalue(), mime, ext
 
 
-def figure_to_data_uri(fig, file_format: str, transparent: bool = False, dpi: int = 120) -> tuple[str, str]:
-    data, mime, ext = figure_to_bytes(fig, file_format, transparent, dpi)
+def figure_to_data_uri(
+    fig, file_format: str, transparent: bool = False, dpi: int = DEFAULT_SAVE_DPI, svg_text: str = "path"
+) -> tuple[str, str]:
+    data, mime, ext = figure_to_bytes(fig, file_format, transparent, dpi, svg_text)
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}", ext
 
 
@@ -264,6 +277,7 @@ def run_to_image(
     file_format: str = "png",
     transparent: bool = False,
     dpi: int = 100,
+    svg_text: str = "path",
     injected: dict | None = None,
     cwd: str | Path | None = None,
 ) -> ImageResult:
@@ -271,7 +285,7 @@ def run_to_image(
     with run_script(code, injected=injected, cwd=cwd) as run:
         output = run.output
         try:
-            data, mime, ext = figure_to_bytes(run.fig, file_format, transparent, dpi)
+            data, mime, ext = figure_to_bytes(run.fig, file_format, transparent, dpi, svg_text)
             summary = figure_summary(run.fig)
         except UserError as exc:
             exc.output = output

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import json
+import struct
 import traceback
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from . import fonts
 from .codegen import GENERIC_ERROR_MESSAGE, GeneratedScript, generate_script
 from .dataprep import plan_plot
 from .errors import UserError
-from .formats import SAVE_DPI, build_filename
+from .formats import build_filename
 from .loader import PREVIEW_ROWS, SourceInfo, build_preview, column_options, load_file
 from .runner import ScriptError, run_to_image
 from .settings import Settings, parse_load_settings, parse_save_settings, parse_settings
@@ -154,20 +155,22 @@ def _generate(settings: Settings):
     return plan, generate_script(settings, _source_info(), plan)
 
 
-def _run(settings: Settings | None, code: str | None, *, file_format: str, transparent: bool, dpi: int):
+def _run(settings: Settings | None, code: str | None, *, file_format: str, transparent: bool, dpi: int, svg_text: str = "path"):
     """GUI 同期（code が None）: 設定から生成したスクリプトを、読込済みの df で実行する（読込・保存の行は空にする）。
     編集モード（code が文字列）: そのスクリプトを、アップロードしたファイルのある作業フォルダで実行する。設定は使わない。"""
     if code is None:
         plan, script = _generate(settings)
         try:
             result = run_to_image(
-                script.auto_render_text(), file_format=file_format, transparent=transparent, dpi=dpi,
+                script.auto_render_text(), file_format=file_format, transparent=transparent, dpi=dpi, svg_text=svg_text,
                 injected={"df": SESSION.df},
             )
         except ScriptError as err:
             raise _step_error(script, err) from err
         return plan, script, result
-    return None, None, run_to_image(code, file_format=file_format, transparent=transparent, dpi=dpi, cwd=SESSION.workdir)
+    return None, None, run_to_image(
+        code, file_format=file_format, transparent=transparent, dpi=dpi, svg_text=svg_text, cwd=SESSION.workdir
+    )
 
 
 def _data_uri(result) -> str:
@@ -185,14 +188,21 @@ def render_json(settings_json: str, code: str | None = None) -> dict:
     return payload
 
 
-@_guard("save")
-def save_json(settings_json: str, code: str | None = None) -> dict:
-    """保存設定の形式で図を書き出し、data URI とファイル名を返す（ダウンロードは JS が行う）。"""
+def _save_settings(settings_json: str, code: str | None):
+    """保存系の API が使う保存設定を返す。編集モードは保存設定だけを検証する（描画設定が不正でも保存できる）。"""
     raw = _parse_json(settings_json)
-    # 編集モードは保存設定だけを使う（描画設定が不正でも、編集したコードの図は保存できる）
     settings = parse_settings(raw) if code is None else None
     save = settings.save if settings is not None else parse_save_settings(raw)
-    _, _, result = _run(settings, code, file_format=save.format, transparent=save.transparent, dpi=SAVE_DPI)
+    return settings, save
+
+
+@_guard("save")
+def save_json(settings_json: str, code: str | None = None) -> dict:
+    """保存設定の形式・解像度で図を書き出し、data URI とファイル名を返す（ダウンロードは JS が行う）。"""
+    settings, save = _save_settings(settings_json, code)
+    _, _, result = _run(
+        settings, code, file_format=save.format, transparent=save.transparent, dpi=save.dpi, svg_text=save.svg_text
+    )
     return {
         "ok": True,
         "filename": build_filename(save.filename, result.ext),
@@ -202,18 +212,36 @@ def save_json(settings_json: str, code: str | None = None) -> dict:
     }
 
 
+@_guard("copy_image")
+def copy_image_json(settings_json: str, code: str | None = None) -> dict:
+    """クリップボードにコピーする画像。保存形式にかかわらず、保存 DPI の PNG（背景透過は保存設定に従う）。"""
+    settings, save = _save_settings(settings_json, code)
+    _, _, result = _run(settings, code, file_format="png", transparent=save.transparent, dpi=save.dpi)
+    width, height = struct.unpack(">II", result.data[16:24])  # PNG の IHDR（幅・高さ）
+    return {
+        "ok": True,
+        "mime": result.mime,
+        "dataUri": _data_uri(result),
+        "width": width,
+        "height": height,
+        "output": result.output,
+    }
+
+
 def script_filename(save_filename: str) -> str:
     """「.py で保存」のファイル名。保存ファイル名と同じ規則（formats.build_filename）で拡張子を .py にする。"""
     return build_filename(str(save_filename or ""), "py")
 
 
-def register_font(data: bytes) -> str:
-    """JS が取得した日本語フォントを登録する。"""
+def register_font(data: bytes, kind: str = "japanese") -> str:
+    """JS が取得したフォントを登録する。kind は "japanese" | "arimo" | "tinos"（種類ごとに1回だけ登録する）。"""
     try:
-        return _dumps({"ok": True, "registered": fonts.register_font_bytes(bytes(data))})
+        if kind not in fonts.FONT_FILENAMES:
+            raise UserError(f"未対応のフォントの種類です（{kind}）。", field="フォント")
+        return _dumps({"ok": True, "registered": fonts.register_font_bytes(bytes(data), kind=kind), "kind": kind})
     except Exception as exc:  # noqa: BLE001
         return _dumps(_error_payload(exc, "register_font"))
 
 
 def font_status() -> str:
-    return _dumps({"ok": True, "registered": fonts.is_registered()})
+    return _dumps({"ok": True, "registered": fonts.is_registered(), "kinds": fonts.registered_kinds()})

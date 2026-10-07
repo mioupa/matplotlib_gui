@@ -104,7 +104,7 @@ def test_dropping_placeholder_engine_keeps_output_identical(fmt):
     from mplgui.runner import drop_placeholder_layout_engine
 
     meta = {"png": {"Software": None}, "svg": {"Date": None}, "pdf": {"CreationDate": None}}[fmt]
-    kw = {"dpi": 120} if fmt == "png" else {}
+    kw = {"dpi": 300} if fmt == "png" else {}
 
     def render(drop):
         fig = _tight_fig()
@@ -392,3 +392,51 @@ def test_figure_summary_content():
     assert (first["lines"], first["collections"], first["patches"]) == (1, 1, 2)
     assert first["legend"] == ["線"] and second["legend"] == []
     assert all(isinstance(v, float) for v in first["xlim"])
+
+
+# ---------------------------------------------------------------- Phase 3: save rc, size guard
+
+
+def test_pdf_uses_type42_without_script_help(fig):
+    data, _, _ = figure_to_bytes(fig, "pdf")
+    assert b"/FontFile2" in data and b"/Type3" not in data
+    assert mpl.rcParams["pdf.fonttype"] == 3  # rc_context の外には漏れない
+
+
+def test_svg_text_option(fig):
+    fig.axes[0].set_title("Title")
+    assert b"<text" not in figure_to_bytes(fig, "svg")[0]
+    assert b"<text" not in figure_to_bytes(fig, "svg", svg_text="path")[0]
+    assert b"<text" in figure_to_bytes(fig, "svg", svg_text="text")[0]
+    assert mpl.rcParams["svg.fonttype"] == "path"
+
+
+def test_figure_to_bytes_dpi_changes_pixels(fig):
+    import struct
+
+    data, _, _ = figure_to_bytes(fig, "png", dpi=50)
+    assert struct.unpack(">II", data[16:24]) == (320, 240)
+
+
+def test_raster_size_guard_in_runner_and_vector_unaffected():
+    big, _ = plt.subplots(figsize=(50, 50))
+    try:
+        with pytest.raises(UserError) as info:
+            figure_to_bytes(big, "png", dpi=1200)
+        assert info.value.field == "保存 DPI" and "幅 60000 × 高さ 60000 ピクセル" in info.value.message
+        with pytest.raises(UserError):
+            figure_to_bytes(big, "jpg", dpi=1200)
+        assert figure_to_bytes(big, "svg", dpi=1200)[0].startswith(b"<?xml")
+    finally:
+        plt.close(big)
+
+
+def test_check_raster_size_limits():
+    from mplgui.formats import check_raster_size
+
+    check_raster_size(8, 6, 1200)  # 9600 x 7200 = 約6900万画素
+    check_raster_size(50, 50, 200)  # 10000 x 10000 = 1億画素ちょうど
+    with pytest.raises(UserError):
+        check_raster_size(50, 50, 201)  # 画素数の上限を超える
+    with pytest.raises(UserError):
+        check_raster_size(55, 1, 1200)  # 66000 画素の辺（1辺は 65536 未満）
