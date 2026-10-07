@@ -2,15 +2,13 @@
 
 JS（js/bridge.js）は window.mplgui の関数を呼ぶ。引数・戻り値は JSON 文字列。
 """
-import warnings
-
 import matplotlib
 
 matplotlib.use("Agg")  # ブラウザ描画バックエンドを使わない（pyplot を import する前に指定する）
 
-warnings.simplefilter("ignore", DeprecationWarning)
-warnings.filterwarnings("ignore", message=".*Pyarrow will become a required dependency of pandas.*", category=DeprecationWarning)
-warnings.filterwarnings("ignore", message=".*missing from current font.*", category=UserWarning)
+from mplgui.runtime import configure_warnings  # noqa: E402
+
+configure_warnings()
 
 from js import CustomEvent, Object, window  # noqa: E402
 from pyodide.ffi import create_proxy  # noqa: E402

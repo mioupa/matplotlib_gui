@@ -12,3 +12,4 @@ packages = ["pandas", "matplotlib", "openpyxl==3.1.5", "et_xmlfile==2.0.0"]
 "./py/mplgui/plotting.py" = "./mplgui/plotting.py"
 "./py/mplgui/runner.py" = "./mplgui/runner.py"
 "./py/mplgui/fonts.py" = "./mplgui/fonts.py"
+"./py/mplgui/runtime.py" = "./mplgui/runtime.py"
