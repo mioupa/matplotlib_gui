@@ -157,9 +157,40 @@ export const syncMarkerSizeDisplay = () => {
   }
 };
 
+// カードを描いたときの、データ元と列の選択肢の状態（読込が終わったとき、変わっていなければ描き直さない）
+let renderedStructure = "";
+const structureOf = () => {
+  const { series, plot } = getSettings();
+  return JSON.stringify([
+    loadedFiles().map((f) => [f.id, f.name]),
+    series.map((s) => [s.id, sourceIdOf(s), columnsOf(s)]),
+    plot.type,
+    plot.xColumn,
+  ]);
+};
+
+// 表示中のカードの選択が、設定と同じか（違えば描き直す）
+const cardsMatchSettings = () => {
+  const list = document.getElementById("seriesList");
+  if (!list) return false;
+  const { series } = getSettings();
+  const items = list.querySelectorAll(".series-item");
+  if (items.length !== series.length) return false;
+  return series.every((s, i) => {
+    const item = items[i];
+    return (
+      item.dataset.seriesId === s.id &&
+      item.querySelector(".series-x")?.value === s.x &&
+      item.querySelector(".series-y")?.value === s.y &&
+      item.querySelector(".series-source")?.value === sourceIdOf(s)
+    );
+  });
+};
+
 export const renderSeriesList = () => {
   const list = document.getElementById("seriesList");
   if (!list) return;
+  renderedStructure = structureOf();
   const { series, plot } = getSettings();
   list.replaceChildren(...series.map((s) => buildCard(s, plot.type)));
   const items = list.querySelectorAll(".series-item");
@@ -184,6 +215,8 @@ const refreshXColumnSelect = () => {
 // ファイルの追加・削除などで、データ元の選択肢と各系列の列の選択肢を描き直す
 export const refreshSources = () => {
   refreshXColumnSelect();
+  // データ元と列の選択肢が変わっていなければ、カードは描き直さない（入力中の欄や開いている選択肢を保つ）
+  if (renderedStructure === structureOf() && cardsMatchSettings()) return;
   renderSeriesList();
 };
 

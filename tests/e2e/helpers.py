@@ -418,3 +418,11 @@ def add_series_with_source(page, source, y="__idx__1", series_id="s2"):
     page.select_option(f"#series-{series_id}-source", source)
     page.select_option(f"#series-{series_id}-y", y)
     wait_settled(page)
+
+
+def remove_file(page, file_id):
+    """ファイルを取り除く。一覧の削除ボタンは2ファイル以上のときだけ出るので、最後の1つは bridge.js の removeFile で取り除く。"""
+    if page.locator(f"#file-{file_id}-remove").count() > 0:
+        page.click(f"#file-{file_id}-remove")
+    else:
+        page.evaluate("(id) => import(new URL('js/bridge.js', document.baseURI)).then((m) => m.removeFile(id))", file_id)

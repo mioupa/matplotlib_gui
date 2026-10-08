@@ -68,3 +68,9 @@ export const showPreview = (preview, skipRows = 0) => {
   dataArea.replaceChildren(...[preambleBox(preview.preamble), meta, wrap].filter(Boolean));
   applySkipRows(skipRows);
 };
+
+// 初期状態（表なし）に戻す
+export const clearPreview = () => {
+  const dataArea = document.getElementById("dataArea");
+  if (dataArea) dataArea.replaceChildren();
+};

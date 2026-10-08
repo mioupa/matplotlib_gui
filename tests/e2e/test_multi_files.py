@@ -14,6 +14,8 @@ from helpers import (
     load_fixture,
     open_code_tab,
     plot_src,
+    remove_file,
+    set_title,
     run_edited_code,
     status_kind,
     status_text,
@@ -159,6 +161,10 @@ def test_more_than_ten_files_warns(start, fixtures_dir):
     wait_settled(page)
     assert len(file_row_ids(page)) == 10
     assert "読み込めるファイルは10個までです。先頭から10個を読み込みました。" in status_warnings(page)
+    # 注意は、その読込の結果にだけ添える（あとの描画では繰り返さない）
+    set_title(page, "after")
+    wait_settled(page)
+    assert "読み込めるファイルは10個までです。先頭から10個を読み込みました。" not in status_warnings(page)
 
 
 def test_drop_add_and_replace_zones(start, fixtures_dir):
@@ -286,3 +292,43 @@ def test_paste_replaces_all_files_and_keeps_save_button(start, fixtures_dir):
     add_files(page, [fixtures_dir / "growth.csv"])
     assert page.is_visible("#savePastedBtn")  # 貼り付けたデータが残っている間は出す
     assert file_row_ids(page) == ["file-d1", "file-d2"]
+
+
+def test_removing_every_file_returns_to_the_initial_state(start, fixtures_dir):
+    page = start
+    two_files(page, fixtures_dir)
+    open_code_tab(page)
+    assert code_text(page) != ""
+    before = load_count(page)
+    remove_file(page, "d2")
+    wait_settled(page)
+    remove_file(page, "d1")
+    page.wait_for_function("document.documentElement.dataset.dataState === 'none'")
+    assert page.locator("#plotArea img").count() == 0
+    assert page.inner_text("#dataArea").strip() == ""
+    assert page.inner_text("#fileNameLabel") == "選択されていません"
+    assert page.inner_text("#encodingLabel") == "" and not page.is_visible("#sheetGroup")
+    assert code_text(page) == "" and page.get_attribute("#customPyCode", "data-generation") is None
+    assert status_text(page) == ""
+    assert "(自動)" in page.inner_text("#series-s1-y") and "電圧" not in page.inner_text("#series-s1-y")
+    assert load_count(page) == before  # 取り除くだけでは読込として数えない
+    load_fixture(page, fixtures_dir / "utf8.csv")  # また読み込める
+    wait_settled(page)
+    assert plot_src(page).startswith("data:image/png")
+
+
+def test_series_cards_are_kept_when_a_load_leaves_columns_unchanged(start, fixtures_dir):
+    page = start
+    load_fixture(page, fixtures_dir / "utf8.csv")
+    wait_settled(page)
+    page.evaluate("document.getElementById('series-s1-legend-name').dataset.mark = 'kept'")
+    before = load_count(page)
+    page.fill("#delimiter", ",")  # 同じ区切り文字を明示するだけ。読み直しても列は同じ
+    wait_load_count(page, before + 1)
+    wait_settled(page)
+    assert page.evaluate("document.getElementById('series-s1-legend-name').dataset.mark") == "kept"
+    # 列が変わる読込では描き直す
+    page.fill("#delimiter", "x")
+    wait_load_count(page, before + 2)
+    wait_settled(page)
+    assert page.evaluate("document.getElementById('series-s1-legend-name').dataset.mark") is None

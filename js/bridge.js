@@ -7,10 +7,10 @@
 //   「実行」したときだけ描き、GUI の変更では再描画しない（読込は行うが自動実行しない）。
 import { subscribe, toJson, getSettings, setFileSheet, setPath, updateSeries } from "./state.js";
 import { addStickyWarning, removeStickyWarning, setStatus, warningTexts } from "./ui/notify.js";
-import { showPlot } from "./ui/plotView.js";
+import { clearPlot, showPlot } from "./ui/plotView.js";
 import { showCodeOutput } from "./ui/codeOutput.js";
 import { getGeneratedCode, getGeneratedGeneration, isEditMode, setCodeMode, setCodeStale, setGeneratedCode } from "./code-state.js";
-import { applySkipRows, showPreview } from "./ui/dataPreview.js";
+import { applySkipRows, clearPreview, showPreview } from "./ui/dataPreview.js";
 import { dropSourceColumns, reconcileColumns, refreshSources, setSourceColumns } from "./ui/series.js";
 import { encodingDisplayName, showEncoding, showFileName, showPastedSave } from "./ui/fileInfo.js";
 import { showSheets } from "./ui/loadSection.js";
@@ -46,6 +46,7 @@ let latestGeneration = 0; // 最後に要求された描画の世代番号
 let renderRunning = false;
 let renderDirty = false;
 let loadCount = 0;
+let batchLoaded = false; // この読込のまとまりで、実際に読み込めたファイルがある（data-load-count の数え方）
 let editCodeProvider = () => ""; // 編集モードのコード（Pythonコードタブの textarea の内容）
 let editHasRun = false; // 編集モードに入ってから「実行」したことがある（フォント取得後の描き直しの判断に使う）
 let readyCallbacks = [];
@@ -252,10 +253,10 @@ const executeRender = async (generation) => {
       if (!editing && typeof result.code === "string" && !isEditMode()) setGeneratedCode(result.code, generation);
       if (Number.isInteger(result.seriesCount)) {
         const skipped = Number.isInteger(result.skipRows) ? result.skipRows : 0;
-        const warnings = [...currentLoadWarnings(), ...warningTexts(result.warnings)];
+        const warnings = [...currentLoadWarnings({ consumeNotes: true }), ...warningTexts(result.warnings)];
         lastRenderStatus = { message: `描画に成功しました（${result.seriesCount}系列、スキップ${skipped}行）。`, detail: "", warnings };
       } else {
-        lastRenderStatus = { message: "コードの実行に成功しました。", detail: result.output || "", warnings: currentLoadWarnings() };
+        lastRenderStatus = { message: "コードの実行に成功しました。", detail: result.output || "", warnings: currentLoadWarnings({ consumeNotes: true }) };
       }
       scriptRefreshFailed = false;
       setStatus(lastRenderStatus.message, "ok", lastRenderStatus.detail, lastRenderStatus.warnings);
@@ -366,8 +367,10 @@ const fileLabel = (id) => {
 };
 
 // 読込・描画の結果に添える警告: 直近のファイル操作の注意、各ファイルの読込警告（複数ファイルのときはデータ名つき）、読み込めなかったファイル
-const currentLoadWarnings = () => {
+// consumeNotes: ファイル操作の注意（notes）は、その操作の結果を表示するときに1度だけ添える（表示したら消す）
+const currentLoadWarnings = ({ consumeNotes = false } = {}) => {
   const out = [...notes];
+  if (consumeNotes) notes = [];
   const list = files();
   const multi = list.length >= 2;
   list.forEach((f, i) => {
@@ -447,6 +450,21 @@ const reportLoadError = (id) => {
   else reportError(error);
 };
 
+// 最後のファイルを取り除いたとき: 最初に開いたときの状態に戻す（編集モードのコードはそのまま）
+const resetToInitialState = () => {
+  invalidatePendingRender();
+  if (scriptTimer) window.clearTimeout(scriptTimer);
+  scriptTimer = null;
+  lastRenderStatus = null;
+  scriptRefreshFailed = false;
+  notes = [];
+  clearPlot();
+  clearPreview();
+  showCodeOutput({ output: "", kind: "ok" });
+  if (!isEditMode()) setGeneratedCode("", null);
+  setStatus("");
+};
+
 // 読込が一通り終わったとき（待っている読込が無いとき）の後処理: 列の選択肢・表示の更新、描画または失敗の報告
 const finalizeLoad = ({ counted = true } = {}) => {
   const list = files();
@@ -458,23 +476,26 @@ const finalizeLoad = ({ counted = true } = {}) => {
   reconcileColumns();
   updateFilesView();
   refreshDataState();
+  const loaded = batchLoaded;
+  batchLoaded = false;
   if (list.length === 0) {
-    setStatus("");
+    resetToInitialState();
     return;
   }
   if (dataReady) {
-    if (counted) {
+    if (counted && loaded) {
       loadCount += 1;
       root.dataset.loadCount = String(loadCount);
     }
     if (isEditMode()) {
-      setStatus(EDIT_MODE_MESSAGE, "warning"); // 編集中は自動で実行しない（ファイルは作業フォルダに置かれている）
+      setStatus(EDIT_MODE_MESSAGE, "warning", "", currentLoadWarnings({ consumeNotes: true })); // 編集中は自動で実行しない（ファイルは作業フォルダに置かれている）
     } else {
       setStatus("");
       renderNow();
     }
     return;
   }
+  notes = [];
   const failed = list.find((f) => sources.get(f.id) && sources.get(f.id).state === "error");
   if (failed) reportLoadError(failed.id);
   markCodeStale();
@@ -519,6 +540,7 @@ const loadOne = async (src) => {
       return;
     }
     src.state = "ready";
+    batchLoaded = true;
     src.result = result;
     src.error = "";
     src.errorInfo = null;
@@ -633,7 +655,7 @@ export const selectFile = (file, options = {}) => {
 };
 
 // ファイルを取り除く。それを使っていた系列は、データ元を先頭に戻し X / Y を自動に戻す（警告を添える）
-const removeFile = (id) => {
+export const removeFile = (id) => {
   const list = files();
   const index = list.findIndex((f) => f.id === id);
   if (index < 0) return;
