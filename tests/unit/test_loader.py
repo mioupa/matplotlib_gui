@@ -205,6 +205,16 @@ def test_decode_delimiter_invalid_escape_still_japanese_error():
     assert info.value.field == "区切り文字" and not info.value.message.isascii()
 
 
+def test_decode_delimiter_unknown_escape_is_kept_without_warning():
+    # 「\\d」のような未定義のエスケープは文字のまま残す。出る DeprecationWarning は loader の中で無視する（漏らさない）
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert decode_delimiter("\\d", ".txt") == "\\d"
+        assert decode_delimiter("a\\q\\t", ".txt") == "a\\q\t"
+
+
 def test_ideographic_comma_delimited_file_loads():
     data = "時間、電圧、電流\n1、2、3\n4、5、6\n".encode("utf-8")
     loaded = load_file(data, "comma.txt", "、", True)

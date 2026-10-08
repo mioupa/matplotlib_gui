@@ -45,7 +45,8 @@ def _decode_escapes(text: str) -> str:
         if not token.isascii():
             return token
         with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
+            # 「\d」のような未定義のエスケープは、文字のまま残る（"\\d"）が DeprecationWarning が出る。これだけを無視する
+            warnings.filterwarnings("ignore", category=DeprecationWarning, message=r".*invalid escape sequence")
             return token.encode("ascii").decode("unicode_escape")
 
     return _ESCAPE.sub(repl, text)

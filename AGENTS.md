@@ -172,11 +172,12 @@ Python が登録し、登録後に `mplgui-ready` イベントを送る。引数
 
 ## 8. 警告フィルタ
 
-無視する警告は、次の3つだけ。それ以外の警告は無視しない（A10）。
+無視する警告は、次の4つだけ。それ以外の警告は無視しない（A10）。
 
 - pandas の pyarrow 関連の `DeprecationWarning`（`runtime.configure_warnings`、起動時）
 - matplotlib のグリフ不足の `UserWarning`（`runtime.configure_warnings`、起動時）
 - `plt.show()` が Agg で出す `UserWarning`（`FigureCanvasAgg is non-interactive, and thus cannot be shown`）。生成スクリプトも `plt.show()` で終わるため、`runner._execute` の中だけ、`warnings.catch_warnings()` の範囲で無視する（スクリプトの実行が終われば元に戻る。グローバルには設定しない）。
+- 区切り文字のエスケープ表記（`loader._decode_escapes`）で、`\d` のような未定義のエスケープを `unicode_escape` で解釈するときに出る `DeprecationWarning`（`... is an invalid escape sequence`）。文字はそのまま残る。`warnings.catch_warnings()` の中で、この種類とメッセージだけを無視する。
 
 ## 9. parentNode エラー
 
@@ -242,6 +243,7 @@ uv run pytest tests/e2e        # E2E（Chromium とローカルの静的サー�
 
 ### 13.2 Phase 3（2026-10-08）
 
+- 手動確認（2026-10-08、オーナーが確認。いずれも問題なし）: Illustrator で PDF の文字を編集できること。Safari と Firefox の実機で、クリップボードへのコピーが動くこと。
 - 保存 DPI の既定値は 300（U1）。選択肢は 72 / 150 / 300 / 600 と任意の値。プレビューは今までどおり dpi 100 で描く。
 - 図サイズの既定の単位は inch（8×6 を維持。U2）。cm と mm も選べる。単位を切り替えたら入力欄の数値を換算する（図の大きさは変えない。例: 8 inch → 20.32 cm）。設定には「選んだ単位の値」と単位を持つ（インチに直して持たない）。
 - 欧文フォントは Arimo（Arial 互換）と Tinos（Times 互換。U3）。ライセンスはどちらも SIL OFL 1.1（要件定義書の当初の「Apache 2.0」は誤り）。選んだときだけ、バージョン固定の jsDelivr から取得する。日本語の文字は Noto Sans JP で描く（matplotlib の文字単位のフォールバック）。Tinos のときは数式（mathtext）を STIX にする。
