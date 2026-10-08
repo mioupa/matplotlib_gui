@@ -89,8 +89,17 @@ def _save(settings_json, custom_code=None):
     return api.save_json(str(settings_json), _code(custom_code))
 
 
-def _register_font(data):
-    return api.register_font(data.to_py())
+def _script(settings_json):
+    return api.script_json(str(settings_json))
+
+
+def _copy_image(settings_json, custom_code=None):
+    return api.copy_image_json(str(settings_json), _code(custom_code))
+
+
+def _register_font(data, kind=None):
+    # kind は JS が渡さない（null / undefined）ときは日本語フォント
+    return api.register_font(data.to_py(), kind if isinstance(kind, str) else "japanese")
 
 
 def _script_filename(save_filename):
@@ -103,6 +112,8 @@ _PROXIES = {
     "loadFile": create_proxy(_load_file),
     "render": create_proxy(_render),
     "save": create_proxy(_save),
+    "copyImage": create_proxy(_copy_image),
+    "script": create_proxy(_script),
     "scriptFilename": create_proxy(_script_filename),
     "registerFont": create_proxy(_register_font),
     "fontStatus": create_proxy(api.font_status),

@@ -16,7 +16,9 @@ from helpers import (
     load_fixture,
     open_code_tab,
     wait_app_ready,
+    wait_code_contains,
     wait_code_generated,
+    wait_latin_state,
     wait_settled,
 )
 
@@ -57,21 +59,39 @@ def _configure_bar(page):
     page.fill("#yLabel", "売上")
 
 
+def _configure_scatter_paper1(page):
+    _configure_scatter(page)
+    page.select_option("#stylePreset", "paper1")
+    page.click("#applyPresetBtn")  # 図のサイズ（cm）、フォント 8 pt、線幅、点サイズ 9
+
+
+def _configure_scatter_arimo_paper2_pdf(page):
+    _configure_scatter(page)
+    page.select_option("#latinFont", "arimo")
+    wait_latin_state(page, "ready")
+    page.select_option("#stylePreset", "paper2")
+    page.click("#applyPresetBtn")  # cm の図サイズ
+    page.select_option("#saveFormat", "pdf")
+
+
 CASES = {
     "line": ("growth.csv", _configure_line),
     "scatter": ("utf8.csv", _configure_scatter),
     "bar": ("categories.csv", _configure_bar),
+    "scatter_paper1": ("utf8.csv", _configure_scatter_paper1),
+    "scatter_arimo_paper2_pdf": ("utf8.csv", _configure_scatter_arimo_paper2_pdf),
 }
 
 
-def _run_in_cpython(script: Path, workdir: Path) -> list[dict]:
+def _run_in_cpython(script: Path, workdir: Path) -> tuple[list[dict], str]:
+    """生成スクリプトを CPython で実行し、図の要約と標準エラー出力を返す。"""
     env = dict(os.environ, MPLBACKEND="Agg", PYTHONPATH=str(REPO / "py"))
     proc = subprocess.run(
         [sys.executable, str(HELPER), str(script)], cwd=workdir, env=env, capture_output=True, text=True, timeout=120
     )
     assert proc.returncode == 0, proc.stderr
     line = next(ln for ln in proc.stdout.splitlines() if ln.startswith("FIGURE_SUMMARY:"))
-    return json.loads(line[len("FIGURE_SUMMARY:"):])
+    return json.loads(line[len("FIGURE_SUMMARY:"):]), proc.stderr
 
 
 EXACT_KEYS = ("title", "xlabel", "ylabel", "xscale", "yscale", "lines", "collections", "patches", "legend")
@@ -87,6 +107,8 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
     configure(page)
     wait_settled(page)
     wait_code_generated(page)
+    if case.endswith("_pdf"):
+        wait_code_contains(page, 'fig.savefig("plot.pdf")')  # 保存設定の変更はコードだけを更新する
     browser = image_summary(page)
     assert browser, "data-summary が無い"
 
@@ -96,7 +118,7 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
     script = tmp_path / dl.value.suggested_filename
     dl.value.save_as(script)
     shutil.copy(fixtures_dir / fixture, tmp_path / fixture)  # データは元のファイル名でスクリプトの隣に置く
-    local = _run_in_cpython(script, tmp_path)
+    local, stderr = _run_in_cpython(script, tmp_path)
 
     assert len(local) == len(browser)
     assert len(browser) == (2 if case == "line" else 1)
@@ -112,5 +134,12 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
     if case == "line":
         assert browser[0]["yscale"] == "log" and browser[0]["lines"] == 1 and browser[1]["lines"] == 1
         assert browser[0]["legend"] == ["指数 [1]", "線形 [2]"]
-    if case == "scatter":
+    if case.startswith("scatter"):
         assert browser[0]["collections"] == 1 and browser[0]["lines"] == 0
+    if case == "scatter_paper1":
+        assert "8.5 / CM_PER_INCH" in script.read_text(encoding="utf-8")  # cm で指定した図サイズのまま書き出される
+    if case == "scatter_arimo_paper2_pdf":
+        text = script.read_text(encoding="utf-8")
+        assert '"Arimo"' in text and "17.0 / CM_PER_INCH" in text and 'plt.rcParams["pdf.fonttype"] = 42' in text
+        assert "findfont" not in stderr  # Arimo が無い環境でも、警告を出さずに代わりのフォントで動く
+        assert (tmp_path / "plot.pdf").read_bytes().startswith(b"%PDF")

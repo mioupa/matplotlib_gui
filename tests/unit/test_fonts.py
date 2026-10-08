@@ -15,8 +15,8 @@ def test_configure_rcparams_uses_priority_list():
         assert plt.rcParams["font.family"] == ["sans-serif"] and plt.rcParams["axes.unicode_minus"] is False
 
 
-def test_priority_starts_with_noto_sans_cjk_jp():
-    assert fonts.SANS_SERIF_PRIORITY[:2] == ["Noto Sans CJK JP", "Noto Sans JP"]
+def test_priority_starts_with_noto_sans_jp():
+    assert fonts.SANS_SERIF_PRIORITY[:2] == ["Noto Sans JP", "Noto Sans CJK JP"]
     assert fonts.SANS_SERIF_PRIORITY[-1] == "DejaVu Sans"
 
 

@@ -19,7 +19,8 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "tests" / "e2e"))
 from helpers import (  # noqa: E402
     enter_edit_mode, image_generation, load_fixture, plot_src,
-    wait_app_ready, wait_data_ready, wait_plot_changed,
+    set_save_dpi, wait_app_ready, wait_copy_state, wait_data_ready, wait_latin_state,
+    wait_plot_changed,
 )
 from server import start_server  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
@@ -176,6 +177,123 @@ def bench_xlsx(browser, url, reps, xlsx_path):
     return out
 
 
+def _prepared_page(ctx, url, csv_path):
+    """新規ページで起動 → 10,000 行の CSV を読込 → 系列5本を設定 → 描画の収束を待つ。"""
+    page = ctx.new_page()
+    page.set_default_timeout(TIMEOUT)
+    page.goto(url)
+    wait_app_ready(page, TIMEOUT)
+    page.set_input_files("#fileInput", str(csv_path))
+    wait_data_ready(page, TIMEOUT)
+    wait_plot_changed(page, "", TIMEOUT)
+    setup_series(page)
+    page.wait_for_timeout(3000)
+    return page
+
+
+def _warm_context(browser, url, csv_path, **kw):
+    """HTTP キャッシュ・Cache Storage（日本語フォント）を温めたコンテキスト。"""
+    ctx = browser.new_context(**kw)
+    _prepared_page(ctx, url, csv_path).close()
+    return ctx
+
+
+def bench_save_dpi(browser, url, reps, csv_path):
+    """Phase 3: 保存 PNG を 120 dpi（Phase 2 の固定値。「保存」と直接比較できる）と 300 dpi（既定）で測る。
+    測り方は bench_render の「保存」と同じ（クリック → ダウンロード開始）。"""
+    save120, save300 = [], []
+    ctx = _warm_context(browser, url, csv_path)
+    for dpi, out in ((120, save120), (300, save300)):
+        for _ in range(reps):
+            page = _prepared_page(ctx, url, csv_path)
+            if dpi != 300:
+                set_save_dpi(page, dpi)
+            page.wait_for_timeout(1500)
+            t = time.perf_counter()
+            with page.expect_download(timeout=TIMEOUT) as dl:
+                page.click("#savePlotBtn")
+            dl.value.path()
+            out.append((time.perf_counter() - t) * 1000)
+            page.close()
+    ctx.close()
+    return save120, save300
+
+
+def bench_copy(browser, url, reps, csv_path):
+    """Phase 3: #copyPlotBtn のクリック → data-copy-state が done（既定 300 dpi）。"""
+    out = []
+    ctx = _warm_context(browser, url, csv_path, permissions=["clipboard-read", "clipboard-write"])
+    for _ in range(reps):
+        page = _prepared_page(ctx, url, csv_path)
+        page.wait_for_timeout(1500)
+        t = time.perf_counter()
+        page.click("#copyPlotBtn")
+        wait_copy_state(page, "done", TIMEOUT)
+        out.append((time.perf_counter() - t) * 1000)
+        page.close()
+    ctx.close()
+    return out
+
+
+def bench_latin_font(browser, url, reps, csv_path):
+    """Phase 3: 欧文フォント（Arimo）の選択 → 新しい画像の表示。「設定変更」と同じ CHANGE_JS で測る
+    （select の input イベント発行から。250 ms のデバウンスを含む）。
+    (a) 初回: 反復ごとに新規コンテキスト（Cache Storage も HTTP キャッシュも空）で jsDelivr から実取得。
+    (b) 2回目以降: Cache Storage に Arimo がある状態（同一コンテキストで1回選んで保存済み）。"""
+    first, cached, first_fetch = [], [], []
+    for _ in range(reps):
+        ctx = browser.new_context()
+        page = _prepared_page(ctx, url, csv_path)
+        page.wait_for_timeout(1500)
+        # 参考: 選択から data-latin-font-state が ready になるまで（取得 + 登録。デバウンスと並行して進む）
+        page.evaluate("""() => {
+          const root = document.documentElement;
+          window.__latinReady = new Promise((resolve) => {
+            const t0 = performance.now();
+            const obs = new MutationObserver(() => {
+              if (root.dataset.latinFontState === 'ready') { obs.disconnect(); resolve(performance.now() - t0); }
+            });
+            obs.observe(root, {attributes: true});
+          });
+        }""")
+        first.append(page.evaluate(CHANGE_JS, ["#latinFont", "arimo"]))
+        first_fetch.append(page.evaluate("window.__latinReady"))
+        ctx.close()
+    ctx = browser.new_context()
+    page = _prepared_page(ctx, url, csv_path)
+    page.evaluate(CHANGE_JS, ["#latinFont", "arimo"])
+    wait_latin_state(page, "ready", TIMEOUT)
+    page.close()
+    for _ in range(reps):
+        page = _prepared_page(ctx, url, csv_path)
+        page.wait_for_timeout(1500)
+        cached.append(page.evaluate(CHANGE_JS, ["#latinFont", "arimo"]))
+        wait_latin_state(page, "ready", TIMEOUT)
+        page.close()
+    ctx.close()
+    return first, cached, first_fetch
+
+
+def bench_japanese_font(browser, url, reps):
+    """Phase 3（新規）: コールドキャッシュでの日本語フォント取得。ナビゲーション開始 → data-font-state が ready、
+    および Python 準備完了（app ready）からの追加待ち時間。"""
+    total, after_ready = [], []
+    for _ in range(reps):
+        ctx = browser.new_context()
+        page = ctx.new_page()
+        page.set_default_timeout(TIMEOUT)
+        t = time.perf_counter()
+        page.goto(url)
+        wait_app_ready(page, TIMEOUT)
+        t_ready = time.perf_counter()
+        page.wait_for_function("document.documentElement.dataset.fontState === 'ready'", timeout=TIMEOUT)
+        t_font = time.perf_counter()
+        total.append((t_font - t) * 1000)
+        after_ready.append((t_font - t_ready) * 1000)
+        ctx.close()
+    return total, after_ready
+
+
 def fmt(name, xs):
     s = stats(xs)
     return f"{name:<44} median {s['median']:9.0f}  min {s['min']:9.0f}  max {s['max']:9.0f}  (ms, n={s['n']})"
@@ -198,6 +316,10 @@ def main():
         cold, warm = bench_startup(browser, url, a.reps)
         first, change, save, edit_run = bench_render(browser, url, a.reps, csv_path)
         xlsx = bench_xlsx(browser, url, a.reps, REPO / "tests" / "fixtures" / "multi_sheet.xlsx")
+        save120, save300 = bench_save_dpi(browser, url, a.reps, csv_path)
+        latin_first, latin_cached, latin_fetch = bench_latin_font(browser, url, a.reps, csv_path)
+        copy = bench_copy(browser, url, a.reps, csv_path)
+        jp_total, jp_after_ready = bench_japanese_font(browser, url, a.reps)
         browser.close()
     res = {
         "cold_startup_ms": cold, "warm_startup_ms": warm,
@@ -206,6 +328,15 @@ def main():
         "save_png_ms": save,
         "edit_mode_run_ms": edit_run,
         "first_xlsx_plot_ms": xlsx,
+        # Phase 3 で追加。save_png_ms は既定 300 dpi（Phase 2 までは 120 dpi 固定）
+        "save_png_120dpi_ms": save120,
+        "save_png_300dpi_ms": save300,
+        "latin_font_first_select_to_plot_ms": latin_first,
+        "latin_font_cached_select_to_plot_ms": latin_cached,
+        "latin_font_first_select_to_font_ready_ms": latin_fetch,  # 参考値
+        "copy_to_clipboard_300dpi_ms": copy,
+        "japanese_font_cold_navigate_to_font_ready_ms": jp_total,
+        "japanese_font_cold_after_app_ready_ms": jp_after_ready,
     }
     for k, v in res.items():
         print(fmt(k, v))

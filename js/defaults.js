@@ -1,7 +1,7 @@
 // 設定オブジェクトの既定値。純粋な ES module（DOM に触れない）。
 // py/mplgui/settings.py の default_settings() と同一でなければならない（tests/unit/test_defaults_parity.py が比較する）。
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 // UDカラーセット（系列の既定色の候補。この順で未使用の色を割り当てる）
 export const PALETTE = [
@@ -39,7 +39,9 @@ export const DEFAULT_SETTINGS = {
     xColumn: "",
     title: "",
     fontSize: 15,
-    figure: { width: 8, height: 6 },
+    figure: { width: 8, height: 6, unit: "in" },
+    latinFont: "default",
+    palette: "ud",
     legend: { location: "best" },
     grid: { major: false, minor: false },
     margins: { left: null, right: null, bottom: null, top: null },
@@ -50,5 +52,5 @@ export const DEFAULT_SETTINGS = {
     y2: { label: "", scale: "linear", min: null, max: null },
   },
   series: [DEFAULT_SERIES],
-  save: { filename: "", format: "png", transparent: false },
+  save: { filename: "", format: "png", transparent: false, dpi: 300, svgText: "path" },
 };

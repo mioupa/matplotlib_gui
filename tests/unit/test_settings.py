@@ -8,6 +8,7 @@ from mplgui.settings import (
     SCHEMA_VERSION,
     default_settings,
     parse_load_settings,
+    migrate_settings,
     parse_save_settings,
     parse_settings,
 )
@@ -17,7 +18,7 @@ pytestmark = pytest.mark.unit
 
 def test_defaults_are_complete_and_parse():
     d = default_settings()
-    assert d["version"] == SCHEMA_VERSION == 1
+    assert d["version"] == SCHEMA_VERSION == 2
     assert set(d) == {"version", "load", "plot", "axes", "series", "save"}
     assert set(d["axes"]) == {"x", "y", "y2"}
     s = parse_settings(d)
@@ -35,7 +36,7 @@ def test_default_settings_returns_fresh_objects():
 
 
 def test_missing_keys_are_filled_from_defaults():
-    s = parse_settings({"version": 1, "plot": {"title": "  T  "}, "series": [{"y": "__idx__2"}]})
+    s = parse_settings({"version": 2, "plot": {"title": "  T  "}, "series": [{"y": "__idx__2"}]})
     assert s.plot.title == "T"  # 前後の空白は取り除く
     assert s.plot.font_size == 15 and s.plot.legend_location == "best"
     assert s.series[0].y == "__idx__2" and s.series[0].line_width == 2 and s.series[0].id == "s1"
@@ -142,7 +143,7 @@ def test_unknown_version_rejected():
     raw = default_settings()
     del raw["version"]
     parse_settings(raw)  # version 欠落は現行版として扱う
-    for bad in (2, 0, "1", None, True):
+    for bad in (3, 0, "1", None, True, "2"):
         raw = default_settings()
         raw["version"] = bad
         with pytest.raises(UserError) as info:
@@ -202,3 +203,144 @@ def test_parse_does_not_mutate_input():
     before = copy.deepcopy(raw)
     parse_settings(raw)
     assert raw == before
+
+
+# ---------------------------------------------------------------- Phase 3: schema version 2
+
+
+def test_new_defaults():
+    d = default_settings()
+    assert d["plot"]["figure"] == {"width": 8, "height": 6, "unit": "in"}
+    assert d["plot"]["latinFont"] == "default" and d["plot"]["palette"] == "ud"
+    assert d["save"] == {"filename": "", "format": "png", "transparent": False, "dpi": 300, "svgText": "path"}
+    s = parse_settings(d)
+    assert s.plot.figure.unit == "in" and s.plot.latin_font == "default" and s.plot.palette == "ud"
+    assert s.save.dpi == 300 and s.save.svg_text == "path"
+
+
+def test_figure_inches_per_unit():
+    raw = default_settings()
+    for unit, w, h, win, hin in (("in", 8, 6, 8, 6), ("cm", 8.5, 5, 8.5 / 2.54, 5 / 2.54), ("mm", 85, 50, 85 / 25.4, 50 / 25.4)):
+        raw["plot"]["figure"] = {"width": w, "height": h, "unit": unit}
+        fig = parse_settings(raw).plot.figure
+        assert fig.unit == unit and fig.width == w and fig.height == h  # 設定は選んだ単位の値のまま
+        assert fig.width_in == pytest.approx(win) and fig.height_in == pytest.approx(hin)
+
+
+@pytest.mark.parametrize(
+    "unit,ok,bad,limit",
+    [("in", 50, 50.5, "50"), ("cm", 127, 128, "127"), ("mm", 1270, 1271, "1270")],
+)
+def test_figure_limit_depends_on_unit(unit, ok, bad, limit):
+    raw = default_settings()
+    raw["plot"]["figure"] = {"width": ok, "height": ok, "unit": unit}
+    parse_settings(raw)
+    for key, label in (("width", "図幅"), ("height", "図高さ")):
+        raw["plot"]["figure"] = {"width": 5, "height": 5, "unit": unit, key: bad}
+        with pytest.raises(UserError) as info:
+            parse_settings(raw)
+        assert info.value.field == label
+        assert f"「{label}」は{limit}以下の数値で入力してください（単位: {unit}）。" == info.value.message
+    raw["plot"]["figure"] = {"width": 0, "height": 5, "unit": unit}
+    with pytest.raises(UserError) as info:
+        parse_settings(raw)
+    assert "0より大きい" in info.value.message
+
+
+@pytest.mark.parametrize(
+    "mutator,field_name",
+    [
+        (lambda r: r["plot"]["figure"].__setitem__("unit", "ft"), "図のサイズの単位"),
+        (lambda r: r["plot"].__setitem__("latinFont", "comic"), "欧文フォント"),
+        (lambda r: r["plot"].__setitem__("palette", "rainbow"), "カラーパレット"),
+        (lambda r: r["save"].__setitem__("svgText", "outline"), "SVG の文字"),
+        (lambda r: r["save"].__setitem__("dpi", 49), "保存 DPI"),
+        (lambda r: r["save"].__setitem__("dpi", 1201), "保存 DPI"),
+        (lambda r: r["save"].__setitem__("dpi", 300.5), "保存 DPI"),
+        (lambda r: r["save"].__setitem__("dpi", "abc"), "保存 DPI"),
+        (lambda r: r["save"].__setitem__("dpi", True), "保存 DPI"),
+    ],
+)
+def test_new_fields_reject_invalid_values(mutator, field_name):
+    raw = default_settings()
+    mutator(raw)
+    with pytest.raises(UserError) as info:
+        parse_settings(raw)
+    assert info.value.field == field_name and field_name in info.value.message
+
+
+def test_new_choices_accept_valid_values():
+    raw = default_settings()
+    for latin in ("default", "arimo", "tinos"):
+        for palette in ("ud", "tab10", "gray"):
+            raw["plot"].update(latinFont=latin, palette=palette)
+            p = parse_settings(raw).plot
+            assert p.latin_font == latin and p.palette == palette
+    for mode in ("path", "text"):
+        raw["save"]["svgText"] = mode
+        assert parse_settings(raw).save.svg_text == mode
+
+
+def test_dpi_accepts_int_integral_float_string_and_blank():
+    raw = default_settings()
+    for given, expected in ((50, 50), (1200, 1200), (150, 150), (300.0, 300), ("600", 600), (" 72 ", 72), ("", 300), (None, 300)):
+        raw["save"]["dpi"] = given
+        assert parse_settings(raw).save.dpi == expected
+        assert parse_save_settings(raw).dpi == expected
+    raw["save"]["dpi"] = 150.0
+    assert isinstance(parse_save_settings(raw).dpi, int)
+    assert parse_save_settings(raw).dpi == 150
+
+
+def test_dpi_message():
+    with pytest.raises(UserError) as info:
+        parse_save_settings({"save": {"dpi": 10}})
+    assert info.value.message == "「保存 DPI」は50〜1200の整数で入力してください。"
+
+
+def _v1():
+    raw = default_settings()
+    raw["version"] = 1
+    raw["plot"]["figure"] = {"width": 7, "height": 5}
+    for key in ("latinFont", "palette"):
+        del raw["plot"][key]
+    raw["save"] = {"filename": "x", "format": "jpg", "transparent": False}
+    return raw
+
+
+def test_migrate_v1_to_v2():
+    raw = _v1()
+    before = copy.deepcopy(raw)
+    out = migrate_settings(raw)
+    assert raw == before  # 引数は変更しない
+    assert out["version"] == 2 and out["save"]["dpi"] == 120  # v1 は 120 dpi で保存していた
+    assert out["save"]["filename"] == "x"
+    s = parse_settings(raw)
+    assert s.version == 2 and s.save.dpi == 120 and s.save.format == "jpg"
+    assert s.plot.figure.unit == "in" and s.plot.figure.width == 7
+    assert s.plot.latin_font == "default" and s.plot.palette == "ud" and s.save.svg_text == "path"
+
+
+def test_migrate_v1_keeps_an_existing_dpi_and_handles_missing_save():
+    raw = _v1()
+    raw["save"]["dpi"] = 200
+    assert migrate_settings(raw)["save"]["dpi"] == 200
+    raw = _v1()
+    del raw["save"]
+    assert migrate_settings(raw)["save"] == {"dpi": 120}
+
+
+def test_migrate_v1_through_save_and_load_parsers():
+    assert parse_save_settings(_v1()).dpi == 120
+    assert parse_load_settings(_v1()).has_header is True
+
+
+def test_migrate_v2_passthrough_and_unknown_versions():
+    raw = default_settings()
+    out = migrate_settings(raw)
+    assert out == raw and out is not raw
+    assert migrate_settings({}) == {}  # バージョンの欠落は現行版として扱う（何も足さない）
+    for bad in (3, 0, "2", True, None):
+        with pytest.raises(UserError) as info:
+            migrate_settings({"version": bad})
+        assert "バージョン" in info.value.message

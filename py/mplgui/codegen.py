@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .dataprep import PlotPlan, SeriesPlan
-from .fonts import SANS_SERIF_PRIORITY
-from .formats import FORMATS, SAVE_DPI, build_filename, savefig_kwargs
+from .fonts import LATIN_FONTS, SANS_SERIF_PRIORITY
+from .formats import FORMATS, build_filename, savefig_kwargs, savefig_rc
 from .loader import SourceInfo
 from .settings import SeriesSettings, Settings
 
@@ -153,22 +153,41 @@ def _label_size_expr(font_size: float) -> str:
 # ---------------------------------------------------------------- sections
 
 
-def _emit_header(b: _Builder, source: SourceInfo) -> None:
+def _emit_header(b: _Builder, source: SourceInfo, latin_font: str = "default") -> None:
     name = comment_text(source.filename)
+    latin = LATIN_FONTS.get(latin_font)
     b.add(
         "# matplotlib GUI が生成したスクリプト",
         f"# 使い方: データファイル「{name}」と同じフォルダに置いて、python {SCRIPT_NAME} で実行します。",
         "# 必要なライブラリ: pandas, matplotlib, numpy",
         "import matplotlib.pyplot as plt",
+    )
+    if latin is not None:
+        b.add("from matplotlib import font_manager")
+    b.add(
         "import numpy as np",
         "import pandas as pd",
         "",
         "# 日本語フォント: 一覧の先頭から、見つかったものを使う。",
         "# どれも無い環境では DejaVu Sans になる（日本語は豆腐になるが、実行はできる）",
-        'plt.rcParams["font.family"] = "sans-serif"',
+    )
+    if latin is None:
+        b.add('plt.rcParams["font.family"] = "sans-serif"')
+    b.add(
         f'plt.rcParams["font.sans-serif"] = {_font_list_literal()}',
         'plt.rcParams["axes.unicode_minus"] = False',
     )
+    if latin is not None:
+        names = "[" + ", ".join(literal(n) for n in latin.candidates) + "]"
+        b.add(
+            "",
+            f"# 欧文フォント: {comment_text(latin.display)}。無ければ一覧の次のフォントを使い、どれも無ければ日本語フォントで書く",
+            "installed = {font.name for font in font_manager.fontManager.ttflist}",
+            f"latin = [name for name in {names} if name in installed][:1]",
+            'plt.rcParams["font.family"] = latin + ["sans-serif"]  # 欧文は latin のフォント、日本語は font.sans-serif のフォントで書く',
+        )
+        if latin.mathtext_fontset is not None:
+            b.add(f'plt.rcParams["mathtext.fontset"] = {literal(latin.mathtext_fontset)}  # 数式（$...$）も Times 系の字形にする（STIX は matplotlib に同梱）')
 
 
 def _font_list_literal() -> str:
@@ -211,7 +230,16 @@ def _emit_skip_rows(b: _Builder, plan: PlotPlan) -> None:
 def _emit_figure(b: _Builder, settings: Settings) -> None:
     b.section("3. 図と軸")
     fig = settings.plot.figure
-    b.add(f"fig, ax = plt.subplots(figsize=({literal(fig.width)}, {literal(fig.height)}), dpi=100)")
+    w, h = literal(fig.width), literal(fig.height)
+    if fig.unit == "in":
+        b.add(f"fig, ax = plt.subplots(figsize=({w}, {h}), dpi=100)  # 幅 {comment_text(w)} × 高さ {comment_text(h)} インチ")
+    else:
+        # 割り算で直す（1 / 2.54 を掛けると、20.32 cm が 7.999… inch になり、画像が 1 px 欠ける）
+        const, per_inch = ("CM_PER_INCH", "2.54") if fig.unit == "cm" else ("MM_PER_INCH", "25.4")
+        b.add(
+            f"{const} = {per_inch}  # 1 インチ = {per_inch} {fig.unit}（figsize はインチで指定するので、{fig.unit} の値をこれで割る）",
+            f"fig, ax = plt.subplots(figsize=({w} / {const}, {h} / {const}), dpi=100)  # 幅 {comment_text(w)} {fig.unit} × 高さ {comment_text(h)} {fig.unit}",
+        )
 
 
 # ---- series emitters (registry) ----
@@ -465,14 +493,31 @@ def _emit_margins(b: _Builder, settings: Settings) -> None:
             b.add(f"fig.subplots_adjust({args})")
 
 
+_RC_COMMENTS = {
+    ("pdf", "pdf.fonttype"): "PDF に文字をフォントとして埋め込む（Illustrator などで文字を編集できる）",
+    ("svg", "svg.fonttype", "path"): "SVG の文字を図形（パス）にする（どの環境でも同じ見た目）。\"none\" にすると文字のまま残る",
+    ("svg", "svg.fonttype", "none"): "SVG の文字をテキストのまま残す（編集できる。開く環境に同じフォントが無いと見た目が変わる）",
+}
+
+_PDF_CFF_NOTE = (
+    "# ※ 手元の日本語フォントが OpenType（CFF）形式（macOS のヒラギノなど）だと、この PDF の文字は正しく表示されないことがある。",
+    "#   そのときは Noto Sans JP（TrueType 版）を入れるか、42 を 3 にする（文字は編集できなくなる）",
+)
+
+
 def _emit_output(b: _Builder, settings: Settings) -> None:
     start = b.section("8. 保存と表示")
     save = settings.save
     _, _, ext = FORMATS[save.format]
     filename = build_filename(save.filename, ext)
-    kwargs = savefig_kwargs(save.format, save.transparent)
+    for key, value in savefig_rc(save.format, save.svg_text).items():
+        comment = _RC_COMMENTS.get((save.format, key)) or _RC_COMMENTS[(save.format, key, value)]
+        if save.format == "pdf":
+            b.add(*_PDF_CFF_NOTE)
+        b.add(f"plt.rcParams[{literal(key)}] = {literal(value)}  # {comment}")
+    kwargs = savefig_kwargs(save.format, save.transparent, save.dpi)
     args = "".join(f", {k}={literal(v)}" for k, v in kwargs.items())
-    note = f"GUI の「保存」と同じ形式（{ext}）" + ("と解像度" if "dpi" in kwargs else "")
+    note = f"GUI の「保存」と同じ形式（{ext}）" + (f"と解像度（{save.dpi} dpi）" if "dpi" in kwargs else "")
     b.add(f"fig.savefig({literal(filename)}{args})  # {note}", "plt.show()")
     b.output_lines = (start, len(b.lines))
 
@@ -483,7 +528,7 @@ def _emit_output(b: _Builder, settings: Settings) -> None:
 def generate_script(settings: Settings, source: SourceInfo, plan: PlotPlan) -> GeneratedScript:
     """設定・読み込んだファイルの情報・描画計画から、完全なスクリプトを作る。"""
     b = _Builder()
-    _emit_header(b, source)
+    _emit_header(b, source, settings.plot.latin_font)
     b.add(f"FONT_SIZE = {literal(settings.plot.font_size)}  # 文字の大きさ（pt）")
     _emit_load(b, source)
     _emit_skip_rows(b, plan)

@@ -2,6 +2,7 @@ import ast
 import contextlib
 import io
 import shutil
+import struct
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +16,7 @@ from mplgui.codegen import comment_text, generate_script, literal
 from mplgui.dataprep import plan_plot
 from mplgui.fonts import SANS_SERIF_PRIORITY
 from mplgui.loader import SourceInfo, load_file
-from mplgui.runner import ScriptError, figure_summary, run_script
+from mplgui.runner import ScriptError, figure_summary, figure_to_bytes, run_script
 from mplgui.settings import default_settings, parse_settings
 
 pytestmark = pytest.mark.unit
@@ -113,6 +114,14 @@ MATRIX = {
     "bar multi": (lambda s: s["plot"].update(type="bar", xColumn="__idx__3"), [S(1), S(2, color="#03AF7A")]),
     "bar multi secondary": (lambda s: s["plot"].update(type="bar", xColumn="__idx__3"), [S(1), S(2, secondaryAxis=True)]),
     "bar multi x index three": (lambda s: s["plot"].update(type="bar"), [S(1), S(2), S(4)]),
+    "figure size cm": (lambda s: s["plot"]["figure"].update(width=8.5, height=6, unit="cm"), [S(1, x="__idx__0")]),
+    "figure size mm secondary": (lambda s: s["plot"]["figure"].update(width=85, height=60, unit="mm"), [S(1, x="__idx__0"), S(2, x="__idx__0", secondaryAxis=True)]),
+    "latin arimo": (lambda s: s["plot"].update(latinFont="arimo", title="Title"), [S(1, x="__idx__0")]),
+    "latin tinos bar": (lambda s: s["plot"].update(latinFont="tinos", type="bar"), [S(2)]),
+    "save svg path": (lambda s: s["save"].update(format="svg"), [S(1, x="__idx__0")]),
+    "save svg text": (lambda s: s["save"].update(format="svg", svgText="text"), [S(1, x="__idx__0")]),
+    "save pdf cm arimo": (lambda s: (s["save"].update(format="pdf"), s["plot"].update(latinFont="arimo"), s["plot"]["figure"].update(unit="cm", width=8.5, height=6)), [S(1, x="__idx__0")]),
+    "save jpg dpi 72": (lambda s: s["save"].update(format="jpg", dpi=72), [S(1, x="__idx__0")]),
     "string x line": (lambda s: None, [S(1, x="__idx__3")]),
 }
 
@@ -124,7 +133,7 @@ def test_script_compiles_runs_and_agrees(tmp_path, data, name):
     compile(b.script.text, "plot.py", "exec")
     full, auto = b.summaries()
     assert full == auto
-    assert (tmp_path / "plot.png").is_file()  # 全体を実行すると savefig まで進む
+    assert list(tmp_path.glob("plot.*"))  # 全体を実行すると savefig まで進む
     assert b.script.auto_render_text().count("\n") == b.script.text.count("\n")  # 行番号が同じ
 
 
@@ -369,18 +378,18 @@ def test_save_section_uses_save_settings(tmp_path, data):
         s["save"].update(filename="結果.csv", format="jpg")
 
     b = Built(tmp_path, data, m, [S(1)])
-    assert 'fig.savefig("結果.jpg", dpi=120, facecolor="white")' in b.script.text
+    assert 'fig.savefig("結果.jpg", dpi=300, facecolor="white")' in b.script.text
     b = Built(tmp_path, data, lambda s: s["save"].update(format="svg", transparent=True), [S(1)])
     assert 'fig.savefig("plot.svg", transparent=True)' in b.script.text
     b = Built(tmp_path, data, None, [S(1)])
-    assert 'fig.savefig("plot.png", dpi=120)' in b.script.text and b.script.text.rstrip().endswith("plt.show()")
+    assert 'fig.savefig("plot.png", dpi=300)' in b.script.text and b.script.text.rstrip().endswith("plt.show()")
 
 
 def test_font_list_comes_from_fonts_module(tmp_path, data):
     b = Built(tmp_path, data, None, [S(1)])
     expected = "[" + ", ".join(literal(n) for n in SANS_SERIF_PRIORITY) + "]"
     assert f'plt.rcParams["font.sans-serif"] = {expected}' in b.script.text
-    assert SANS_SERIF_PRIORITY[0] == "Noto Sans CJK JP"
+    assert SANS_SERIF_PRIORITY[0] == "Noto Sans JP"
 
 
 def test_script_only_imports_pandas_matplotlib_numpy(tmp_path, data):
@@ -580,3 +589,160 @@ def test_series_blocks_are_separated_by_a_blank_line(tmp_path, data):
 def test_comments_use_the_same_word_for_tick_marks(tmp_path, data):
     b = Built(tmp_path, data, None, [S(1, x="__idx__3")])
     assert "set_xscale" in b.script.text and "目盛り" not in b.script.text
+
+
+# ---------------------------------------------------------------- Phase 3: figure size, latin fonts, save rc
+
+
+@pytest.mark.parametrize(
+    "unit,w,h,exp_w,exp_h",
+    [("in", 8, 6, 8, 6), ("cm", 8.5, 6, 8.5 / 2.54, 6 / 2.54), ("mm", 85, 60, 85 / 25.4, 60 / 25.4)],
+)
+def test_figure_size_per_unit(tmp_path, data, unit, w, h, exp_w, exp_h):
+    b = Built(tmp_path, data, lambda s: s["plot"]["figure"].update(width=w, height=h, unit=unit), [S(1)])
+    with b.full() as run:
+        assert tuple(run.fig.get_size_inches()) == pytest.approx((exp_w, exp_h))
+        assert run.fig.dpi == 100
+    with b.auto() as run:
+        assert tuple(run.fig.get_size_inches()) == pytest.approx((exp_w, exp_h))
+    # 設定の inch 換算と生成コードが一致する
+    assert (b.settings.plot.figure.width_in, b.settings.plot.figure.height_in) == pytest.approx((exp_w, exp_h))
+
+
+@pytest.mark.parametrize("unit,w,h", [("in", 8, 6), ("cm", 20.32, 15.24), ("mm", 203.2, 152.4)])
+def test_round_metric_sizes_keep_exact_pixels(tmp_path, data, unit, w, h):
+    """切りのよい cm / mm（= 8 × 6 inch）でも、保存した画像の画素数が欠けない（1 / 2.54 を掛けると 2399 px になる）。"""
+    b = Built(tmp_path, data, lambda s: s["plot"]["figure"].update(width=w, height=h, unit=unit), [S(1)])
+    with b.full() as run:
+        png, _, _ = figure_to_bytes(run.fig, "png", dpi=300)
+    assert struct.unpack(">II", png[16:24]) == (2400, 1800)
+
+
+def test_figure_section_text_per_unit(tmp_path, data):
+    def section3(mut):
+        text = Built(tmp_path, data, mut, [S(1)]).script.text
+        return text.split("# ==== 3. 図と軸 ====\n")[1].split("\n\n")[0]
+
+    assert section3(None) == "fig, ax = plt.subplots(figsize=(8.0, 6.0), dpi=100)  # 幅 8.0 × 高さ 6.0 インチ"
+    cm = section3(lambda s: s["plot"]["figure"].update(width=8.5, height=6, unit="cm"))
+    assert cm == (
+        "CM_PER_INCH = 2.54  # 1 インチ = 2.54 cm（figsize はインチで指定するので、cm の値をこれで割る）\n"
+        "fig, ax = plt.subplots(figsize=(8.5 / CM_PER_INCH, 6.0 / CM_PER_INCH), dpi=100)  # 幅 8.5 cm × 高さ 6.0 cm"
+    )
+    mm = section3(lambda s: s["plot"]["figure"].update(width=85, height=60, unit="mm"))
+    assert mm.startswith("MM_PER_INCH = 25.4  # 1 インチ = 25.4 mm") and "figsize=(85.0 / MM_PER_INCH, 60.0 / MM_PER_INCH)" in mm
+
+
+@pytest.mark.parametrize(
+    "fmt,dpi,expected",
+    [
+        ("png", 300, 'fig.savefig("plot.png", dpi=300)'),
+        ("png", 150, 'fig.savefig("plot.png", dpi=150)'),
+        ("jpg", 72, 'fig.savefig("plot.jpg", dpi=72, facecolor="white")'),
+        ("svg", 300, 'fig.savefig("plot.svg")'),
+        ("pdf", 300, 'fig.savefig("plot.pdf")'),
+    ],
+)
+def test_savefig_line_dpi_only_for_raster(tmp_path, data, fmt, dpi, expected):
+    b = Built(tmp_path, data, lambda s: s["save"].update(format=fmt, dpi=dpi), [S(1)])
+    assert expected in b.script.text
+    if fmt in ("png", "jpg"):
+        assert f"解像度（{dpi} dpi）" in b.script.text
+    else:
+        assert "解像度" not in b.script.text
+
+
+def test_savefig_rc_lines_only_for_pdf_and_svg(tmp_path, data):
+    def text(fmt, **kw):
+        return Built(tmp_path, data, lambda s: s["save"].update(format=fmt, **kw), [S(1)]).script.text
+
+    assert "fonttype" not in text("png") and "fonttype" not in text("jpg")
+    pdf = text("pdf")
+    assert 'plt.rcParams["pdf.fonttype"] = 42  # PDF に文字をフォントとして埋め込む' in pdf
+    assert "OpenType（CFF）" in pdf and pdf.index("fonttype") < pdf.index("fig.savefig")
+    note = [ln for ln in pdf.splitlines() if "OpenType（CFF）" in ln or "42 を 3 にする" in ln]
+    assert len(note) == 2 and all(ln.startswith("#") and len(ln) < 100 for ln in note)  # 注記は2行に分ける
+    assert 'plt.rcParams["svg.fonttype"] = "path"  # SVG の文字を図形（パス）にする' in text("svg")
+    assert 'plt.rcParams["svg.fonttype"] = "path"' in text("svg", svgText="path")
+    assert 'plt.rcParams["svg.fonttype"] = "none"  # SVG の文字をテキストのまま残す' in text("svg", svgText="text")
+
+
+def test_rc_lines_come_from_formats_module(tmp_path, data):
+    from mplgui.formats import savefig_rc
+
+    assert savefig_rc("pdf") == {"pdf.fonttype": 42}
+    assert savefig_rc("svg", "path") == {"svg.fonttype": "path"} and savefig_rc("svg", "text") == {"svg.fonttype": "none"}
+    assert savefig_rc("png") == {} and savefig_rc("jpg") == {}
+
+
+def test_script_with_pdf_save_runs_and_embeds_truetype(tmp_path, data):
+    b = Built(tmp_path, data, lambda s: s["save"].update(format="pdf"), [S(1)])
+    with b.full():
+        pass
+    pdf = (tmp_path / "plot.pdf").read_bytes()
+    assert b"/FontFile2" in pdf and b"/Type3" not in pdf
+
+
+def test_latin_default_header_is_unchanged(tmp_path, data):
+    text = Built(tmp_path, data, None, [S(1)]).script.text
+    assert 'plt.rcParams["font.family"] = "sans-serif"' in text
+    assert "font_manager" not in text and "mathtext" not in text
+
+
+def test_latin_font_header(tmp_path, data):
+    arimo = Built(tmp_path, data, lambda s: s["plot"].update(latinFont="arimo"), [S(1)]).script.text
+    assert "from matplotlib import font_manager" in arimo
+    assert "# 欧文フォント: Arimo（Arial 互換）。無ければ一覧の次のフォントを使い、どれも無ければ日本語フォントで書く" in arimo
+    assert 'latin = [name for name in ["Arimo", "Arial", "Liberation Sans"] if name in installed][:1]' in arimo
+    assert 'plt.rcParams["font.family"] = latin + ["sans-serif"]' in arimo
+    assert 'plt.rcParams["font.family"] = "sans-serif"' not in arimo and "mathtext" not in arimo
+    assert 'plt.rcParams["axes.unicode_minus"] = False' in arimo
+    tinos = Built(tmp_path, data, lambda s: s["plot"].update(latinFont="tinos"), [S(1)]).script.text
+    assert '["Tinos", "Times New Roman", "Liberation Serif"]' in tinos
+    assert 'plt.rcParams["mathtext.fontset"] = "stix"' in tinos
+
+
+def _hide_fonts(monkeypatch, names):
+    from matplotlib import font_manager
+
+    monkeypatch.setattr(font_manager.fontManager, "ttflist", [f for f in font_manager.fontManager.ttflist if f.name not in names])
+    font_manager.fontManager._findfont_cached.cache_clear()
+
+
+@pytest.mark.parametrize("kind", ["arimo", "tinos"])
+def test_latin_font_missing_logs_no_findfont_noise(tmp_path, data, monkeypatch, capsys, caplog, kind):
+    import logging
+
+    from mplgui.fonts import LATIN_FONTS
+
+    _hide_fonts(monkeypatch, set(LATIN_FONTS[kind].candidates))
+    b = Built(tmp_path, data, lambda s: s["plot"].update(latinFont=kind, title="タイトル"), [S(1, x="__idx__0")])
+    with caplog.at_level(logging.WARNING, logger="matplotlib"):
+        with b.full() as run:
+            run.fig.canvas.draw()
+            assert plt_rc_family(run) == ["sans-serif"]
+    out = capsys.readouterr()
+    assert "findfont" not in out.err + out.out + caplog.text and run.output.count("findfont") == 0
+
+
+def plt_rc_family(run):
+    import matplotlib
+
+    return list(matplotlib.rcParams["font.family"])
+
+
+def test_latin_font_installed_is_used(tmp_path, data, monkeypatch):
+    from matplotlib import font_manager
+
+    dejavu = font_manager.findfont("DejaVu Sans")
+    entry = font_manager.FontEntry(fname=dejavu, name="Arimo", style="normal", variant="normal", weight=400, stretch="normal", size="scalable")
+    monkeypatch.setattr(font_manager.fontManager, "ttflist", [*font_manager.fontManager.ttflist, entry])
+    font_manager.fontManager._findfont_cached.cache_clear()
+    try:
+        b = Built(tmp_path, data, lambda s: s["plot"].update(latinFont="arimo"), [S(1, x="__idx__0")])
+        with b.full() as run:
+            assert plt_rc_family(run) == ["Arimo", "sans-serif"]
+            run.fig.canvas.draw()
+    finally:
+        monkeypatch.undo()
+        font_manager.fontManager._findfont_cached.cache_clear()

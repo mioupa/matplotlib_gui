@@ -19,8 +19,8 @@ from helpers import (
 
 pytestmark = pytest.mark.e2e
 
-FONT_GLOB = "**/NotoSansCJKjp-Regular.otf"
-# 16MB の実フォントの代わりに、matplotlib 同梱の小さな TTF を CDN の代役として配信する（登録・Cache Storage の経路は本物と同じ）
+FONT_GLOB = "**/NotoSansJP_400Regular.ttf"
+# 5.7MB の実フォントの代わりに、matplotlib 同梱の小さな TTF を CDN の代役として配信する（登録・Cache Storage の経路は本物と同じ）
 STAND_IN_FONT = Path(matplotlib.get_data_path()) / "fonts" / "ttf" / "DejaVuSans.ttf"
 
 
@@ -59,7 +59,7 @@ def test_font_failure_warns_once_and_plot_still_renders(page, app_url, fixtures_
 
 def test_font_is_served_from_cache_storage_on_reload(page, app_url, console_log):
     requests = []
-    page.on("request", lambda r: requests.append(r.url) if r.url.endswith("NotoSansCJKjp-Regular.otf") else None)
+    page.on("request", lambda r: requests.append(r.url) if r.url.endswith("NotoSansJP_400Regular.ttf") else None)
     page.route(
         FONT_GLOB,
         lambda route: route.fulfill(status=200, content_type="font/ttf", body=STAND_IN_FONT.read_bytes()),

@@ -42,225 +42,278 @@
       <aside class="panel">
         <h1>Matplotlib GUI</h1>
 
-        <div class="section-header">
-          <div class="section-title">データ読み込み</div>
-        </div>
-
-        <div class="group">
-          <label for="fileInput">入力ファイル (.xlsx/.csv/.txt)</label>
-          <div class="file-picker">
-            <span class="file-picker-btn" aria-hidden="true">ファイルを選択</span>
-            <span id="fileNameLabel" class="file-picker-name" data-selected="false">選択されていません</span>
-            <input id="fileInput" type="file" accept=".xlsx,.csv,.txt" aria-describedby="fileNameLabel" />
+        <details class="panel-section" id="sectionLoad" open>
+          <summary class="section-header"><span class="section-title">データ読み込み</span></summary>
+          <div class="section-body">
+          <div class="group">
+            <label for="fileInput">入力ファイル (.xlsx/.csv/.txt)</label>
+            <div class="file-picker">
+              <span class="file-picker-btn" aria-hidden="true">ファイルを選択</span>
+              <span id="fileNameLabel" class="file-picker-name" data-selected="false">選択されていません</span>
+              <input id="fileInput" type="file" accept=".xlsx,.csv,.txt" aria-describedby="fileNameLabel" />
+            </div>
+            <div id="encodingLabel" class="file-info"></div>
           </div>
-          <div id="encodingLabel" class="file-info"></div>
-        </div>
 
-        <div class="group">
-          <label for="delimiter">区切り文字（任意）</label>
-          <input id="delimiter" placeholder=", / \t / ;" />
-        </div>
+          <div class="group">
+            <label for="delimiter">区切り文字（任意）</label>
+            <input id="delimiter" placeholder=", / \t / ;" />
+          </div>
 
-        <div class="group inline">
-          <input id="hasHeader" type="checkbox" checked />
-          <label for="hasHeader">先頭行をヘッダとして扱う</label>
-        </div>
+          <div class="group inline">
+            <input id="hasHeader" type="checkbox" checked />
+            <label for="hasHeader">先頭行をヘッダとして扱う</label>
+          </div>
+          </div>
+        </details>
 
-        <div class="section-header">
-          <div class="section-title">描画設定</div>
-        </div>
-
-        <div class="group">
-          <label for="plotType">プロット種別</label>
-          <select id="plotType">
-            <option value="line">line</option>
-            <option value="scatter">scatter</option>
-            <option value="bar">bar</option>
-          </select>
-        </div>
-
-        <div class="group">
-          <label for="skipRows">描画設定: 先頭からスキップする行数</label>
-          <input id="skipRows" type="number" min="0" step="1" value="0" />
-        </div>
-
-        <div class="row group">
-          <div id="globalXGroup">
-            <label for="xColumn">X列</label>
-            <select id="xColumn">
-              <option value="">(index)</option>
+        <details class="panel-section" id="sectionSeries" open>
+          <summary class="section-header"><span class="section-title">系列</span></summary>
+          <div class="section-body">
+          <div class="group">
+            <label for="plotType">プロット種別</label>
+            <select id="plotType">
+              <option value="line">line</option>
+              <option value="scatter">scatter</option>
+              <option value="bar">bar</option>
             </select>
           </div>
-        </div>
 
-        <div class="group">
-          <div class="series-toolbar">
-            <span id="seriesLabel" class="field-label">描画系列</span>
-            <button id="addSeriesBtn" class="small-btn secondary" type="button">+ 系列を追加</button>
-          </div>
-          <div id="seriesList" class="series-list" role="group" aria-labelledby="seriesLabel"></div>
-          <div class="help-text">系列ごとにX/Y列・色・線幅・線種・点サイズ・第2軸使用を設定できます。</div>
-        </div>
-
-        <div class="group">
-          <label for="title">タイトル</label>
-          <input id="title" placeholder="タイトルなし" />
-        </div>
-
-        <div class="row group">
-          <div>
-            <label for="xLabel">X軸ラベル</label>
-            <input id="xLabel" placeholder="自動" />
-          </div>
-          <div>
-            <label for="yLabel">Y軸ラベル</label>
-            <input id="yLabel" placeholder="自動" />
-          </div>
-        </div>
-
-        <div id="y2LabelGroup" class="group" style="display: none">
-          <label for="y2Label">第2Y軸ラベル</label>
-          <input id="y2Label" placeholder="第2軸を使う系列があるときに有効" />
-        </div>
-
-        <div class="group">
-          <label for="xScale">X軸スケール</label>
-          <select id="xScale">
-            <option value="linear">linear</option>
-            <option value="log">log</option>
-          </select>
-        </div>
-
-        <div class="row group">
-          <div>
-            <label for="xMin">X軸最小値</label>
-            <input id="xMin" type="number" step="any" placeholder="自動" />
-          </div>
-          <div>
-            <label for="xMax">X軸最大値</label>
-            <input id="xMax" type="number" step="any" placeholder="自動" />
-          </div>
-        </div>
-
-        <div class="group">
-          <label for="yScale">Y軸スケール</label>
-          <select id="yScale">
-            <option value="linear">linear</option>
-            <option value="log">log</option>
-          </select>
-        </div>
-
-        <div class="row group">
-          <div>
-            <label for="yMin">Y軸最小値</label>
-            <input id="yMin" type="number" step="any" placeholder="自動" />
-          </div>
-          <div>
-            <label for="yMax">Y軸最大値</label>
-            <input id="yMax" type="number" step="any" placeholder="自動" />
-          </div>
-        </div>
-
-        <div id="y2AxisSettingsGroup" class="group" style="display: none">
           <div class="group">
-            <label for="y2Scale">第2Y軸スケール</label>
-            <select id="y2Scale">
+            <label for="skipRows">描画から除外する先頭行数</label>
+            <input id="skipRows" type="number" min="0" step="1" value="0" />
+          </div>
+
+          <div class="row group">
+            <div id="globalXGroup">
+              <label for="xColumn">X列</label>
+              <select id="xColumn">
+                <option value="">(index)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="series-toolbar">
+              <span id="seriesLabel" class="field-label">描画系列</span>
+              <button id="addSeriesBtn" class="small-btn secondary" type="button">+ 系列を追加</button>
+            </div>
+            <div id="seriesList" class="series-list" role="group" aria-labelledby="seriesLabel"></div>
+            <div class="help-text">系列ごとにX/Y列・色・線幅・線種・点サイズ・第2軸使用を設定できます。</div>
+          </div>
+          </div>
+        </details>
+
+        <details class="panel-section" id="sectionAxes" open>
+          <summary class="section-header"><span class="section-title">軸・目盛</span></summary>
+          <div class="section-body">
+          <div class="group">
+            <label for="title">タイトル</label>
+            <input id="title" placeholder="タイトルなし" />
+          </div>
+
+          <div class="row group">
+            <div>
+              <label for="xLabel">X軸ラベル</label>
+              <input id="xLabel" placeholder="自動" />
+            </div>
+            <div>
+              <label for="yLabel">Y軸ラベル</label>
+              <input id="yLabel" placeholder="自動" />
+            </div>
+          </div>
+
+          <div id="y2LabelGroup" class="group" style="display: none">
+            <label for="y2Label">第2Y軸ラベル</label>
+            <input id="y2Label" placeholder="第2軸を使う系列があるときに有効" />
+          </div>
+
+          <div id="mathtextHelp" class="help-text group">
+            タイトル・軸ラベル・凡例名では、$ で囲んだ部分が数式になります。例: m$^2$（上付き）、H$_2$O（下付き）、$\alpha$（ギリシャ文字）。$ を文字として書くときは \$ とします。
+            <a href="https://matplotlib.org/3.10.8/users/explain/text/mathtext.html" target="_blank" rel="noopener noreferrer">書き方の詳細（matplotlib）</a>
+          </div>
+
+          <div class="group">
+            <label for="xScale">X軸スケール</label>
+            <select id="xScale">
               <option value="linear">linear</option>
               <option value="log">log</option>
             </select>
           </div>
+
           <div class="row group">
             <div>
-              <label for="y2Min">最小値</label>
-              <input id="y2Min" type="number" step="any" placeholder="自動" />
+              <label for="xMin">X軸最小値</label>
+              <input id="xMin" type="number" step="any" placeholder="自動" />
             </div>
             <div>
-              <label for="y2Max">最大値</label>
-              <input id="y2Max" type="number" step="any" placeholder="自動" />
+              <label for="xMax">X軸最大値</label>
+              <input id="xMax" type="number" step="any" placeholder="自動" />
             </div>
           </div>
-        </div>
 
-        <div class="group">
-          <label for="fontSize">フォントサイズ</label>
-          <input id="fontSize" type="number" step="1" value="15" />
-        </div>
+          <div class="group">
+            <label for="yScale">Y軸スケール</label>
+            <select id="yScale">
+              <option value="linear">linear</option>
+              <option value="log">log</option>
+            </select>
+          </div>
 
-        <div class="row group">
-          <div class="group inline">
-            <input id="showMajorGrid" type="checkbox" />
-            <label for="showMajorGrid">主目盛線を表示</label>
+          <div class="row group">
+            <div>
+              <label for="yMin">Y軸最小値</label>
+              <input id="yMin" type="number" step="any" placeholder="自動" />
+            </div>
+            <div>
+              <label for="yMax">Y軸最大値</label>
+              <input id="yMax" type="number" step="any" placeholder="自動" />
+            </div>
           </div>
-          <div class="group inline">
-            <input id="showMinorGrid" type="checkbox" />
-            <label for="showMinorGrid">副目盛線を表示</label>
-          </div>
-        </div>
 
-        <div class="group">
-          <label for="legendLocation">凡例位置</label>
-          <select id="legendLocation">
-            <option value="best">自動（最適）</option>
-            <option value="upper right">右上</option>
-            <option value="upper left">左上</option>
-            <option value="lower right">右下</option>
-            <option value="lower left">左下</option>
-            <option value="upper center">上中央</option>
-            <option value="lower center">下中央</option>
-            <option value="center right">右中央</option>
-            <option value="center left">左中央</option>
-            <option value="center">中央</option>
-            <option value="none">表示しない</option>
-          </select>
-        </div>
+          <div id="y2AxisSettingsGroup" class="group" style="display: none">
+            <div class="group">
+              <label for="y2Scale">第2Y軸スケール</label>
+              <select id="y2Scale">
+                <option value="linear">linear</option>
+                <option value="log">log</option>
+              </select>
+            </div>
+            <div class="row group">
+              <div>
+                <label for="y2Min">最小値</label>
+                <input id="y2Min" type="number" step="any" placeholder="自動" />
+              </div>
+              <div>
+                <label for="y2Max">最大値</label>
+                <input id="y2Max" type="number" step="any" placeholder="自動" />
+              </div>
+            </div>
+          </div>
 
-        <div class="row group">
-          <div>
-            <label for="figWidth">図幅(inch)</label>
-            <input id="figWidth" type="number" step="0.1" value="8" />
+          <div class="row group">
+            <div class="group inline">
+              <input id="showMajorGrid" type="checkbox" />
+              <label for="showMajorGrid">主目盛線を表示</label>
+            </div>
+            <div class="group inline">
+              <input id="showMinorGrid" type="checkbox" />
+              <label for="showMinorGrid">副目盛線を表示</label>
+            </div>
           </div>
-          <div>
-            <label for="figHeight">図高さ(inch)</label>
-            <input id="figHeight" type="number" step="0.1" value="6" />
           </div>
-        </div>
-        <div class="row group">
-          <div>
-            <label for="subplotLeft">余白 左(left)</label>
-            <input id="subplotLeft" type="number" min="0" max="1" step="any" placeholder="自動" />
-          </div>
-          <div>
-            <label for="subplotRight">余白 右(right)</label>
-            <input id="subplotRight" type="number" min="0" max="1" step="any" placeholder="自動" />
-          </div>
-        </div>
-        <div class="row group">
-          <div>
-            <label for="subplotBottom">余白 下(bottom)</label>
-            <input id="subplotBottom" type="number" min="0" max="1" step="any" placeholder="自動" />
-          </div>
-          <div>
-            <label for="subplotTop">余白 上(top)</label>
-            <input id="subplotTop" type="number" min="0" max="1" step="any" placeholder="自動" />
-          </div>
-        </div>
+        </details>
 
-        <div class="section-header">
-          <div class="section-title">保存設定</div>
-        </div>
+        <details class="panel-section" id="sectionStyle" open>
+          <summary class="section-header"><span class="section-title">体裁</span></summary>
+          <div class="section-body">
+          <div class="group">
+            <label for="stylePreset">プリセット</label>
+            <div class="preset-row">
+              <select id="stylePreset" aria-describedby="presetHelp">
+                <option value="standard">標準（8 × 6 inch、15 pt）</option>
+                <option value="paper1">論文1段組（幅 8.5 cm、8 pt）</option>
+                <option value="paper2">論文2段組（幅 17 cm、8 pt）</option>
+                <option value="slide">スライド16:9（24 × 13.5 cm、18 pt）</option>
+              </select>
+              <button id="applyPresetBtn" class="secondary" type="button">適用</button>
+            </div>
+            <div id="presetHelp" class="help-text">図のサイズ・フォントサイズ・線幅・点サイズをまとめて設定します。</div>
+          </div>
 
-        <div class="group">
-          <label for="saveFilename">保存ファイル名</label>
-          <input id="saveFilename" placeholder="plot" />
-        </div>
+          <div class="group">
+            <label for="colorPalette">カラーパレット</label>
+            <select id="colorPalette">
+              <option value="ud">UD カラー</option>
+              <option value="tab10">tab10（matplotlib 標準）</option>
+              <option value="gray">グレースケール</option>
+            </select>
+          </div>
 
-        <div class="group inline">
-          <input id="saveTransparent" type="checkbox" />
-          <label for="saveTransparent">背景を透過して保存</label>
-        </div>
+          <div class="group">
+            <label for="latinFont">欧文フォント</label>
+            <select id="latinFont" aria-describedby="latinFontHelp">
+              <option value="default">標準（Noto Sans JP）</option>
+              <option value="arimo">Arimo（Arial 互換）</option>
+              <option value="tinos">Tinos（Times 互換）</option>
+            </select>
+            <div id="latinFontHelp" class="help-text">英数字と記号を、選んだフォントで書きます。日本語の文字は Noto Sans JP で書きます。選んだときに、フォント（約 0.3〜0.5 MB）を取得します。</div>
+          </div>
 
-        <div class="row group">
-          <div>
+          <div class="group">
+            <label for="fontSize">フォントサイズ</label>
+            <input id="fontSize" type="number" step="1" value="15" />
+          </div>
+
+          <div class="row row-size group">
+            <div>
+              <label for="figWidth">図幅(inch)</label>
+              <input id="figWidth" type="number" step="0.1" value="8" />
+            </div>
+            <div>
+              <label for="figHeight">図高さ(inch)</label>
+              <input id="figHeight" type="number" step="0.1" value="6" />
+            </div>
+            <div>
+              <label for="figUnit">単位</label>
+              <select id="figUnit">
+                <option value="in">inch</option>
+                <option value="cm">cm</option>
+                <option value="mm">mm</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="group">
+            <label for="legendLocation">凡例位置</label>
+            <select id="legendLocation">
+              <option value="best">自動（最適）</option>
+              <option value="upper right">右上</option>
+              <option value="upper left">左上</option>
+              <option value="lower right">右下</option>
+              <option value="lower left">左下</option>
+              <option value="upper center">上中央</option>
+              <option value="lower center">下中央</option>
+              <option value="center right">右中央</option>
+              <option value="center left">左中央</option>
+              <option value="center">中央</option>
+              <option value="none">表示しない</option>
+            </select>
+          </div>
+
+          <div class="row group">
+            <div>
+              <label for="subplotLeft">余白 左(left)</label>
+              <input id="subplotLeft" type="number" min="0" max="1" step="any" placeholder="自動" />
+            </div>
+            <div>
+              <label for="subplotRight">余白 右(right)</label>
+              <input id="subplotRight" type="number" min="0" max="1" step="any" placeholder="自動" />
+            </div>
+          </div>
+
+          <div class="row group">
+            <div>
+              <label for="subplotBottom">余白 下(bottom)</label>
+              <input id="subplotBottom" type="number" min="0" max="1" step="any" placeholder="自動" />
+            </div>
+            <div>
+              <label for="subplotTop">余白 上(top)</label>
+              <input id="subplotTop" type="number" min="0" max="1" step="any" placeholder="自動" />
+            </div>
+          </div>
+          </div>
+        </details>
+
+        <details class="panel-section" id="sectionSave" open>
+          <summary class="section-header"><span class="section-title">保存</span></summary>
+          <div class="section-body">
+          <div class="group">
+            <label for="saveFilename">保存ファイル名</label>
+            <input id="saveFilename" placeholder="plot" />
+          </div>
+
+          <div class="group">
             <label for="saveFormat">保存形式</label>
             <select id="saveFormat">
               <option value="png">png</option>
@@ -269,11 +322,44 @@
               <option value="pdf">pdf</option>
             </select>
           </div>
-          <div>
-            <label for="savePlotBtn">描画データ保存</label>
-            <button id="savePlotBtn" class="secondary" type="button">保存する</button>
+
+          <div class="group">
+            <label for="saveDpi">DPI</label>
+            <div id="saveDpiRow" class="dpi-row">
+              <select id="saveDpi" aria-describedby="saveDpiHelp">
+                <option value="72">72</option>
+                <option value="150">150</option>
+                <option value="300">300</option>
+                <option value="600">600</option>
+                <option value="custom">任意</option>
+              </select>
+              <input id="saveDpiCustom" type="number" min="50" max="1200" step="1" aria-label="DPI（任意の値）" aria-describedby="saveDpiHelp" hidden />
+            </div>
+            <div id="saveDpiHelp" class="help-text">PNG・JPG の保存と、クリップボードへのコピーに使います（プレビューは 100 dpi で表示します）。</div>
           </div>
-        </div>
+
+          <div id="svgTextGroup" class="group" hidden>
+            <label for="svgText">SVG の文字</label>
+            <select id="svgText" aria-describedby="svgTextHelp">
+              <option value="path">パスに変換（見た目が変わらない）</option>
+              <option value="text">テキストのまま（編集できる）</option>
+            </select>
+            <div id="svgTextHelp" class="help-text">テキストのまま残すと、Illustrator などで文字を編集できます。ただし、開く環境に同じフォント（Noto Sans JP など）が無いと、別のフォントで表示され、見た目が変わります。</div>
+          </div>
+
+          <div id="pdfHelp" class="group help-text" hidden>PDF は文字をフォントとして埋め込みます（Type 42）。Illustrator などで文字を編集できます。</div>
+
+          <div class="group inline">
+            <input id="saveTransparent" type="checkbox" />
+            <label for="saveTransparent">背景を透過して保存</label>
+          </div>
+
+          <div class="row group save-actions">
+            <button id="savePlotBtn" class="secondary" type="button">保存する</button>
+            <button id="copyPlotBtn" class="secondary" type="button">クリップボードにコピー</button>
+          </div>
+          </div>
+        </details>
 
         <div id="status" class="status" role="status" aria-live="polite"></div>
         <details id="statusDetailWrap" class="status-detail-wrap hidden">

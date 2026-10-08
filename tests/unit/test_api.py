@@ -212,18 +212,180 @@ def test_save_with_code_ignores_invalid_plot_settings_but_checks_save_settings()
     assert r["ok"] is False and r["error"]["field"] == "保存形式"
 
 
-def test_save_uses_120_dpi_and_render_100():
+def _png_size(data_uri):
     import base64
     import struct
 
+    return struct.unpack(">II", base64.b64decode(data_uri.split(",")[1])[16:24])
+
+
+def test_save_uses_save_dpi_and_render_100():
     load()
     s = default_settings()  # 8 x 6 インチ
     r = json.loads(api.render_json(json.dumps(s)))
-    w, h = struct.unpack(">II", base64.b64decode(r["image"].split(",")[1])[16:24])
-    assert (w, h) == (800, 600)
+    assert _png_size(r["image"]) == (800, 600)
+    r = json.loads(api.save_json(json.dumps(s)))  # 既定は 300 dpi
+    assert _png_size(r["dataUri"]) == (2400, 1800)
+    s["save"]["dpi"] = 150
     r = json.loads(api.save_json(json.dumps(s)))
-    w, h = struct.unpack(">II", base64.b64decode(r["dataUri"].split(",")[1])[16:24])
-    assert (w, h) == (960, 720)
+    assert _png_size(r["dataUri"]) == (1200, 900)
+
+
+def test_v1_settings_save_at_120_dpi():
+    load()
+    s = default_settings()
+    s["version"] = 1
+    del s["save"]["dpi"]
+    r = json.loads(api.save_json(json.dumps(s)))
+    assert _png_size(r["dataUri"]) == (960, 720)
+
+
+def test_save_with_code_uses_save_dpi(workdir):
+    s = default_settings()
+    s["save"]["dpi"] = 100
+    r = json.loads(api.save_json(json.dumps(s), "import matplotlib.pyplot as plt\nfig, ax = plt.subplots(figsize=(4, 3))\n"))
+    assert r["ok"] and _png_size(r["dataUri"]) == (400, 300)
+
+
+PLAIN = "import matplotlib.pyplot as plt\nfig, ax = plt.subplots(figsize=(4, 3))\nax.plot([1, 2], [3, 4])\nax.set_title('title')\n"
+
+
+def test_pdf_embeds_truetype_not_type3_in_gui_and_edit_mode():
+    load()
+    s = default_settings()
+    s["save"]["format"] = "pdf"
+    r = json.loads(api.save_json(json.dumps(s)))
+    import base64
+
+    pdf = base64.b64decode(r["dataUri"].split(",")[1])
+    assert r["ok"] and b"/FontFile2" in pdf and b"/Type3" not in pdf
+    r = json.loads(api.save_json(json.dumps(s), PLAIN))  # コードが fonttype を指定しなくても Type 42
+    pdf = base64.b64decode(r["dataUri"].split(",")[1])
+    assert r["ok"] and b"/FontFile2" in pdf and b"/Type3" not in pdf
+
+
+def test_pdf_save_output_has_no_font_log_lines():
+    load()
+    s = default_settings()
+    s["save"]["format"] = "pdf"
+    r = json.loads(api.save_json(json.dumps(s)))
+    assert r["ok"] and r["output"] == ""
+
+
+def test_svg_text_switch():
+    import base64
+
+    load()
+    s = default_settings()
+    s["save"]["format"] = "svg"
+    s["plot"]["title"] = "Title"
+    r = json.loads(api.save_json(json.dumps(s)))
+    assert "<text" not in base64.b64decode(r["dataUri"].split(",")[1]).decode()
+    s["save"]["svgText"] = "text"
+    r = json.loads(api.save_json(json.dumps(s)))
+    assert "<text" in base64.b64decode(r["dataUri"].split(",")[1]).decode()
+    r = json.loads(api.save_json(json.dumps(s), PLAIN))  # 編集モードも同じ
+    assert "<text" in base64.b64decode(r["dataUri"].split(",")[1]).decode()
+    s["save"]["svgText"] = "path"
+    r = json.loads(api.save_json(json.dumps(s), PLAIN))
+    assert "<text" not in base64.b64decode(r["dataUri"].split(",")[1]).decode()
+
+
+def test_copy_image_is_png_at_save_dpi():
+    load()
+    s = default_settings()
+    s["save"].update(dpi=150, format="pdf")  # 保存形式にかかわらず PNG
+    r = json.loads(api.copy_image_json(json.dumps(s)))
+    assert r["ok"] and r["mime"] == "image/png" and r["dataUri"].startswith("data:image/png;base64,")
+    assert (r["width"], r["height"]) == (1200, 900) == _png_size(r["dataUri"])
+    assert "output" in r
+
+
+def test_copy_image_respects_transparent():
+    import base64
+    import io
+
+    import matplotlib.image as mpimg
+
+    load()
+    s = default_settings()
+    s["save"].update(dpi=50, transparent=True)
+    r = json.loads(api.copy_image_json(json.dumps(s)))
+    img = mpimg.imread(io.BytesIO(base64.b64decode(r["dataUri"].split(",")[1])))
+    assert img.shape[2] == 4 and img[0, 0, 3] == 0
+    s["save"]["transparent"] = False
+    r = json.loads(api.copy_image_json(json.dumps(s)))
+    img = mpimg.imread(io.BytesIO(base64.b64decode(r["dataUri"].split(",")[1])))
+    assert img[0, 0, 3] == 1
+
+
+def test_copy_image_in_edit_mode_and_error_shape():
+    s = default_settings()
+    s["save"]["dpi"] = 100
+    r = json.loads(api.copy_image_json(json.dumps(s), PLAIN))
+    assert r["ok"] and (r["width"], r["height"]) == (400, 300)
+    s["plot"]["fontSize"] = "bad"  # 編集モードは描画設定を使わない
+    assert json.loads(api.copy_image_json(json.dumps(s), PLAIN))["ok"]
+    r = json.loads(api.copy_image_json(json.dumps(s)))  # GUI 同期では描画設定も検証する（先に読込が要る）
+    assert r["ok"] is False and r["error"]["message"]
+    r = json.loads(api.copy_image_json(json.dumps(default_settings())))
+    assert r["ok"] is False and "読み込" in r["error"]["message"]
+
+
+def test_raster_size_guard_is_a_user_error_with_field():
+    load()
+    s = default_settings()
+    s["plot"]["figure"] = {"width": 50, "height": 50, "unit": "in"}
+    s["save"]["dpi"] = 1200
+    for call in (api.save_json, api.copy_image_json):
+        r = json.loads(call(json.dumps(s)))
+        assert r["ok"] is False and r["error"]["field"] == "保存 DPI"
+        assert "保存する画像が大きすぎます（幅 60000 × 高さ 60000 ピクセル）" in r["error"]["message"]
+        assert "detail" not in r["error"] or not r["error"].get("detail")
+    # 編集モード（実際の図の大きさで判定する）
+    r = json.loads(api.save_json(json.dumps(s), "import matplotlib.pyplot as plt\nfig, ax = plt.subplots(figsize=(50, 50))\n"))
+    assert r["ok"] is False and r["error"]["field"] == "保存 DPI"
+    # ベクター形式は制限しない（描画しない小さな図で確認）
+    s["save"]["format"] = "svg"
+    s["plot"]["figure"] = {"width": 50, "height": 50, "unit": "in"}
+    assert json.loads(api.save_json(json.dumps(s)))["ok"]
+
+
+def test_register_font_kinds_and_status(monkeypatch, tmp_path):
+    from matplotlib import font_manager
+
+    from mplgui import fonts
+
+    monkeypatch.setattr(fonts, "_registered", set())
+    monkeypatch.setattr(fonts.tempfile, "gettempdir", lambda: str(tmp_path))
+    added = []
+    monkeypatch.setattr(font_manager.fontManager, "addfont", lambda path: added.append(path))
+    data = Path(font_manager.findfont("DejaVu Sans")).read_bytes()
+    st = json.loads(api.font_status())
+    assert st == {"ok": True, "registered": False, "kinds": []}
+    r = json.loads(api.register_font(data))  # 既定は日本語
+    assert r["ok"] and r["registered"] is True and (tmp_path / "NotoSansJP-Regular.ttf").is_file()
+    assert json.loads(api.register_font(data, "japanese"))["registered"] is False  # 冪等
+    assert json.loads(api.register_font(data, "tinos"))["registered"] is True
+    assert (tmp_path / "Tinos-Regular.ttf").is_file()
+    assert json.loads(api.register_font(data, "arimo"))["registered"] is True
+    assert json.loads(api.register_font(data, "arimo"))["registered"] is False
+    assert len(added) == 3
+    assert json.loads(api.font_status()) == {"ok": True, "registered": True, "kinds": ["arimo", "japanese", "tinos"]}
+    r = json.loads(api.register_font(data, "comic"))
+    assert r["ok"] is False and "フォントの種類" in r["error"]["message"]
+
+
+def test_latin_font_only_registration_does_not_mark_japanese(monkeypatch, tmp_path):
+    from matplotlib import font_manager
+
+    from mplgui import fonts
+
+    monkeypatch.setattr(fonts, "_registered", set())
+    monkeypatch.setattr(fonts.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(font_manager.fontManager, "addfont", lambda path: None)
+    api.register_font(b"x", "arimo")
+    assert json.loads(api.font_status())["registered"] is False
 
 
 def test_runtime_error_in_generated_code_maps_to_step_message(monkeypatch):
@@ -398,3 +560,95 @@ def test_script_filename_uses_save_filename_rules(raw, expected):
     assert api.script_filename(raw) == expected
     # 保存ファイル名と同じ規則: 拡張子だけが違う
     assert api.script_filename(raw or "").rsplit(".", 1)[0] == api.build_filename(raw or "", "png").rsplit(".", 1)[0]
+
+
+# ---------------------------------------------------------------- C6: mathtext errors
+
+BAD_MATH = [r"$\alpah$", "m$^$"]
+
+
+def _math_settings(title, margins):
+    s = default_settings()
+    s["plot"]["title"] = title
+    if margins:
+        s["plot"]["margins"] = {"left": 0.1, "right": 0.9, "bottom": 0.1, "top": 0.9}
+    return s
+
+
+@pytest.mark.parametrize("margins", [False, True], ids=["tight_layout", "all_margins"])
+@pytest.mark.parametrize("title", BAD_MATH)
+def test_mathtext_error_in_gui_mode_is_a_japanese_user_error(title, margins):
+    load()
+    s = _math_settings(title, margins)
+    for call in (api.render_json, api.save_json, api.copy_image_json):
+        r = json.loads(call(json.dumps(s)))
+        assert r["ok"] is False
+        assert r["error"]["message"] == api.MATHTEXT_ERROR and r["error"]["field"] == "数式"
+        assert "内部エラー" not in r["error"]["message"] and "レイアウト" not in r["error"]["message"]
+
+
+def test_mathtext_error_in_axis_label_and_legend_name():
+    load()
+    s = default_settings()
+    s["axes"]["x"]["label"] = "m$^$"
+    r = json.loads(api.render_json(json.dumps(s)))
+    assert r["error"]["message"] == api.MATHTEXT_ERROR
+    s = default_settings()
+    s["series"][0]["label"] = r"$\alpah$"
+    r = json.loads(api.render_json(json.dumps(s)))
+    assert r["error"]["message"] == api.MATHTEXT_ERROR
+
+
+@pytest.mark.parametrize("title", BAD_MATH)
+def test_mathtext_error_in_edit_mode_with_and_without_tight_layout(title):
+    s = default_settings()
+    base = "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([1, 2], [3, 4])\nax.set_title(%r)\n" % title
+    # スクリプトの中で描画される（tight_layout）
+    r = json.loads(api.render_json(json.dumps(s), base + "fig.tight_layout()\n"))
+    assert r["ok"] is False and "数式" in r["error"]["message"] and "ValueError" in r["error"]["message"]
+    assert r["error"]["line"] == 5 and r["error"]["field"] == "Pythonコード"
+    # スクリプトは通り、画像にするときに見つかる
+    r = json.loads(api.render_json(json.dumps(s), base))
+    assert r["ok"] is False and "数式" in r["error"]["message"] and r["error"]["field"] == "数式"
+    assert "内部エラー" not in r["error"]["message"]
+    r = json.loads(api.save_json(json.dumps(s), base))
+    assert r["ok"] is False and "数式" in r["error"]["message"]
+
+
+def test_valid_mathtext_renders():
+    load()
+    s = default_settings()
+    s["plot"]["title"] = r"m$^2$ と $\alpha$"
+    s["axes"]["x"]["label"] = "H$_2$O"
+    s["plot"]["margins"] = {"left": 0.1, "right": 0.9, "bottom": 0.1, "top": 0.9}
+    assert json.loads(api.render_json(json.dumps(s)))["ok"]
+    s["plot"]["margins"] = {"left": None, "right": None, "bottom": None, "top": None}
+    assert json.loads(api.render_json(json.dumps(s)))["ok"]
+    assert json.loads(api.save_json(json.dumps(s)))["ok"]
+
+
+def test_script_json_returns_code_without_running():
+    load()
+    s = default_settings()
+    s["save"]["format"] = "pdf"
+    s["save"]["dpi"] = 600
+    r = json.loads(api.script_json(json.dumps(s)))
+    assert r["ok"] is True and set(r) == {"ok", "code"}
+    assert 'plt.rcParams["pdf.fonttype"] = 42' in r["code"] and 'fig.savefig("plot.pdf")' in r["code"]
+    s["save"]["format"] = "png"
+    r = json.loads(api.script_json(json.dumps(s)))
+    assert "dpi=600" in r["code"]
+    # render が返すコードと同じ
+    assert r["code"] == json.loads(api.render_json(json.dumps(s)))["code"]
+
+
+def test_script_json_errors():
+    r = json.loads(api.script_json(json.dumps(default_settings())))
+    assert r["ok"] is False and "ファイルを読み込んで" in r["error"]["message"]
+    load()
+    s = default_settings()
+    s["save"]["dpi"] = 2000
+    r = json.loads(api.script_json(json.dumps(s)))
+    assert r["ok"] is False and "保存 DPI" in r["error"]["message"] and r["error"]["field"] == "保存 DPI"
+    r = json.loads(api.script_json("{broken"))
+    assert r["ok"] is False and r["error"]["message"]

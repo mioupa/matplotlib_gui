@@ -15,6 +15,8 @@ PINNED = [
     ("cdn.jsdelivr.net", re.compile(r"^/npm/(@[\w.-]+/)?[\w.-]+@\d+\.\d+\.\d+(?:[-+.\w]*)?/")),
     # 遅延導入する Excel 用 wheel: ハッシュ付きの正規パスで、ファイル名にバージョンを含むもののみ
     ("files.pythonhosted.org", re.compile(r"^/packages/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{60}/[\w.]+-\d+(?:\.\d+)+-[\w.]+-[\w.]+-[\w.]+\.whl$")),
+    # 説明ページへのリンク（取得はしない）。matplotlib のバージョンを含むパスだけ許可する
+    ("matplotlib.org", re.compile(r"^/\d+\.\d+\.\d+/")),
     ("cdn.jsdelivr.net", re.compile(r"^/gh/[\w.-]+/[\w.-]+@(?!main\b|master\b|latest\b)[\w.-]*\d[\w.-]*/")),
 ]
 NAMESPACE_HOSTS = {"www.w3.org"}  # SVG などの名前空間 URI（取得されない）
@@ -77,6 +79,7 @@ def test_checker_rejects_unpinned(url):
     "url",
     [
         "https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@Sans2.004/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf",
+        "https://cdn.jsdelivr.net/npm/@expo-google-fonts/noto-sans-jp@0.4.4/400Regular/NotoSansJP_400Regular.ttf",
         "https://cdn.jsdelivr.net/npm/@fontsource/noto-sans-jp@5.3.0/400.css",
         "https://pyscript.net/releases/2026.7.3/core.js",
         "https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl",
