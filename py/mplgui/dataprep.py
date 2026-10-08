@@ -147,9 +147,13 @@ def resolve_y_indices(df: pd.DataFrame, requests: list[str]) -> list[str]:
     return resolved
 
 
-def slice_skip_rows(df_full: pd.DataFrame, skip_rows: int) -> pd.DataFrame:
+def slice_skip_rows(df_full: pd.DataFrame, skip_rows: int, label: str = "") -> pd.DataFrame:
+    """label は複数ファイルのときのデータ元の名前（「データ2（b.csv）」）。1つのときは空。"""
     if skip_rows >= len(df_full):
-        raise UserError("スキップ行数がデータ行数以上です。「除外する先頭行数」を小さくしてください。", field="除外する先頭行数")
+        prefix = f"{label}: " if label else ""
+        raise UserError(
+            f"{prefix}スキップ行数がデータ行数以上です。「除外する先頭行数」を小さくしてください。", field="除外する先頭行数"
+        )
     return df_full.iloc[skip_rows:].reset_index(drop=True)
 
 
@@ -262,7 +266,10 @@ def plan_plot(data, settings: Settings) -> PlotPlan:
         raise UserError(BAR_SOURCE_MESSAGE, field="データ元")
 
     order = [f.id for f in files if f.id in set(ids)] if files else list(dict.fromkeys(ids))
-    frames = {sid: slice_skip_rows(data[sid], plot.skip_rows) for sid in order}
+    frames = {
+        sid: slice_skip_rows(data[sid], plot.skip_rows, f"データ{numbers.get(sid, 1)}（{names.get(sid, '')}）" if multi else "")
+        for sid in order
+    }
     sources = tuple(
         PlanSource(id=sid, number=numbers.get(sid, 1), var=f"df{numbers[sid]}" if multi else "df", name=names.get(sid, ""))
         for sid in order

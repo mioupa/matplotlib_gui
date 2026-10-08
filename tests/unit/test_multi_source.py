@@ -358,3 +358,18 @@ def test_edit_mode_reads_all_files_from_the_work_folder():
     )
     r = json.loads(api.render_json(json.dumps(s), code))
     assert r["ok"], r
+
+
+def test_skip_rows_error_names_the_data_source_only_with_several_files():
+    s = files_settings(*TWO, series=[{"x": "", "y": "__idx__1", "source": "d1"}, {"x": "", "y": "__idx__1", "source": "d2"}])
+    load_two(s)
+    s["plot"]["skipRows"] = 10_000
+    multi = render(s)
+    assert not multi["ok"]
+    assert multi["error"]["message"].startswith("データ1（utf8.csv）: スキップ行数がデータ行数以上です。")
+    single = files_settings(("d1", "utf8.csv", ""))
+    api.SESSION.forget()
+    load("utf8.csv", "d1", single)
+    single["plot"]["skipRows"] = 10_000
+    one = render(single)
+    assert one["error"]["message"].startswith("スキップ行数がデータ行数以上です。")

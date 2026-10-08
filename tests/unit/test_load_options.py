@@ -426,3 +426,26 @@ def test_full_script_and_auto_render_agree(tmp_path, name, delimiter, opts):
     with run_script(script.auto_render_text(), injected={"df": loaded.df}) as run:
         auto = figure_summary(run.fig)
     assert full == auto
+
+
+def test_decimal_equal_to_separator_warns_and_reads_quoted_values():
+    r = load_file(csv_bytes('a,b\n"1,5",2\n"2,5",3\n'), "d.csv", "", True, decimal=",")
+    assert list(r.df["a"]) == [1.5, 2.5]
+    assert any("小数点と区切り文字が同じ記号（,）です" in w for w in r.warnings)
+    # 区切り文字が違えば警告しない
+    ok = load_file(csv_bytes("a;b\n1,5;2\n"), "d.csv", ";", True, decimal=",")
+    assert not any("小数点と区切り文字" in w for w in ok.warnings)
+
+
+def test_thousands_equal_to_separator_is_allowed_silently():
+    r = load_file(csv_bytes('a,b\n"1,234",2\n'), "t.csv", "", True, thousands=",")
+    assert list(r.df["a"]) == [1234]
+    assert not any("区切り文字が同じ" in w for w in r.warnings)
+
+
+def test_preamble_and_first_data_line_split_only_on_cr_lf():
+    text = "memo line\x0cform\nx;y\n1;2\n"
+    r = load_file(csv_bytes(text), "p.csv", ";", True, skip_lines=1)
+    assert r.preamble_lines == ("memo line\x0cform",)
+    assert list(r.df.columns) == ["x", "y"]
+    assert loader._first_data_line("a b;c\nx\n", 0, "") == "a b;c"

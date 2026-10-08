@@ -190,8 +190,23 @@ def _check_conflicts(sep: str, thousands: str, comment: str) -> None:
         raise UserError("「コメント記号」に、区切り文字と同じ記号は使えません。", field="コメント記号")
 
 
+def split_lines(text: str) -> list[str]:
+    """pandas と同じく \\r・\\n・\\r\\n だけを行の区切りにする（str.splitlines は U+2028 や改ページでも切る）。"""
+    return re.split(r"\r\n|\r|\n", text)
+
+
+def _decimal_separator_warning(sep: str, decimal: str) -> str | None:
+    if len(sep) == 1 and decimal == sep:
+        shown = "タブ" if sep == "\t" else sep
+        return (
+            f"小数点と区切り文字が同じ記号（{shown}）です。値が引用符（\"1,5\" のように）で囲まれていないと、"
+            "正しく読めません。区切り文字が ; やタブのファイルなら、「区切り文字」に指定してください。"
+        )
+    return None
+
+
 def _first_data_line(text: str, skip_lines: int, comment: str) -> str:
-    for line in text.splitlines()[skip_lines:]:
+    for line in split_lines(text)[skip_lines:]:
         if line.strip() and not (comment and line.lstrip().startswith(comment)):
             return line
     return ""
@@ -407,11 +422,14 @@ def load_file(
         else:
             sep = decode_delimiter(delimiter, suffix)
             _check_conflicts(sep, thousands, comment)
+            decimal_warning = _decimal_separator_warning(sep, decimal)
+            if decimal_warning:
+                warnings_out.append(decimal_warning)
             used_encoding, text = detect_encoding(file_bytes)
             kwargs = make_source().read_kwargs()
             df = pd.read_csv(io.StringIO(text), **kwargs)
             if skip_lines > 0:
-                preamble = tuple(text.splitlines()[:skip_lines][:PREAMBLE_LINES])
+                preamble = tuple(split_lines(text)[:skip_lines][:PREAMBLE_LINES])
     except UserError:
         raise
     except pd.errors.EmptyDataError as exc:
