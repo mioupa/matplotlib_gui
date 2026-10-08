@@ -74,10 +74,38 @@ def _configure_scatter_arimo_paper2_pdf(page):
     page.select_option("#saveFormat", "pdf")
 
 
+def _pre_preamble(page):
+    page.fill("#skipLines", "3")  # ファイルを選ぶ前に設定する（先頭の説明の行を読み飛ばす）
+
+
+def _pre_european(page):
+    page.fill("#delimiter", ";")
+    page.select_option("#thousands", ".")
+    page.select_option("#decimal", ",")
+
+
+def _configure_xy_1(page):
+    page.select_option("#series-s1-x", "__idx__0")
+    page.select_option("#series-s1-y", "__idx__1")
+
+
+def _configure_second_sheet(page):
+    page.select_option("#sheetSelect", "二枚目")
+    page.wait_for_function("document.documentElement.dataset.loadCount === '2'")
+    wait_settled(page)
+    _configure_xy_1(page)
+
+
+# 読込の設定を変えた場合: 生成スクリプトの読込部が、GUI の読み方と同じ図を作る
+PRE_STEPS = {"preamble_csv": _pre_preamble, "european_csv": _pre_european}
+
 CASES = {
     "line": ("growth.csv", _configure_line),
     "scatter": ("utf8.csv", _configure_scatter),
     "bar": ("categories.csv", _configure_bar),
+    "xlsx_second_sheet": ("multi_sheet.xlsx", _configure_second_sheet),
+    "preamble_csv": ("preamble.csv", _configure_xy_1),
+    "european_csv": ("european.csv", _configure_xy_1),
     "scatter_paper1": ("utf8.csv", _configure_scatter_paper1),
     "scatter_arimo_paper2_pdf": ("utf8.csv", _configure_scatter_arimo_paper2_pdf),
 }
@@ -102,6 +130,8 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
     fixture, configure = CASES[case]
     page.goto(app_url)
     wait_app_ready(page)
+    if case in PRE_STEPS:
+        PRE_STEPS[case](page)
     load_fixture(page, fixtures_dir / fixture)
     wait_settled(page)
     configure(page)
@@ -127,6 +157,18 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
             assert l_ax[key] == b_ax[key], key
         assert l_ax["xlim"] == pytest.approx(b_ax["xlim"], rel=1e-6)
         assert l_ax["ylim"] == pytest.approx(b_ax["ylim"], rel=1e-6)
+    if case in ("xlsx_second_sheet", "preamble_csv", "european_csv"):
+        assert len(browser) == 1 and browser[0]["lines"] == 1
+        text = script.read_text(encoding="utf-8")
+        expected = {
+            "xlsx_second_sheet": 'sheet_name="二枚目",',
+            "preamble_csv": "skiprows=3,",
+            "european_csv": 'thousands=".",',
+        }[case]
+        assert expected in text
+        if case == "european_csv":
+            assert 'decimal=",",' in text and 'sep=";",' in text
+            assert browser[0]["ylim"][1] > 1000  # 1.234,5 が数値として読めている
     if case == "bar":
         assert local[0]["xticklabels"] == browser[0]["xticklabels"]
         assert "品目A" in browser[0]["xticklabels"][0]

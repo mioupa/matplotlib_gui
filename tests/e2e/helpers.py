@@ -304,3 +304,38 @@ def wait_code_contains(page, text, timeout=60_000):
     page.wait_for_function(
         "(t) => document.getElementById('customPyCode').value.includes(t)", arg=text, timeout=timeout
     )
+
+
+# --- データ読み込みの設定（シート・ヘッダより前の行・桁区切り・小数点・コメント記号） ---
+def change_load_option(page, action):
+    """action() で読込設定を変え、読み直し（data-load-count が増える）と再描画が済むまで待つ。"""
+    before = load_count(page)
+    action()
+    wait_load_count(page, before + 1)
+    wait_settled(page)
+
+
+def set_load_options(page, *, delimiter=None, skip_lines=None, thousands=None, decimal=None, comment=None):
+    """ファイルを選ぶ前に、読込設定を入れておく（ファイルが無いので読み直しは起こらない）。"""
+    if delimiter is not None:
+        page.fill("#delimiter", delimiter)
+    if skip_lines is not None:
+        page.fill("#skipLines", str(skip_lines))
+    if thousands is not None:
+        page.select_option("#thousands", thousands)
+    if decimal is not None:
+        page.select_option("#decimal", decimal)
+    if comment is not None:
+        page.fill("#commentChar", comment)
+
+
+def sheet_options(page) -> list[str]:
+    return page.evaluate("[...document.querySelectorAll('#sheetSelect option')].map(o => o.value)")
+
+
+def code_is_stale(page) -> bool:
+    """コードタブの「最新でない」表示（#customPyCode の data-stale と #codeStaleNote）。"""
+    attr = page.evaluate("document.getElementById('customPyCode').dataset.stale || ''") == "true"
+    note = page.evaluate("!document.getElementById('codeStaleNote').hidden")
+    assert attr == note, "data-stale と #codeStaleNote の表示が食い違っている"
+    return attr
