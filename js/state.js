@@ -41,6 +41,14 @@ export const setPath = (path, value, origin = "user") => {
   notify({ kind: "path", path, origin });
 };
 
+// 読み込むファイル（load.files）の sheet を替える。通知は load.files の変更（読み直しのきっかけ）
+export const setFileSheet = (id, sheet, origin = "user") => {
+  const file = settings.load.files.find((f) => f.id === id);
+  if (!file || file.sheet === sheet) return;
+  file.sheet = sheet;
+  notify({ kind: "path", path: "load.files", origin, fileId: id });
+};
+
 const findSeries = (id) => settings.series.find((s) => s.id === id);
 
 export const updateSeries = (id, patch, origin = "user") => {

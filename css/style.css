@@ -491,6 +491,43 @@ button.secondary:hover {
   margin-bottom: 8px;
   font-size: 13px;
 }
+#dataPreamble {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12px;
+}
+#dataPreamble .preamble-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+#dataPreamble .preamble-lines {
+  margin: 0;
+  max-height: 9em;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+  color: var(--text-muted);
+}
+#dataPreamble .preamble-more {
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+.code-stale-note {
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--status-warning);
+  border-radius: 6px;
+  background: var(--warning-bg);
+  color: var(--status-warning);
+  font-size: 12px;
+  font-weight: 700;
+}
+.code-stale-note[hidden] {
+  display: none;
+}
 #codePanel {
   overflow: auto;
 }
@@ -872,4 +909,145 @@ button.series-color-chip.active {
   padding-right: 6px;
   font-size: 13px;
   white-space: nowrap;
+}
+
+/* 表の貼り付け欄とファイルのドロップ */
+.paste-area {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 8px;
+  border: 2px dashed var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+}
+.paste-area:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+#savePastedBtn {
+  margin-top: 8px;
+}
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: var(--busy-bg);
+}
+.drop-overlay[hidden] {
+  display: none;
+}
+.drop-zones {
+  display: flex;
+  flex: 1;
+  gap: 24px;
+}
+.drop-zone {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 3px dashed var(--accent);
+  border-radius: 16px;
+  background: var(--card);
+  color: var(--accent);
+  font-size: 22px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.col-kind-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: normal;
+  line-height: 1.5;
+  vertical-align: middle;
+}
+
+.drop-zone[hidden] {
+  display: none;
+}
+.drop-zone.drop-zone-active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+.add-file-row {
+  margin-top: 8px;
+}
+.file-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.file-list[hidden] {
+  display: none;
+}
+.file-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  font-size: 13px;
+}
+.file-row[data-state="error"] {
+  border-color: var(--error-border);
+}
+.file-row-no {
+  font-weight: 700;
+  color: var(--accent);
+}
+.file-row-name {
+  flex: 1 1 120px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-row-kind {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.file-row select {
+  max-width: 100%;
+}
+.file-row-error {
+  flex-basis: 100%;
+  color: var(--error-text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.file-row-loading {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.preview-source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.preview-source[hidden] {
+  display: none;
+}
+.series-source-wrap[hidden] {
+  display: none;
 }

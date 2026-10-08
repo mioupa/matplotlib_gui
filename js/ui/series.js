@@ -3,7 +3,22 @@ import { addSeries, getSettings, hasSecondaryAxis, removeSeries, updateSeries, s
 import { bindSeriesColorControls } from "./colorPicker.js";
 import { readNumber } from "./forms.js";
 
-let columns = []; // [{value: "__idx__0", label: "時間 [0]"}]（読込のたびに更新）
+// データ元（ファイル id）ごとの列の選択肢: [{value: "__idx__0", label: "時間 [0]", kind: "number"}]（読込のたびに更新。kind: datetime / number / text）
+const columnsById = new Map();
+
+const loadedFiles = () => getSettings().load.files;
+const sourceIdOf = (series) => series.source || (loadedFiles()[0] ? loadedFiles()[0].id : "d1"); // "" は先頭のファイル
+const columnsOf = (series) => columnsById.get(sourceIdOf(series)) || [];
+const hasManySources = () => loadedFiles().length >= 2;
+
+const isDatetimeColumn = (columns, value) => !!value && columns.some((c) => c.value === value && c.kind === "datetime");
+
+// X に日時の列を使っているか（line / scatter はどれかの系列の X（その系列のデータ元の列）、bar は X列（系列1のデータ元））
+export const usesDatetimeX = () => {
+  const { plot, series } = getSettings();
+  if (plot.type === "bar") return series.length > 0 && isDatetimeColumn(columnsOf(series[0]), plot.xColumn);
+  return series.some((s) => isDatetimeColumn(columnsOf(s), s.x));
+};
 
 const esc = (text) =>
   String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -22,8 +37,9 @@ const fillSelect = (selectEl, options, selected) => {
   selectEl.value = options.some((o) => o.value === selected) ? selected : "";
 };
 
-const xOptions = () => [{ value: "", label: "(index)" }, ...columns];
-const yOptions = () => [{ value: "", label: "(自動)" }, ...columns];
+const xOptions = (columns) => [{ value: "", label: "(index)" }, ...columns];
+const yOptions = (columns) => [{ value: "", label: "(自動)" }, ...columns];
+const sourceOptions = () => loadedFiles().map((f, i) => ({ value: f.id, label: `データ${i + 1}: ${f.name}` }));
 
 const cardHtml = (series, plotType) => {
   const id = (name) => `series-${series.id}-${name}`;
@@ -31,6 +47,10 @@ const cardHtml = (series, plotType) => {
     <div class="series-item-header">
       <div class="series-item-title">系列</div>
       <button type="button" id="${id("remove")}" class="small-btn ghost-btn remove-series">削除</button>
+    </div>
+    <div class="group series-source-wrap">
+      <label for="${id("source")}">データ元</label>
+      <select id="${id("source")}" class="series-source"></select>
     </div>
     <div class="row group">
       <div class="series-x-wrap">
@@ -96,8 +116,11 @@ const buildCard = (series, plotType) => {
   item.className = "series-item";
   item.dataset.seriesId = series.id;
   item.innerHTML = cardHtml(series, plotType);
-  fillSelect(item.querySelector(".series-x"), xOptions(), series.x);
-  fillSelect(item.querySelector(".series-y"), yOptions(), series.y);
+  const columns = columnsOf(series);
+  fillSelect(item.querySelector(".series-x"), xOptions(columns), series.x);
+  fillSelect(item.querySelector(".series-y"), yOptions(columns), series.y);
+  fillSelect(item.querySelector(".series-source"), sourceOptions(), sourceIdOf(series));
+  item.querySelector(".series-source-wrap").hidden = !hasManySources();
   item.querySelector(".series-line-style").value = series.lineStyle;
   bindSeriesColorControls(item, (color) => updateSeries(series.id, { color }));
   item.querySelector(".remove-series").addEventListener("click", () => removeSeries(series.id));
@@ -112,6 +135,9 @@ export const syncVisibility = () => {
   for (const group of document.querySelectorAll("#seriesList .series-x-wrap")) {
     group.style.display = usePerSeriesX ? "block" : "none";
   }
+  for (const wrap of document.querySelectorAll("#seriesList .series-source-wrap")) wrap.hidden = !hasManySources();
+  const dateGroup = document.getElementById("xDateFormatGroup");
+  if (dateGroup) dateGroup.hidden = !usesDatetimeX();
   const hasY2 = hasSecondaryAxis();
   for (const id of ["y2LabelGroup", "y2AxisSettingsGroup"]) {
     const el = document.getElementById(id);
@@ -131,9 +157,40 @@ export const syncMarkerSizeDisplay = () => {
   }
 };
 
+// カードを描いたときの、データ元と列の選択肢の状態（読込が終わったとき、変わっていなければ描き直さない）
+let renderedStructure = "";
+const structureOf = () => {
+  const { series, plot } = getSettings();
+  return JSON.stringify([
+    loadedFiles().map((f) => [f.id, f.name]),
+    series.map((s) => [s.id, sourceIdOf(s), columnsOf(s)]),
+    plot.type,
+    plot.xColumn,
+  ]);
+};
+
+// 表示中のカードの選択が、設定と同じか（違えば描き直す）
+const cardsMatchSettings = () => {
+  const list = document.getElementById("seriesList");
+  if (!list) return false;
+  const { series } = getSettings();
+  const items = list.querySelectorAll(".series-item");
+  if (items.length !== series.length) return false;
+  return series.every((s, i) => {
+    const item = items[i];
+    return (
+      item.dataset.seriesId === s.id &&
+      item.querySelector(".series-x")?.value === s.x &&
+      item.querySelector(".series-y")?.value === s.y &&
+      item.querySelector(".series-source")?.value === sourceIdOf(s)
+    );
+  });
+};
+
 export const renderSeriesList = () => {
   const list = document.getElementById("seriesList");
   if (!list) return;
+  renderedStructure = structureOf();
   const { series, plot } = getSettings();
   list.replaceChildren(...series.map((s) => buildCard(s, plot.type)));
   const items = list.querySelectorAll(".series-item");
@@ -151,23 +208,46 @@ export const renderSeriesList = () => {
 
 const refreshXColumnSelect = () => {
   const select = document.getElementById("xColumn");
-  if (select) fillSelect(select, xOptions(), getSettings().plot.xColumn);
+  const { series, plot } = getSettings();
+  if (select) fillSelect(select, xOptions(series[0] ? columnsOf(series[0]) : []), plot.xColumn); // 棒グラフの X は系列1のデータ元の列
 };
 
-// 読込後の列の選択肢を更新する。もう存在しない列の選択は解除する（再描画は呼び出し側が行う）。
-export const setColumns = (newColumns) => {
-  columns = newColumns;
-  const valid = new Set(columns.map((c) => c.value));
+// ファイルの追加・削除などで、データ元の選択肢と各系列の列の選択肢を描き直す
+export const refreshSources = () => {
+  refreshXColumnSelect();
+  // データ元と列の選択肢が変わっていなければ、カードは描き直さない（入力中の欄や開いている選択肢を保つ）
+  if (renderedStructure === structureOf() && cardsMatchSettings()) return;
+  renderSeriesList();
+};
+
+// 1つのデータ元の列の選択肢を更新する（読込のたびに呼ぶ）。
+export const setSourceColumns = (id, newColumns) => {
+  columnsById.set(id, newColumns);
+};
+
+export const dropSourceColumns = (keepIds) => {
+  const keep = new Set(keepIds);
+  for (const id of Array.from(columnsById.keys())) if (!keep.has(id)) columnsById.delete(id);
+};
+
+// 読込後の整合: もう存在しない列の選択は解除する（再描画は呼び出し側が行う）。列の選択肢が分かっているデータ元の系列だけを見る。
+export const reconcileColumns = () => {
   const settings = getSettings();
-  if (settings.plot.xColumn && !valid.has(settings.plot.xColumn)) setPath("plot.xColumn", "", "reconcile");
+  const first = settings.series[0];
+  const firstColumns = first ? columnsById.get(sourceIdOf(first)) : null;
+  if (settings.plot.xColumn && firstColumns && !firstColumns.some((c) => c.value === settings.plot.xColumn)) {
+    setPath("plot.xColumn", "", "reconcile");
+  }
   for (const s of settings.series) {
+    const known = columnsById.get(sourceIdOf(s));
+    if (!known) continue;
+    const valid = new Set(known.map((c) => c.value));
     const patch = {};
     if (s.x && !valid.has(s.x)) patch.x = "";
     if (s.y && !valid.has(s.y)) patch.y = "";
     if (Object.keys(patch).length) updateSeries(s.id, patch, "reconcile");
   }
-  refreshXColumnSelect();
-  renderSeriesList();
+  refreshSources();
 };
 
 const FIELD_BY_CLASS = [
@@ -180,11 +260,25 @@ const FIELD_BY_CLASS = [
   ["series-use-y2", "secondaryAxis", "checkbox"],
 ];
 
+// データ元を替えたら、X / Y は自動に戻す（別のファイルの列番号は意味が変わる）。系列1なら棒グラフの X列も戻す
+const onSourceChange = (seriesId, source) => {
+  const { series, plot } = getSettings();
+  const current = series.find((s) => s.id === seriesId);
+  if (!current || sourceIdOf(current) === source) return;
+  if (series[0] && series[0].id === seriesId && plot.xColumn) setPath("plot.xColumn", "");
+  updateSeries(seriesId, { source, x: "", y: "" });
+  refreshSources();
+};
+
 const onSeriesInput = (event) => {
   const target = event.target;
   if (!target || !target.matches || !target.matches("input, select")) return;
   const item = target.closest(".series-item");
   if (!item) return;
+  if (target.classList.contains("series-source")) {
+    onSourceChange(item.dataset.seriesId, target.value);
+    return;
+  }
   const entry = FIELD_BY_CLASS.find(([cls]) => target.classList.contains(cls));
   if (!entry) return;
   const [, field, kind] = entry;

@@ -6,12 +6,14 @@ py/main.py はこの関数を window.mplgui に登録するだけ。引数・戻
 from __future__ import annotations
 
 import base64
+import dataclasses
+import hashlib
 import json
 import struct
 import traceback
 from pathlib import Path
 
-from . import fonts
+from . import fonts, loader
 from .codegen import GENERIC_ERROR_MESSAGE, GeneratedScript, generate_script
 from .dataprep import plan_plot
 from .errors import UserError
@@ -28,43 +30,101 @@ MATHTEXT_ERROR = (
 INTERNAL_ERROR_MESSAGE = "内部エラーが発生しました。もう一度操作してください。"
 
 
+@dataclasses.dataclass
+class LoadedSource:
+    """読み込み済みの1つのファイル（データN）。"""
+
+    id: str
+    name: str
+    df: object
+    info: SourceInfo
+    written: Path | None = None  # 作業フォルダに書き出したファイル
+
+
 class Session:
-    """読み込み済みデータ（ブラウザのタブごとに1つ）。"""
+    """読み込み済みデータ（ブラウザのタブごとに1つ）。ファイル id（"d1", "d2", ...）ごとに DataFrame を持つ。"""
 
     def __init__(self):
-        self.df = None
-        self.filename = None
-        self.source: SourceInfo | None = None
+        self.sources: dict[str, LoadedSource] = {}
         self.workdir: Path | None = None  # 設定すると、アップロードしたファイルを元の名前でここに置く
-        self._written: Path | None = None
+        self.excels: dict[str, tuple[str, object]] = {}  # id → (バイト列のハッシュ, 開いた pd.ExcelFile)。シートの切り替えを速くする
 
-    def forget(self) -> None:
-        self.df = None
-        self.filename = None
-        self.source = None
-        self._remove_written()
+    # ---- 先頭のデータ元（1ファイルのときの従来の窓口）----
+    def _first(self) -> LoadedSource | None:
+        return next(iter(self.sources.values()), None)
 
-    def _remove_written(self) -> None:
-        if self._written is not None:
+    @property
+    def df(self):
+        first = self._first()
+        return first.df if first else None
+
+    @property
+    def filename(self):
+        first = self._first()
+        return first.name if first else None
+
+    @property
+    def source(self) -> SourceInfo | None:
+        first = self._first()
+        return first.info if first else None
+
+    @property
+    def excel(self):
+        entry = self.excels.get("d1") or next(iter(self.excels.values()), None)
+        return entry[1] if entry else None
+
+    # ---- データ元の操作 ----
+    def forget(self, keep_excel: bool = False) -> None:
+        """すべてのデータ元と、作業フォルダに書き出したファイルを破棄する。"""
+        for sid in list(self.sources):
+            self.forget_source(sid, keep_excel=True)
+        if not keep_excel:
+            for sid in list(self.excels):
+                self.drop_excel(sid)
+
+    def forget_source(self, sid: str, keep_excel: bool = False) -> None:
+        src = self.sources.pop(sid, None)
+        if src is not None:
+            self._remove_written(src)
+        if not keep_excel:
+            self.drop_excel(sid)
+
+    def drop_excel(self, sid: str) -> None:
+        entry = self.excels.pop(sid, None)
+        if entry is not None:
             try:
-                self._written.unlink()
-            except OSError:
+                entry[1].close()
+            except Exception:  # noqa: BLE001 - 閉じられなくても続行する
                 pass
-            self._written = None
 
-    def write_upload(self, name: str, data: bytes) -> None:
-        """編集モードのスクリプトが読めるように、アップロードしたファイルを workdir に置く（前のファイルは消す）。"""
+    def excel_for(self, sid: str, raw: bytes):
+        """raw（xlsx のバイト列）の ExcelFile。同じバイト列なら開き直さない。"""
+        key = hashlib.sha256(raw).hexdigest()
+        entry = self.excels.get(sid)
+        if entry is None or entry[0] != key:
+            self.drop_excel(sid)
+            self.excels[sid] = (key, loader.open_excel(raw))
+        return self.excels[sid][1]
+
+    def _remove_written(self, src: LoadedSource) -> None:
+        path, src.written = src.written, None
+        if path is None or any(o.written == path for o in self.sources.values() if o is not src):
+            return  # 同じ名前のファイルを別のデータ元も使っているときは消さない
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+    def write_upload(self, src: LoadedSource, data: bytes) -> None:
+        """編集モードのスクリプトが読めるように、アップロードしたファイルを workdir に置く。"""
         if self.workdir is None:
             return
-        base = Path(name).name
+        base = Path(src.name).name
         if base in {"", ".", ".."}:
-            self._remove_written()
             return
         target = self.workdir / base
-        if self._written is not None and self._written != target:
-            self._remove_written()
         target.write_bytes(data)
-        self._written = target
+        src.written = target
 
 
 SESSION = Session()
@@ -109,32 +169,54 @@ def _parse_json(text: str) -> dict:
 
 
 @_guard("load_file")
-def load_file_json(name: str, data: bytes, load_settings_json: str) -> dict:
-    """ファイルを読み込み、列の選択肢とプレビューを返す。失敗時は読込済みデータを破棄する。"""
-    SESSION.forget()
+def load_file_json(name: str, data: bytes, load_settings_json: str, source_id: str = "d1", pasted: bool = False) -> dict:
+    """ファイルを読み込み、列の選択肢とプレビューを返す。同じ source_id のデータ元だけを置き換える。
+    失敗したときは、その source_id のデータ元だけを破棄する（ほかのデータ元は残る）。
+
+    xlsx のシートは、読み込み設定の load.files のうち source_id の項目から決める（無ければ先頭のシート）。"""
+    SESSION.forget_source(source_id, keep_excel=True)
     load = parse_load_settings(_parse_json(load_settings_json))
     raw = bytes(data)
-    loaded = load_file(raw, name, load.delimiter, load.has_header)
-    SESSION.df = loaded.df
-    SESSION.filename = name
-    SESSION.source = loaded.source
-    SESSION.write_upload(name, raw)
+    sheet = next((f.sheet for f in load.files if f.id == source_id), "")
+    excel = None
+    if Path(name).suffix.lower() == ".xlsx":
+        excel = SESSION.excel_for(source_id, raw)
+    else:
+        SESSION.drop_excel(source_id)
+    loaded = load_file(
+        raw, name, load.delimiter, load.has_header,
+        skip_lines=load.skip_lines, thousands=load.thousands, decimal=load.decimal, comment=load.comment,
+        sheet=sheet, excel=excel, parse_dates=load.parse_dates,
+    )
+    info = loaded.source
+    if pasted:
+        info = dataclasses.replace(info, pasted=True)
+    src = LoadedSource(id=source_id, name=name, df=loaded.df, info=info)
+    SESSION.sources[source_id] = src
+    SESSION.write_upload(src, raw)
     return {
         "ok": True,
         "encoding": loaded.encoding,
         "columns": column_options(loaded.df),
-        "preview": build_preview(loaded.df, PREVIEW_ROWS),
-        "warnings": [],
+        "preview": build_preview(loaded.df, PREVIEW_ROWS, preamble=(loaded.preamble_lines, loaded.preamble_total)),
+        "sheets": list(info.sheets) if info.kind == "xlsx" else [],
+        "sheet": info.sheet_name if info.kind == "xlsx" else None,
+        "warnings": list(loaded.warnings),
     }
 
 
-def _source_info() -> SourceInfo:
-    if SESSION.source is not None:
-        return SESSION.source
-    name = Path(SESSION.filename or "data.csv").name
-    kind = Path(name).suffix.lower().lstrip(".") or "csv"
-    return SourceInfo(filename=name, kind=kind, encoding="utf-8", separator=",", has_header=True,
-                      sheet_name="Sheet1" if kind == "xlsx" else None)
+@_guard("remove_source")
+def remove_source_json(source_id: str) -> dict:
+    """データ元を1つ取り除く（作業フォルダに書き出したファイルも消す）。無い id でもエラーにしない。"""
+    SESSION.forget_source(str(source_id))
+    return {"ok": True}
+
+
+@_guard("clear_sources")
+def clear_sources_json() -> dict:
+    """すべてのデータ元を取り除く（「置き換えて読み込む」の前）。"""
+    SESSION.forget()
+    return {"ok": True}
 
 
 def _step_error(script: GeneratedScript, err: ScriptError) -> ScriptError:
@@ -158,10 +240,11 @@ def _step_error(script: GeneratedScript, err: ScriptError) -> ScriptError:
 
 
 def _generate(settings: Settings):
-    if SESSION.df is None:
+    if not SESSION.sources:
         raise UserError("先にファイルを読み込んでください。")
-    plan = plan_plot(SESSION.df, settings)
-    return plan, generate_script(settings, _source_info(), plan)
+    plan = plan_plot({sid: src.df for sid, src in SESSION.sources.items()}, settings)
+    infos = {sid: src.info for sid, src in SESSION.sources.items()}
+    return plan, generate_script(settings, infos, plan)
 
 
 def _run(settings: Settings | None, code: str | None, *, file_format: str, transparent: bool, dpi: int, svg_text: str = "path"):
@@ -172,7 +255,7 @@ def _run(settings: Settings | None, code: str | None, *, file_format: str, trans
         try:
             result = run_to_image(
                 script.auto_render_text(), file_format=file_format, transparent=transparent, dpi=dpi, svg_text=svg_text,
-                injected={"df": SESSION.df},
+                injected={src.var: SESSION.sources[src.id].df for src in plan.sources},
             )
         except ScriptError as err:
             raise _step_error(script, err) from err

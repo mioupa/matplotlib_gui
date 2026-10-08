@@ -15,6 +15,18 @@ export const applySkipRows = (skipRows) => {
   rows.forEach((tr, idx) => tr.classList.toggle("skipped-row", idx < n));
 };
 
+// ヘッダより前に読み飛ばした行（preamble: {lines, total}）。表の上に、枠で囲んで等幅で出す
+const preambleBox = (preamble) => {
+  if (!preamble || !(preamble.total > 0)) return null;
+  const box = el("div");
+  box.id = "dataPreamble";
+  box.appendChild(el("div", `ヘッダより前に読み飛ばした行（${preamble.total}行）`)).className = "preamble-title";
+  box.appendChild(el("pre", preamble.lines.join("\n"))).className = "preamble-lines";
+  const more = preamble.total - preamble.lines.length;
+  if (more > 0) box.appendChild(el("div", `…ほか ${more} 行`)).className = "preamble-more";
+  return box;
+};
+
 export const showPreview = (preview, skipRows = 0) => {
   const dataArea = document.getElementById("dataArea");
   if (!dataArea) return;
@@ -29,7 +41,15 @@ export const showPreview = (preview, skipRows = 0) => {
   const numHead = el("th", "#");
   numHead.className = "row-number";
   headRow.appendChild(numHead);
-  for (const name of preview.columns) headRow.appendChild(el("th", name));
+  preview.columns.forEach((name, i) => {
+    const th = el("th", name);
+    if (preview.columnKinds && preview.columnKinds[i] === "datetime") {
+      const tag = el("span", "日時"); // 日時として読み込んだ列の印
+      tag.className = "col-kind-tag";
+      th.appendChild(tag);
+    }
+    headRow.appendChild(th);
+  });
   table.appendChild(el("thead")).appendChild(headRow);
   const body = el("tbody");
   preview.rows.forEach((row, idx) => {
@@ -45,6 +65,12 @@ export const showPreview = (preview, skipRows = 0) => {
   const wrap = el("div");
   wrap.className = "table-wrap";
   wrap.appendChild(table);
-  dataArea.replaceChildren(meta, wrap);
+  dataArea.replaceChildren(...[preambleBox(preview.preamble), meta, wrap].filter(Boolean));
   applySkipRows(skipRows);
+};
+
+// 初期状態（表なし）に戻す
+export const clearPreview = () => {
+  const dataArea = document.getElementById("dataArea");
+  if (dataArea) dataArea.replaceChildren();
 };

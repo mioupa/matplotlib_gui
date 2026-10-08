@@ -6,7 +6,8 @@ js / pyodide には依存しない。列指定は "__idx__N"（列番号）形�
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 
 import pandas as pd
 
@@ -52,9 +53,29 @@ def coerce_numeric(raw: pd.Series) -> tuple[pd.Series, int, list[str]]:
     return numeric, count, examples
 
 
-def dropped_warning(series_no: int, what: str, count: int, examples: list[str]) -> dict:
+_THOUSANDS_LIKE = re.compile(r"[+-]?\d{1,3}(,\d{3})+(\.\d+)?")  # 1,234 / -1,234,567.5
+_DECIMAL_COMMA_LIKE = re.compile(r"[+-]?(\d+,\d+|\d{1,3}(\.\d{3})+,\d+)")  # 1,5 / 1.234,5
+THOUSANDS_HINT = "（桁区切りのカンマなら、「データ読み込み」の「桁区切り」をカンマにしてください）"
+DECIMAL_HINT = "（小数点がカンマなら、「データ読み込み」の「小数点」をカンマにしてください）"
+
+
+def load_hint(examples: list[str], load) -> str:
+    """除外した値の例が、桁区切り・小数点カンマの数に見えるのに読込設定がそうなっていないとき、設定の案内を返す。"""
+    if load is None:
+        return ""
+    for text in examples:
+        value = text.strip()
+        if _THOUSANDS_LIKE.fullmatch(value):  # 両方に当てはまる 1,234 は桁区切りとして案内する
+            if load.thousands != ",":
+                return THOUSANDS_HINT
+        elif _DECIMAL_COMMA_LIKE.fullmatch(value) and load.decimal != ",":
+            return DECIMAL_HINT
+    return ""
+
+
+def dropped_warning(series_no: int, what: str, count: int, examples: list[str], load=None) -> dict:
     ex = ", ".join(f'"{e}"' for e in examples)
-    message = f"{what}: 数値に変換できない値が{count}件あったため、その行を除外しました（例: {ex}）。"
+    message = f"{what}: 数値に変換できない値が{count}件あったため、その行を除外しました（例: {ex}）。{load_hint(examples, load)}"
     return {"series": series_no, "message": message}
 
 
@@ -126,9 +147,13 @@ def resolve_y_indices(df: pd.DataFrame, requests: list[str]) -> list[str]:
     return resolved
 
 
-def slice_skip_rows(df_full: pd.DataFrame, skip_rows: int) -> pd.DataFrame:
+def slice_skip_rows(df_full: pd.DataFrame, skip_rows: int, label: str = "") -> pd.DataFrame:
+    """label は複数ファイルのときのデータ元の名前（「データ2（b.csv）」）。1つのときは空。"""
     if skip_rows >= len(df_full):
-        raise UserError("スキップ行数がデータ行数以上です。「除外する先頭行数」を小さくしてください。", field="除外する先頭行数")
+        prefix = f"{label}: " if label else ""
+        raise UserError(
+            f"{prefix}スキップ行数がデータ行数以上です。「除外する先頭行数」を小さくしてください。", field="除外する先頭行数"
+        )
     return df_full.iloc[skip_rows:].reset_index(drop=True)
 
 
@@ -145,10 +170,23 @@ class SeriesPlan:
     data_label: str  # f"{name} [{idx}]"
     legend_label: str
     convert_x: bool  # X を pd.to_numeric で変換する（line / scatter のみ）
-    categorical_x: bool  # line / scatter で X が数値でない列（文字列・日時）のまま使う
+    categorical_x: bool  # line / scatter で X が数値でも日時でもない列（文字列）のまま使う
     marker_size: float
     has_points: bool
     secondary: bool
+    datetime_x: bool = False  # X が日時の列（読み込み時に日時に変換済み）
+    data_id: str = ""  # データ元のファイル id
+    data_var: str = "df"  # 生成コードでこの系列が使う DataFrame の変数名（複数ファイルのときは df1, df2, ...）
+
+
+@dataclass(frozen=True)
+class PlanSource:
+    """描画に使うデータ元（load.files の並びの順）。"""
+
+    id: str
+    number: int  # 「データN」の N（load.files の位置。ファイルの一覧が空なら 1）
+    var: str  # DataFrame の変数名（"df" または "dfN"）
+    name: str  # ファイル名（load.files の name。無ければ空）
 
 
 @dataclass(frozen=True)
@@ -163,10 +201,33 @@ class PlotPlan:
     plotted_count: int
     uses_secondary: bool  # 第2Y軸（ax2）を作る（描ける点のある第2軸の系列がある）
     warnings: tuple[dict, ...]  # [{"series": 1始まり, "message": str}]
+    datetime_x: bool = False  # 日時の X 軸（line / scatter は日時の軸、bar は日時を文字列にしたカテゴリ）
+    thin_categorical_x: bool = False  # line / scatter で X が文字列の列。カテゴリが多いので目盛を間引く
+    bar_date_format: str | None = None  # bar で X が日時のときの strftime の書式
+    sources: tuple[PlanSource, ...] = ()  # 描画に使うデータ元だけ（load.files の順）
+    multi_source: bool = False  # load.files が2つ以上（生成コードで DATA_FILE_N / dfN と書く）
 
     @property
     def plotted(self) -> tuple[SeriesPlan, ...]:
         return tuple(s for s in self.series if s.has_points)
+
+
+MAX_CATEGORY_TICKS = 25  # X が文字列の列のとき、目盛に出すカテゴリの最大数
+Y_DATETIME_MESSAGE = "系列{n}: Y列（{name}）は日時の列です。Y列には数値の列を選んでください。"
+
+
+def _is_datetime(series: pd.Series) -> bool:
+    return pd.api.types.is_datetime64_any_dtype(series.dtype)
+
+
+def auto_bar_date_format(x: pd.Series) -> str:
+    """棒グラフの X が日時のときの、自動の書式。全部 0 時なら日付だけ、秒がすべて 0 なら分まで、それ以外は秒まで。"""
+    valid = x.dropna()
+    if valid.empty or (valid == valid.dt.normalize()).all():
+        return "%Y-%m-%d"
+    if (valid.dt.second == 0).all() and (valid.dt.microsecond == 0).all():
+        return "%Y-%m-%d %H:%M"
+    return "%Y-%m-%d %H:%M:%S"
 
 
 def _label_for(df: pd.DataFrame, idx: int) -> tuple[str, str]:
@@ -174,36 +235,86 @@ def _label_for(df: pd.DataFrame, idx: int) -> tuple[str, str]:
     return name, f"{name} [{idx}]"
 
 
-def plan_plot(df_full: pd.DataFrame, settings: Settings) -> PlotPlan:
-    """データと設定から描画計画を作る。データ由来の問題は UserError にする。"""
+NOT_LOADED_MESSAGE = "データ{n}（{name}）を読み込めていません。読込設定やファイルを確認してください。"
+BAR_SOURCE_MESSAGE = "棒グラフでは、すべての系列に同じデータ元を選んでください。"
+
+
+def plan_plot(data, settings: Settings) -> PlotPlan:
+    """データと設定から描画計画を作る。データ由来の問題は UserError にする。
+
+    data は DataFrame（1つ）または {ファイル id: DataFrame}（読み込めたファイルだけ）。"""
     plot = settings.plot
-    df = slice_skip_rows(df_full, plot.skip_rows)
-    y_requests = resolve_y_indices(df, [s.y for s in settings.series])
+    files = settings.load.files
+    numbers = {f.id: i + 1 for i, f in enumerate(files)}
+    names = {f.id: f.name for f in files}
+    if isinstance(data, pd.DataFrame):
+        data = {files[0].id if files else "d1": data}
+    if not data:
+        raise UserError("先にファイルを読み込んでください。")
+    default_id = files[0].id if files else next(iter(data))
+    multi = len(files) >= 2
+
+    ids: list[str] = []  # 系列ごとのデータ元
+    for n, s in enumerate(settings.series, start=1):
+        sid = s.source or default_id
+        if sid not in data:
+            raise UserError(
+                NOT_LOADED_MESSAGE.format(n=numbers.get(sid, 1), name=names.get(sid, "")), field=f"系列{n}のデータ元"
+            )
+        ids.append(sid)
+    if plot.type == "bar" and len(set(ids)) > 1:
+        raise UserError(BAR_SOURCE_MESSAGE, field="データ元")
+
+    order = [f.id for f in files if f.id in set(ids)] if files else list(dict.fromkeys(ids))
+    frames = {
+        sid: slice_skip_rows(data[sid], plot.skip_rows, f"データ{numbers.get(sid, 1)}（{names.get(sid, '')}）" if multi else "")
+        for sid in order
+    }
+    sources = tuple(
+        PlanSource(id=sid, number=numbers.get(sid, 1), var=f"df{numbers[sid]}" if multi else "df", name=names.get(sid, ""))
+        for sid in order
+    )
+    var_of = {src.id: src.var for src in sources}
+
+    y_requests = [""] * len(settings.series)
+    for sid in order:
+        idx = [i for i, x in enumerate(ids) if x == sid]
+        resolved = resolve_y_indices(frames[sid], [settings.series[i].y for i in idx])
+        for i, r in zip(idx, resolved):
+            y_requests[i] = r
+    dfs = [frames[sid] for sid in ids]
     if plot.type in {"line", "scatter"}:
-        return _plan_xy(df, settings, y_requests)
-    return _plan_bar(df, settings, y_requests)
+        plan = _plan_xy(dfs, settings, y_requests)
+    else:
+        plan = _plan_bar(dfs[0], settings, y_requests)
+    series = tuple(replace(sp, data_id=sid, data_var=var_of[sid]) for sp, sid in zip(plan.series, ids))
+    return replace(plan, series=series, sources=sources, multi_source=multi)
 
 
-def _plan_xy(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> PlotPlan:
+def _plan_xy(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str]) -> PlotPlan:
     plot_type = settings.plot.type
     plans: list[SeriesPlan] = []
     warnings: list[dict] = []
-    for n, (series, y_request) in enumerate(zip(settings.series, y_requests), start=1):
+    category_values: set = set()
+    for n, (df, series, y_request) in enumerate(zip(dfs, settings.series, y_requests), start=1):
         x_index = resolve_column_index(df, series.x) if series.x else None
         x_label = str(df.columns[x_index]) if x_index is not None else "index"
         y_index = resolve_column_index(df, y_request)
         y_name, data_label = _label_for(df, y_index)
 
+        if _is_datetime(df.iloc[:, y_index]):
+            raise UserError(Y_DATETIME_MESSAGE.format(n=n, name=y_name), field=f"系列{n}のY列")
         x_series = df.iloc[:, x_index] if x_index is not None else pd.Series(df.index)
+        datetime_x = _is_datetime(x_series)
         convert_x = False
-        if x_index is not None and not pd.api.types.is_numeric_dtype(x_series.dtype) and _looks_numeric(x_series):
+        if x_index is not None and not datetime_x and not pd.api.types.is_numeric_dtype(x_series.dtype) and _looks_numeric(x_series):
             convert_x = True
             x_series, x_dropped, x_examples = coerce_numeric(x_series)
             if x_dropped:
-                warnings.append(dropped_warning(n, f"系列{n}のX列（{x_label}）", x_dropped, x_examples))
+                warnings.append(dropped_warning(n, f"系列{n}のX列（{x_label}）", x_dropped, x_examples, settings.load))
         y_numeric, y_dropped, y_examples = coerce_numeric(df.iloc[:, y_index])
         if y_dropped:
-            warnings.append(dropped_warning(n, f"系列{n}（{y_name}）", y_dropped, y_examples))
+            warnings.append(dropped_warning(n, f"系列{n}（{y_name}）", y_dropped, y_examples, settings.load))
 
         has_points = bool((y_numeric.notna() & pd.notna(x_series)).any())
         plans.append(
@@ -216,19 +327,45 @@ def _plan_xy(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> Plo
                 data_label=data_label,
                 legend_label=series.label or data_label,
                 convert_x=convert_x,
-                categorical_x=x_index is not None and not convert_x and not pd.api.types.is_numeric_dtype(x_series.dtype),
+                categorical_x=x_index is not None
+                and not datetime_x
+                and not convert_x
+                and not pd.api.types.is_numeric_dtype(x_series.dtype),
                 marker_size=series.effective_marker_size(plot_type),
                 has_points=has_points,
                 secondary=series.secondary_axis,
+                datetime_x=datetime_x,
             )
         )
+        if has_points and x_index is not None and plans[-1].categorical_x:
+            shown = x_series[y_numeric.notna() & x_series.notna()]
+            category_values.update(shown.tolist())
 
     if not any(p.has_points for p in plans):
         raise UserError(_no_data_message(warnings))
 
+    _check_datetime_x(settings, plans)
     x_labels = [p.x_label for p in plans]
     common_x = x_labels[0] if len(set(x_labels)) == 1 else "x"
-    return _finish(settings, plans, warnings, common_x, None)
+    return _finish(
+        settings, plans, warnings, common_x, None,
+        datetime_x=any(p.datetime_x and p.has_points for p in plans),
+        thin_categorical_x=len(category_values) > MAX_CATEGORY_TICKS,
+    )
+
+
+def _check_datetime_x(settings: Settings, plans: list[SeriesPlan]) -> None:
+    """日時の X 軸の組み合わせの検査（日時と日時でない X の混在、対数軸、範囲の指定）。"""
+    kinds = {p.datetime_x for p in plans}
+    if kinds == {True, False}:
+        raise UserError("X が日時の系列と、日時でない系列を同じ図に描くことはできません。X列をそろえてください。", field="X列")
+    if kinds != {True}:
+        return
+    axis = settings.axes.x
+    if axis.scale == "log":
+        raise UserError("X が日時の列のときは、X軸を対数にできません。", field="X軸スケール")
+    if axis.min is not None or axis.max is not None:
+        raise UserError("X が日時の列のときは、X軸の最小値・最大値は指定できません。空欄にしてください。", field="X軸の範囲")
 
 
 def _plan_bar(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> PlotPlan:
@@ -238,10 +375,12 @@ def _plan_bar(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> Pl
         bar_x_index = resolve_column_index(df, x_req)
         x = df.iloc[:, bar_x_index]
         x_label = str(df.columns[bar_x_index])
+        datetime_x = _is_datetime(x)
     else:
         bar_x_index = None
         x = pd.Series(df.index)
         x_label = "index"
+        datetime_x = False
 
     frame = pd.DataFrame({"x": x})
     plans: list[SeriesPlan] = []
@@ -250,10 +389,12 @@ def _plan_bar(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> Pl
         n = i + 1
         y_index = resolve_column_index(df, y_request)
         y_name, data_label = _label_for(df, y_index)
+        if _is_datetime(df.iloc[:, y_index]):
+            raise UserError(Y_DATETIME_MESSAGE.format(n=n, name=y_name), field=f"系列{n}のY列")
         numeric, dropped, examples = coerce_numeric(df.iloc[:, y_index])
         frame[f"y_{i}"] = numeric
         if dropped:
-            warnings.append(dropped_warning(n, f"系列{n}（{y_name}）", dropped, examples))
+            warnings.append(dropped_warning(n, f"系列{n}（{y_name}）", dropped, examples, settings.load))
         plans.append(
             SeriesPlan(
                 number=n,
@@ -268,6 +409,7 @@ def _plan_bar(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> Pl
                 marker_size=series.effective_marker_size("bar"),
                 has_points=True,
                 secondary=series.secondary_axis,
+                datetime_x=datetime_x,
             )
         )
 
@@ -280,10 +422,23 @@ def _plan_bar(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> Pl
         has_points = bool((frame["y_0"].notna() & pd.notna(frame["x"])).any())
         if not has_points:
             raise UserError(NO_DRAWABLE_DATA)
-    return _finish(settings, plans, warnings, x_label, bar_x_index)
+    bar_date_format = None
+    if datetime_x:
+        bar_date_format = settings.axes.x.date_format or auto_bar_date_format(x)
+    return _finish(settings, plans, warnings, x_label, bar_x_index, datetime_x=datetime_x, bar_date_format=bar_date_format)
 
 
-def _finish(settings: Settings, plans: list[SeriesPlan], warnings: list[dict], x_label: str, bar_x_index) -> PlotPlan:
+def _finish(
+    settings: Settings,
+    plans: list[SeriesPlan],
+    warnings: list[dict],
+    x_label: str,
+    bar_x_index,
+    *,
+    datetime_x: bool = False,
+    thin_categorical_x: bool = False,
+    bar_date_format: str | None = None,
+) -> PlotPlan:
     primary = [p.data_label for p in plans if not p.secondary]
     secondary = [p.data_label for p in plans if p.secondary]
     uses_secondary = any(p.secondary and p.has_points for p in plans)
@@ -298,4 +453,7 @@ def _finish(settings: Settings, plans: list[SeriesPlan], warnings: list[dict], x
         plotted_count=sum(1 for p in plans if p.has_points),
         uses_secondary=uses_secondary,
         warnings=tuple(warnings),
+        datetime_x=datetime_x,
+        thin_categorical_x=thin_categorical_x,
+        bar_date_format=bar_date_format,
     )

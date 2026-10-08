@@ -157,7 +157,8 @@ def test_non_numeric_fixture_loads_as_text_columns():
 def test_preview_payload_shape():
     df = _load("utf8.csv").df
     p = build_preview(df)
-    assert set(p) == {"columns", "rows", "totalRows", "totalColumns", "limit", "truncated"}
+    assert set(p) == {"columns", "rows", "totalRows", "totalColumns", "limit", "truncated", "preamble", "columnKinds"}
+    assert p["preamble"] is None
     assert p["columns"] == ["時間", "電圧", "電流"]
     assert p["totalRows"] == 30 and p["totalColumns"] == 3 and p["truncated"] is False
     assert len(p["rows"]) == 30 and all(len(r) == 3 for r in p["rows"])
@@ -203,6 +204,16 @@ def test_decode_delimiter_invalid_escape_still_japanese_error():
     with pytest.raises(UserError) as info:
         decode_delimiter("\\x", ".txt")
     assert info.value.field == "区切り文字" and not info.value.message.isascii()
+
+
+def test_decode_delimiter_unknown_escape_is_kept_without_warning():
+    # 「\\d」のような未定義のエスケープは文字のまま残す。出る DeprecationWarning は loader の中で無視する（漏らさない）
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert decode_delimiter("\\d", ".txt") == "\\d"
+        assert decode_delimiter("a\\q\\t", ".txt") == "a\\q\t"
 
 
 def test_ideographic_comma_delimited_file_loads():

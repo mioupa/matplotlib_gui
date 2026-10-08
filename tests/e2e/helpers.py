@@ -304,3 +304,125 @@ def wait_code_contains(page, text, timeout=60_000):
     page.wait_for_function(
         "(t) => document.getElementById('customPyCode').value.includes(t)", arg=text, timeout=timeout
     )
+
+
+# --- データ読み込みの設定（シート・ヘッダより前の行・桁区切り・小数点・コメント記号） ---
+def change_load_option(page, action):
+    """action() で読込設定を変え、読み直し（data-load-count が増える）と再描画が済むまで待つ。"""
+    before = load_count(page)
+    action()
+    wait_load_count(page, before + 1)
+    wait_settled(page)
+
+
+def set_load_options(page, *, delimiter=None, skip_lines=None, thousands=None, decimal=None, comment=None):
+    """ファイルを選ぶ前に、読込設定を入れておく（ファイルが無いので読み直しは起こらない）。"""
+    if delimiter is not None:
+        page.fill("#delimiter", delimiter)
+    if skip_lines is not None:
+        page.fill("#skipLines", str(skip_lines))
+    if thousands is not None:
+        page.select_option("#thousands", thousands)
+    if decimal is not None:
+        page.select_option("#decimal", decimal)
+    if comment is not None:
+        page.fill("#commentChar", comment)
+
+
+def sheet_options(page) -> list[str]:
+    return page.evaluate("[...document.querySelectorAll('#sheetSelect option')].map(o => o.value)")
+
+
+def code_is_stale(page) -> bool:
+    """コードタブの「最新でない」表示（#customPyCode の data-stale と #codeStaleNote）。"""
+    attr = page.evaluate("document.getElementById('customPyCode').dataset.stale || ''") == "true"
+    note = page.evaluate("!document.getElementById('codeStaleNote').hidden")
+    assert attr == note, "data-stale と #codeStaleNote の表示が食い違っている"
+    return attr
+
+
+# --- ドロップ・貼り付け（D1） ---
+DRAG_JS = """([type, selector, files, text]) => {
+  const dt = new DataTransfer();
+  for (const f of files) dt.items.add(new File([new Uint8Array(f.bytes)], f.name));
+  if (text !== null) dt.setData('text/plain', text);
+  const target = document.querySelector(selector);
+  const event = new DragEvent(type, {dataTransfer: dt, bubbles: true, cancelable: true});
+  target.dispatchEvent(event);
+  return event.defaultPrevented;
+}"""
+
+
+def drag_event(page, type_, selector="body", files=(), text=None) -> bool:
+    """ファイル（名前, バイト列）や文字列を持つ DragEvent を要素に送る。defaultPrevented を返す。"""
+    payload = [{"name": name, "bytes": list(data)} for name, data in files]
+    return page.evaluate(DRAG_JS, [type_, selector, payload, text])
+
+
+def drop_files(page, files, selector="body"):
+    """ドロップの一連のイベント（dragenter → dragover → drop）を送る。"""
+    drag_event(page, "dragenter", selector, files)
+    drag_event(page, "dragover", selector, files)
+    return drag_event(page, "drop", selector, files)
+
+
+def drop_overlay_visible(page) -> bool:
+    return page.evaluate("!document.getElementById('dropOverlay').hidden")
+
+
+PASTE_JS = """([selector, text]) => {
+  const target = selector ? document.querySelector(selector) : document.body;
+  if (selector) target.focus();
+  const dt = new DataTransfer();
+  dt.setData('text/plain', text);
+  const event = new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true});
+  target.dispatchEvent(event);
+  return event.defaultPrevented;
+}"""
+
+
+def paste_text(page, text, selector="#pasteArea") -> bool:
+    """ClipboardEvent('paste') を送る（selector=None は body）。defaultPrevented を返す。"""
+    return page.evaluate(PASTE_JS, [selector, text])
+
+
+EXCEL_TABLE = "時間\t電圧\t電流\r\n0\t0\t1.5\r\n1\t0.5\t1.4\r\n2\t0.9\t1.1\r\n3\t1.0\t0.8\r\n"
+
+
+# --- 複数ファイル（D6） ---
+def add_files(page, paths, selector="#addFileInput", timeout=120_000):
+    """ファイルを追加（または selector で置き換え）し、読み込みと描画が済むまで待つ。"""
+    before = load_count(page)
+    page.set_input_files(selector, [str(p) for p in paths])
+    wait_load_count(page, before + 1, timeout=timeout)
+    wait_settled(page, timeout=timeout)
+
+
+def file_row_ids(page) -> list[str]:
+    """一覧（#fileList）の行の id（file-d1 など）。"""
+    return page.evaluate("[...document.querySelectorAll('#fileList .file-row')].map(e => e.id)")
+
+
+def file_row_states(page) -> dict[str, str]:
+    return page.evaluate("Object.fromEntries([...document.querySelectorAll('#fileList .file-row')].map(e => [e.id, e.dataset.state]))")
+
+
+def settings_files(page) -> list[dict]:
+    """画面のファイル一覧に対応する、データ元セレクト（#previewSource）の選択肢の値。"""
+    return page.evaluate("[...document.querySelectorAll('#previewSource option')].map(o => o.value)")
+
+
+def add_series_with_source(page, source, y="__idx__1", series_id="s2"):
+    """系列を追加し、データ元と Y 列を選ぶ。"""
+    page.click("#addSeriesBtn")
+    page.select_option(f"#series-{series_id}-source", source)
+    page.select_option(f"#series-{series_id}-y", y)
+    wait_settled(page)
+
+
+def remove_file(page, file_id):
+    """ファイルを取り除く。一覧の削除ボタンは2ファイル以上のときだけ出るので、最後の1つは bridge.js の removeFile で取り除く。"""
+    if page.locator(f"#file-{file_id}-remove").count() > 0:
+        page.click(f"#file-{file_id}-remove")
+    else:
+        page.evaluate("(id) => import(new URL('js/bridge.js', document.baseURI)).then((m) => m.removeFile(id))", file_id)

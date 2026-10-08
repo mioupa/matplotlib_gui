@@ -1,4 +1,4 @@
-"""設定オブジェクト（JSON, camelCase, version=2）の既定値・検証・型付きデータクラス。
+"""設定オブジェクト（JSON, camelCase, version=3）の既定値・検証・型付きデータクラス。
 
 JS 側の js/defaults.js と default_settings() は同一でなければならない（単体テストで比較する）。
 このモジュールは js / pyodide / pyscript に依存しない。
@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import copy
 import math
+import re
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -14,7 +16,7 @@ from matplotlib.colors import is_color_like
 
 from .errors import UserError
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 PLOT_TYPES = ("line", "scatter", "bar")
 LINE_STYLES = ("solid", "dashed", "dashdot", "dotted")
@@ -43,6 +45,12 @@ LEGEND_LOCATIONS = (
     "none",
 )
 DEFAULT_SCATTER_MARKER_SIZE = 24.0
+THOUSANDS_CHOICES = ("", ",", ".", " ", "'")
+DECIMAL_CHOICES = (".", ",")
+MAX_SKIP_LINES = 1_000_000
+MAX_FILES = 10
+MAX_DATE_FORMAT_LENGTH = 64
+_FILE_ID_RE = re.compile(r"d[0-9]{1,4}")
 
 _DEFAULT_SERIES = {
     "id": "s1",
@@ -54,6 +62,7 @@ _DEFAULT_SERIES = {
     "markerSize": None,
     "label": "",
     "secondaryAxis": False,
+    "source": "",
 }
 
 
@@ -61,7 +70,16 @@ def default_settings() -> dict:
     """既定の設定（JSON 互換の dict）。呼ぶたびに新しい dict を返す。"""
     return {
         "version": SCHEMA_VERSION,
-        "load": {"delimiter": "", "hasHeader": True},
+        "load": {
+            "delimiter": "",
+            "hasHeader": True,
+            "skipLines": 0,
+            "thousands": "",
+            "decimal": ".",
+            "comment": "",
+            "parseDates": True,
+            "files": [],
+        },
         "plot": {
             "type": "line",
             "skipRows": 0,
@@ -76,7 +94,7 @@ def default_settings() -> dict:
             "margins": {"left": None, "right": None, "bottom": None, "top": None},
         },
         "axes": {
-            "x": {"label": "", "scale": "linear", "min": None, "max": None},
+            "x": {"label": "", "scale": "linear", "min": None, "max": None, "dateFormat": ""},
             "y": {"label": "", "scale": "linear", "min": None, "max": None},
             "y2": {"label": "", "scale": "linear", "min": None, "max": None},
         },
@@ -89,9 +107,22 @@ def default_settings() -> dict:
 
 
 @dataclass(frozen=True)
+class FileEntry:
+    id: str
+    name: str = ""
+    sheet: str = ""  # "" = 先頭シート
+
+
+@dataclass(frozen=True)
 class LoadSettings:
     delimiter: str = ""
     has_header: bool = True
+    skip_lines: int = 0
+    thousands: str = ""
+    decimal: str = "."
+    comment: str = ""
+    parse_dates: bool = True
+    files: tuple[FileEntry, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -100,6 +131,7 @@ class AxisSettings:
     scale: str = "linear"
     min: float | None = None
     max: float | None = None
+    date_format: str = ""  # X 軸だけ。"" = 自動
 
 
 @dataclass(frozen=True)
@@ -162,6 +194,7 @@ class SeriesSettings:
     marker_size: float | None = None  # None = プロット種別ごとの自動値
     label: str = ""
     secondary_axis: bool = False
+    source: str = ""  # データ元のファイル id（"" = load.files の先頭）
 
     def effective_marker_size(self, plot_type: str) -> float:
         """自動(None)は line=0 / それ以外=24。scatter で 0 以下なら 24 に補正する。"""
@@ -294,19 +327,29 @@ def migrate_settings(raw: dict) -> dict:
     バージョンが無いものは現在のバージョンとして扱う。対応していないバージョンは UserError。
     - 1 → 2: 保存 DPI を追加する。v1 は常に 120 dpi で保存していたので、同じ出力になるよう 120 にする。
       図の単位・欧文フォント・カラーパレット・SVG の文字は、既定値で補われる。
+    - 2 → 3: データ取り込みの項目（読み飛ばす行数・桁区切り・小数点・コメント記号・複数ファイル・
+      系列のデータ元・X 軸の日時の書式）を追加する。日時の自動認識（load.parseDates）は、v2 までの
+      出力を保つため false にする（v3 で新しく作る設定の既定値は true）。他の項目は既定値で補われる。
     """
     version = raw.get("version", SCHEMA_VERSION)
-    if isinstance(version, bool) or version not in (1, SCHEMA_VERSION):
+    if isinstance(version, bool) or version not in (1, 2, SCHEMA_VERSION):
         raise UserError(f"設定のバージョン（{version}）に対応していません。ページを再読み込みしてください。", field="version")
     out = copy.deepcopy(raw)
     if version == 1:
-        out["version"] = SCHEMA_VERSION
         save = out.get("save")
         if not isinstance(save, dict):
             save = {}
         if "dpi" not in save:
             save["dpi"] = 120
         out["save"] = save
+    if version in (1, 2):
+        out["version"] = SCHEMA_VERSION
+        load = out.get("load")
+        if not isinstance(load, dict):
+            load = {}
+        if "parseDates" not in load:
+            load["parseDates"] = False
+        out["load"] = load
     return out
 
 
@@ -317,10 +360,68 @@ def parse_load_settings(raw: dict | None) -> LoadSettings:
     """読み込み設定だけを検証する（描画設定の不備でファイル読込を止めないため）。"""
     raw = migrate_settings(raw if isinstance(raw, dict) else {})
     load = _merge(default_settings()["load"], raw.get("load"))
+    skip_lines = _integer(load["skipLines"], "ヘッダより前に読み飛ばす行数", default=0, minimum=0)
+    if skip_lines > MAX_SKIP_LINES:
+        raise UserError(f"「ヘッダより前に読み飛ばす行数」は{MAX_SKIP_LINES}以下の整数で入力してください。", field="ヘッダより前に読み飛ばす行数")
+    thousands = _choice(load["thousands"], "桁区切り", THOUSANDS_CHOICES)
+    decimal = _choice(load["decimal"], "小数点", DECIMAL_CHOICES)
+    if thousands and thousands == decimal:
+        raise UserError("「桁区切り」と「小数点」に同じ記号は使えません。", field="桁区切り")
+    comment = _parse_comment(load["comment"], thousands, decimal)
     return LoadSettings(
         delimiter=_string(load["delimiter"], "区切り文字"),
         has_header=_boolean(load["hasHeader"], "先頭行をヘッダとして扱う"),
+        skip_lines=skip_lines,
+        thousands=thousands,
+        decimal=decimal,
+        comment=comment,
+        parse_dates=_boolean(load["parseDates"], "日時の列を自動で認識する"),
+        files=_parse_files(load["files"]),
     )
+
+
+def _parse_comment(value: Any, thousands: str, decimal: str) -> str:
+    label = "コメント記号"
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise UserError(f"「{label}」は文字列で指定してください。", field=label)
+    if value == "":
+        return ""
+    if len(value) != 1:
+        raise UserError(f"「{label}」は1文字で指定してください（例: #）。", field=label)
+    if value == '"' or value.isspace():
+        raise UserError(f"「{label}」に \" や空白は使えません。", field=label)
+    if value in (thousands, decimal):
+        raise UserError(f"「{label}」に、桁区切り・小数点と同じ記号は使えません。", field=label)
+    return value
+
+
+def _parse_files(raw_files: Any) -> tuple[FileEntry, ...]:
+    label = "読み込むファイル"
+    if not isinstance(raw_files, list):
+        raise UserError(f"「{label}」の値が不正です。", field=label)
+    if len(raw_files) > MAX_FILES:
+        raise UserError(f"読み込めるファイルは{MAX_FILES}個までです。", field=label)
+    out = []
+    seen: set[str] = set()
+    for item in raw_files:
+        if not isinstance(item, dict):
+            raise UserError(f"「{label}」の値が不正です。", field=label)
+        fid = item.get("id")
+        if not isinstance(fid, str) or not _FILE_ID_RE.fullmatch(fid):
+            raise UserError(f"「{label}」のIDが不正です。", field=label)
+        if fid in seen:
+            raise UserError(f"「{label}」のIDが重複しています。", field=label)
+        seen.add(fid)
+        out.append(
+            FileEntry(
+                id=fid,
+                name=_string(item.get("name", ""), "ファイル名", owner="読み込むファイルの"),
+                sheet=_string(item.get("sheet", ""), "シート", owner="読み込むファイルの"),
+            )
+        )
+    return tuple(out)
 
 
 def _parse_axis(raw: dict, key: str, name: str) -> AxisSettings:
@@ -328,7 +429,26 @@ def _parse_axis(raw: dict, key: str, name: str) -> AxisSettings:
     lo = _number(axis["min"], f"{name}軸の最小値", default=None)
     hi = _number(axis["max"], f"{name}軸の最大値", default=None)
     scale = _choice(axis["scale"], f"{name}軸スケール", SCALES)
-    return AxisSettings(label=_string(axis["label"], f"{name}軸ラベル").strip(), scale=scale, min=lo, max=hi)
+    date_format = _date_format(axis["dateFormat"]) if key == "x" else ""
+    return AxisSettings(label=_string(axis["label"], f"{name}軸ラベル").strip(), scale=scale, min=lo, max=hi, date_format=date_format)
+
+
+def _date_format(value: Any) -> str:
+    label = "X軸の日時の書式"
+    if value is None:
+        return ""
+    bad = UserError(f"「{label}」が正しくありません。%Y/%m/%d のように、% で始まる指定を含めてください。", field=label)
+    if not isinstance(value, str) or len(value) > MAX_DATE_FORMAT_LENGTH:
+        raise bad
+    if value == "":
+        return ""
+    if "%" not in value:
+        raise bad
+    try:
+        datetime(2024, 1, 31, 13, 45, 30).strftime(value)
+    except (ValueError, TypeError, OverflowError):
+        raise bad from None
+    return value
 
 
 def _check_axis_range(axis: AxisSettings, name: str) -> None:
@@ -367,6 +487,7 @@ def _parse_series(raw_series: Any) -> tuple[SeriesSettings, ...]:
                 marker_size=marker,
                 label=_string(s["label"], "凡例名", owner=owner).strip(),
                 secondary_axis=_boolean(s["secondaryAxis"], "第2軸を使用", owner=owner),
+                source=_string(s["source"], "データ元", owner=owner),
             )
         )
     return tuple(out)
@@ -433,6 +554,10 @@ def parse_settings(raw: dict | None) -> Settings:
         y2=_parse_axis(ax, "y2", "第2Y"),
     )
     series = _parse_series(raw.get("series", d["series"]))
+    file_ids = {f.id for f in load.files}
+    for i, s in enumerate(series):
+        if s.source and s.source not in file_ids:
+            raise UserError(f"系列{i + 1}のデータ元が見つかりません。データ元を選び直してください。", field=f"系列{i + 1}のデータ元")
     _check_axis_range(axes.x, "X")
     _check_axis_range(axes.y, "Y")
     if any(s.secondary_axis for s in series):

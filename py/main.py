@@ -72,8 +72,20 @@ async def _ensure_excel():
         return json.dumps({"ok": False, "error": err.to_dict()}, ensure_ascii=False)
 
 
-def _load_file(name, data, load_settings_json):
-    return api.load_file_json(str(name), data.to_py(), str(load_settings_json))
+def _load_file(name, data, load_settings_json, source_id=None, pasted=None):
+    # source_id / pasted は JS が渡さない（null / undefined）ときは既定値
+    return api.load_file_json(
+        str(name), data.to_py(), str(load_settings_json),
+        source_id if isinstance(source_id, str) else "d1", pasted is True,
+    )
+
+
+def _remove_source(source_id):
+    return api.remove_source_json(str(source_id))
+
+
+def _clear_sources():
+    return api.clear_sources_json()
 
 
 def _code(value):
@@ -110,6 +122,8 @@ def _script_filename(save_filename):
 _PROXIES = {
     "ensureExcel": create_proxy(_ensure_excel),
     "loadFile": create_proxy(_load_file),
+    "removeSource": create_proxy(_remove_source),
+    "clearSources": create_proxy(_clear_sources),
     "render": create_proxy(_render),
     "save": create_proxy(_save),
     "copyImage": create_proxy(_copy_image),

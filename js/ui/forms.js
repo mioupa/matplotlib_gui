@@ -5,6 +5,11 @@ import { getPath, setPath } from "../state.js";
 export const FIELDS = [
   ["delimiter", "load.delimiter", "text"],
   ["hasHeader", "load.hasHeader", "checkbox"],
+  ["skipLines", "load.skipLines", "number"],
+  ["thousands", "load.thousands", "select"],
+  ["decimal", "load.decimal", "select"],
+  ["commentChar", "load.comment", "text"],
+  ["parseDates", "load.parseDates", "checkbox"],
   ["plotType", "plot.type", "select"],
   ["skipRows", "plot.skipRows", "number"],
   ["xColumn", "plot.xColumn", "select"],

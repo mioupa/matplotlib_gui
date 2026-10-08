@@ -2,7 +2,7 @@
 //   sync: 読み取り専用。GUI から生成したスクリプトを表示（描画の成功ごとに更新）。
 //   edit: 編集可。GUI の変更では上書きしない。「実行」（Ctrl/Cmd+Enter）でそのコードを実行する。
 import { enterEditMode, isDataReady, leaveEditMode, runCode, scriptFilename, setEditCodeProvider } from "../bridge.js";
-import { getCodeMode, getGeneratedCode, getGeneratedGeneration, isEditMode, subscribeCode } from "../code-state.js";
+import { getCodeMode, getGeneratedCode, getGeneratedGeneration, isCodeStale, isEditMode, subscribeCode } from "../code-state.js";
 import { setStatus } from "./notify.js";
 
 const $ = (id) => document.getElementById(id);
@@ -29,6 +29,18 @@ const showGenerated = () => {
   if (generation === null) delete editor.dataset.generation;
   else editor.dataset.generation = String(generation);
   updateGutter();
+};
+
+// 「最新でない」表示: data-stale="true"（#customPyCode）と #codeStaleNote
+const applyStale = () => {
+  const stale = isCodeStale() && !isEditMode();
+  const editor = $("customPyCode");
+  if (editor) {
+    if (stale) editor.dataset.stale = "true";
+    else delete editor.dataset.stale;
+  }
+  const note = $("codeStaleNote");
+  if (note) note.hidden = !stale;
 };
 
 const applyMode = () => {
@@ -122,6 +134,8 @@ export const bindCodeTab = () => {
   setEditCodeProvider(() => (editor ? editor.value : ""));
 
   subscribeCode((_state, change) => {
+    applyStale();
+    if (change.kind === "stale") return;
     if (change.kind === "mode") {
       applyMode();
       if (!isEditMode()) showGenerated(); // 「GUI から再生成」: 直近の生成コードをすぐ表示する
@@ -152,5 +166,6 @@ export const bindCodeTab = () => {
     });
   }
   applyMode();
+  applyStale();
   updateGutter();
 };

@@ -4,7 +4,7 @@
 """
 import math
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import openpyxl
@@ -89,6 +89,49 @@ def main():
     wb.save(OUT / "multi_sheet.xlsx")
     _normalize_zip(OUT / "multi_sheet.xlsx")
 
+    # 前置き行（装置の説明）が3行。3行目はカンマの数が違うので、skipLines 無しでは表として読めない
+    pre = [
+        "装置: テスト用ロガー,型番: X-100,単位: V",
+        "備考: この行はデータではありません",
+        "測定日: 2026-01-01,担当: 合成データ,単位: V と mA,備考: 5列,終",
+    ]
+    (OUT / "preamble.csv").write_bytes(("\n".join(pre) + "\n" + text).encode("utf-8"))
+
+    # ヨーロッパ式の数値: 区切り ;、小数点 ,、桁区切り .（1.234,5）
+    eu = [(i + 1, f"{(i + 1) * 1234.5:,.1f}".replace(",", "_").replace(".", ",").replace("_", "."), f"{i * 0.25:.2f}".replace(".", ",")) for i in range(12)]
+    eu.append((13, "-1.234.567,5", "-0,5"))
+    (OUT / "european.csv").write_bytes(csv_text(["番号", "値", "比"], eu, sep=";").encode("utf-8"))
+
+    # 引用符付きの桁区切り（カンマ区切りで "1,234"）。負の値も含む
+    th = [(i + 1, f'"{(i + 1) * 1234:,}"', f'"{-(i + 1) * 98765.5:,.1f}"') for i in range(12)]
+    (OUT / "thousands.csv").write_bytes(csv_text(["番号", "金額", "差額"], th).encode("utf-8"))
+
+    # コメント: 行全体の # と、データ行の末尾の # note
+    cm = ["# 全体のコメント", "x,y"]
+    for i in range(10):
+        cm.append(f"{i},{i * i}" + (" # note" if i == 4 else ""))
+        if i == 6:
+            cm.append("# 途中のコメント行")
+    (OUT / "comments.csv").write_bytes(("\n".join(cm) + "\n").encode("utf-8"))
+
+    # 2 シート。2 枚目は見出しの前に説明の行が 2 行ある
+    wb2 = openpyxl.Workbook()
+    p1 = wb2.active
+    p1.title = "データ"
+    p1.append(["t", "v"])
+    for i in range(15):
+        p1.append([i, i * 2])
+    p2 = wb2.create_sheet("説明つき")
+    p2.append(["測定条件: 合成データ"])
+    p2.append(["単位: V"])
+    p2.append(["t", "v", "w"])
+    for i in range(15):
+        p2.append([i, i * i, 100 - i])
+    wb2.properties.created = fixed
+    wb2.properties.modified = fixed
+    wb2.save(OUT / "preamble.xlsx")
+    _normalize_zip(OUT / "preamble.xlsx")
+
     dup = ["温度", "温度", "値"]
     # 同名列(温度)で値が異なる
     d = [(20 + i * 0.5, 100 - i * 2, round(math.sqrt(i + 1), 4)) for i in range(N)]
@@ -101,6 +144,51 @@ def main():
         unit = f"{i * 3 + 1} mV"
         lines.append(f"{i},{amount},{volt},{unit}")
     (OUT / "non_numeric.csv").write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+
+    make_datetime_fixtures(fixed)
+
+
+def make_datetime_fixtures(fixed):
+    """日時の列（D5）。年をまたぐ時間刻み、ISO 8601（タイムゾーン付き）、日本語の日付、Excel の日時セル。"""
+    # 時間刻み。値は 150 行（先頭 100 行は正しい日時。120 行目は読めない値、130 行目は空欄）
+    t0 = datetime(2025, 12, 31, 22, 0)
+    lines = ["日時,ID,通番,温度,湿度"]
+    for i in range(150):
+        stamp = (t0 + timedelta(hours=i)).strftime("%Y/%m/%d %H:%M")
+        if i == 120:
+            stamp = "測定エラー"
+        elif i == 130:
+            stamp = ""
+        lines.append(f"{stamp},A-{i + 1:03d},{1001 + i},{round(15 + 5 * math.sin(i / 8), 3)},{round(60 - i * 0.1, 2)}")
+    (OUT / "datetime.csv").write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+
+    # ISO 8601: 時刻は同じオフセット（+09:00）、混在は Z と +09:00 が交互
+    iso = ["時刻,混在,値"]
+    base = datetime(2026, 1, 5, 9, 0)
+    for i in range(30):
+        local = (base + timedelta(hours=i)).strftime("%Y-%m-%dT%H:%M:%S")
+        mixed = local + ("Z" if i % 2 == 0 else "+09:00")
+        iso.append(f"{local}+09:00,{mixed},{round(10 + i * 0.5, 2)}")
+    (OUT / "datetime_iso_tz.csv").write_bytes(("\n".join(iso) + "\n").encode("utf-8"))
+
+    # 日本語の日付（時刻なし）。棒グラフ用
+    ja = ["日付,売上"]
+    for i in range(8):
+        day = datetime(2026, 1, 5) + timedelta(days=i)
+        ja.append(f"{day.year}年{day.month}月{day.day}日,{100 + i * 13 % 47}")
+    (OUT / "dates_ja.csv").write_bytes(("\n".join(ja) + "\n").encode("utf-8"))
+
+    # Excel の日時セル（もともと datetime 型）
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws.append(["日時", "値", "温度"])
+    for i in range(24):
+        ws.append([datetime(2026, 1, 5, 12, 0) + timedelta(hours=6 * i), i * 2, round(20 + math.sin(i / 3), 3)])
+    wb.properties.created = fixed
+    wb.properties.modified = fixed
+    wb.save(OUT / "datetime.xlsx")
+    _normalize_zip(OUT / "datetime.xlsx")
 
 
 if __name__ == "__main__":

@@ -9,3 +9,9 @@ export const showPlot = (dataUri, generation, summary) => {
   if (summary !== undefined) img.dataset.summary = JSON.stringify(summary);
   plotArea.replaceChildren(img);
 };
+
+// 初期状態（画像なし）に戻す
+export const clearPlot = () => {
+  const plotArea = document.getElementById("plotArea");
+  if (plotArea) plotArea.replaceChildren();
+};

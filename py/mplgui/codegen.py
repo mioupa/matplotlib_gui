@@ -16,7 +16,7 @@ from typing import Callable
 from .dataprep import PlotPlan, SeriesPlan
 from .fonts import LATIN_FONTS, SANS_SERIF_PRIORITY
 from .formats import FORMATS, build_filename, savefig_kwargs, savefig_rc
-from .loader import SourceInfo
+from .loader import DatetimeColumn, SourceInfo
 from .settings import SeriesSettings, Settings
 
 SCRIPT_NAME = "plot.py"
@@ -153,15 +153,30 @@ def _label_size_expr(font_size: float) -> str:
 # ---------------------------------------------------------------- sections
 
 
-def _emit_header(b: _Builder, source: SourceInfo, latin_font: str = "default") -> None:
-    name = comment_text(source.filename)
+def _emit_header(b: _Builder, sources: list[SourceInfo], latin_font: str = "default", plan: PlotPlan | None = None) -> None:
     latin = LATIN_FONTS.get(latin_font)
+    if len(sources) == 1:
+        source = sources[0]
+        name = comment_text(source.filename)
+        if source.pasted:
+            usage = f"# 使い方: 貼り付けたデータを保存した「{name}」と同じフォルダに置いて、python {SCRIPT_NAME} で実行します。"
+        else:
+            usage = f"# 使い方: データファイル「{name}」と同じフォルダに置いて、python {SCRIPT_NAME} で実行します。"
+    else:
+        names = "".join(
+            f"「{comment_text(src.filename)}」" + ("（貼り付けたデータを保存したもの）" if src.pasted else "") for src in sources
+        )
+        usage = f"# 使い方: データファイル {names} を、このスクリプトと同じフォルダに置いて、python {SCRIPT_NAME} で実行します。"
     b.add(
         "# matplotlib GUI が生成したスクリプト",
-        f"# 使い方: データファイル「{name}」と同じフォルダに置いて、python {SCRIPT_NAME} で実行します。",
+        usage,
         "# 必要なライブラリ: pandas, matplotlib, numpy",
-        "import matplotlib.pyplot as plt",
     )
+    if plan is not None and _uses_date_axis(plan):
+        b.add("import matplotlib.dates as mdates")
+    b.add("import matplotlib.pyplot as plt")
+    if plan is not None and plan.thin_categorical_x:
+        b.add("import matplotlib.ticker as ticker")
     if latin is not None:
         b.add("from matplotlib import font_manager")
     b.add(
@@ -190,39 +205,90 @@ def _emit_header(b: _Builder, source: SourceInfo, latin_font: str = "default") -
             b.add(f'plt.rcParams["mathtext.fontset"] = {literal(latin.mathtext_fontset)}  # 数式（$...$）も Times 系の字形にする（STIX は matplotlib に同梱）')
 
 
+def _uses_date_axis(plan: PlotPlan) -> bool:
+    return plan.datetime_x and plan.plot_type in {"line", "scatter"}
+
+
 def _font_list_literal() -> str:
     return "[" + ", ".join(literal(name) for name in SANS_SERIF_PRIORITY) + "]"
 
 
-def _emit_load(b: _Builder, source: SourceInfo) -> None:
-    start = b.section("1. データの読み込み")
-    header_arg = literal(0 if source.has_header else None)
-    header_note = "あり" if source.has_header else "なし"
-    if source.kind == "xlsx":
+# 読込の引数ごとのコメント（SourceInfo.read_kwargs の全てのキーに必要。読込部はこの順・この内容で、全ての引数を明記する）
+_READ_COMMENTS = {
+    "sep": "区切り文字",
+    "header": "先頭行をヘッダにする（None: ヘッダなし）",
+    "skiprows": "ヘッダより前に読み飛ばす行数",
+    "thousands": "桁区切り（None: なし）",
+    "decimal": "小数点",
+    "comment": "コメント記号（None: なし）。この記号から行末までを読まない",
+    "engine": None,
+    "sheet_name": "シート",
+}
+_READ_COMMENTS_XLSX = {
+    "thousands": "桁区切り（文字列のセルだけに効く。None: なし）",
+    "decimal": "小数点（文字列のセルだけに効く）",
+}
+_KIND_NOTES = {"csv": "CSV（.csv）", "txt": "テキスト（.txt）", "tsv": "TSV（.tsv）", "xlsx": "Excel（.xlsx）"}
+
+
+def _datetime_expr(spec: DatetimeColumn, df: str = "df") -> str:
+    """列を日時にする式。loader.convert_datetime と同じ内容（単体テストで一致を確かめる）。"""
+    source = f"{df}.iloc[:, {spec.index}]" + (".str.strip()" if spec.strip else "")
+    utc = ", utc=True" if spec.utc else ""
+    expr = f'pd.to_datetime({source}, format={literal(spec.format)}, errors="coerce"{utc})'
+    return expr + ".dt.tz_localize(None)" if spec.has_tz else expr
+
+
+def _emit_read(b: _Builder, source: SourceInfo, data_file: str, df: str) -> None:
+    """1つのファイルの読み込み（DATA_FILE と df の名前は呼び出し側が決める）。"""
+    xlsx = source.kind == "xlsx"
+    if source.pasted:
         b.add(
-            f"# 形式: Excel（.xlsx）、シート: {comment_text(source.sheet_name)}（先頭のシート）、先頭行をヘッダにする: {header_note}",
-            "# .xlsx の読み込みには openpyxl が必要です（pip install openpyxl）",
-            f"DATA_FILE = {literal(source.filename)}",
-            "# 前置き行（データの前にある説明の行）を飛ばすときは、read_excel に skiprows=行数 を足す",
-            f"df = pd.read_excel(DATA_FILE, sheet_name={literal(source.sheet_name)}, header={header_arg})",
+            f"# 貼り付けたデータ: 「データ読み込み」の「貼り付けたデータを保存」で {comment_text(source.filename)} を保存し、"
+            "このスクリプトと同じフォルダに置いてください。"
         )
-    else:
-        b.add(
-            f"# 文字コード: {comment_text(source.encoding)}（自動判定）、区切り文字: {comment_text(literal(source.separator))}、先頭行をヘッダにする: {header_note}",
-            f"DATA_FILE = {literal(source.filename)}",
-            "# 前置き行（データの前にある説明の行）を飛ばすときは、read_csv に skiprows=行数 を足す",
-            f"df = pd.read_csv(DATA_FILE, encoding={literal(source.encoding)}, sep={literal(source.separator)}, "
-            f'header={header_arg}, engine="python")',
-        )
+    b.add(f"# 形式: {_KIND_NOTES.get(source.kind, comment_text(source.kind))}")
+    if xlsx:
+        b.add("# 読み込みには openpyxl が必要です（pip install openpyxl）")
+        if source.sheets:
+            b.add(f"# ファイル内のシート: {comment_text(', '.join(source.sheets))}")
+    b.add(f"{data_file} = {literal(source.filename)}")
+    func = "pd.read_excel" if xlsx else "pd.read_csv"
+    b.add(f"{df} = {func}(", f"    {data_file},")
+    if not xlsx:
+        b.add(f"    encoding={literal(source.encoding)},  # 文字コード（自動判定）")
+    for key, value in source.read_kwargs().items():
+        note = (_READ_COMMENTS_XLSX.get(key) if xlsx else None) or _READ_COMMENTS[key]
+        line = f"    {key}={literal(value)},"
+        b.add(f"{line}  # {note}" if note else line)
+    b.add(")")
     if not source.has_header:
-        b.add('df.columns = [f"column_{i}" for i in range(len(df.columns))]  # 列名を column_0, column_1, ... にする')
+        b.add(f'{df}.columns = [f"column_{{i}}" for i in range(len({df}.columns))]  # 列名を column_0, column_1, ... にする')
+    if source.datetime_columns:
+        b.add("# 日時の列を日時に変換する（自動で認識した書式。読めない値は NaT（欠損）になる）")
+        for spec in source.datetime_columns:
+            b.add(f"{df}.isetitem({spec.index}, {_datetime_expr(spec, df)})  # {comment_text(spec.name)} [{spec.index}]")
+
+
+def _emit_load(b: _Builder, plan: PlotPlan, infos: list[SourceInfo]) -> None:
+    start = b.section("1. データの読み込み")
+    if not plan.multi_source:
+        _emit_read(b, infos[0], "DATA_FILE", "df")
+    else:
+        for i, (src, info) in enumerate(zip(plan.sources, infos)):
+            if i > 0:
+                b.blank()
+            b.add(f"# データ{src.number}: {comment_text(info.filename)}")
+            _emit_read(b, info, f"DATA_FILE_{src.number}", src.var)
     b.load_lines = (start, len(b.lines))
 
 
 def _emit_skip_rows(b: _Builder, plan: PlotPlan) -> None:
     b.section("2. 描画に使う行")
     if plan.skip_rows > 0:
-        b.add(f"df = df.iloc[{literal(plan.skip_rows)}:].reset_index(drop=True)  # 先頭の{plan.skip_rows}行を描画から除外する")
+        for src in plan.sources:
+            v = src.var
+            b.add(f"{v} = {v}.iloc[{literal(plan.skip_rows)}:].reset_index(drop=True)  # 先頭の{plan.skip_rows}行を描画から除外する")
     else:
         b.add("# 先頭の行は除外しない（全ての行を使う）")
 
@@ -247,6 +313,8 @@ def _emit_figure(b: _Builder, settings: Settings) -> None:
 
 def _series_comment(p: SeriesPlan, *, bar_x: bool = False) -> str:
     where = "（第2Y軸）" if p.secondary else ""
+    if p.data_var != "df":
+        where += f"（{p.data_var}）"
     return f"# 系列{p.number}{where}: X = {_column_comment(p, 'x')}、Y = {_column_comment(p, 'y')}"
 
 
@@ -256,15 +324,17 @@ def _target(p: SeriesPlan) -> str:
 
 def _emit_x_data(b: _Builder, p: SeriesPlan) -> None:
     if p.x_index is None:
-        b.add("x = pd.Series(df.index)  # X は指定なし。行番号を使う")
+        b.add(f"x = pd.Series({p.data_var}.index)  # X は指定なし。行番号を使う")
+    elif p.datetime_x:
+        b.add(f"x = {p.data_var}.iloc[:, {p.x_index}]  # 日時の列（読み込み時に日時に変換済み）")
     elif p.convert_x:
-        b.add(f'x = pd.to_numeric(df.iloc[:, {p.x_index}], errors="coerce")  # 数値にできない値は NaN にする')
+        b.add(f'x = pd.to_numeric({p.data_var}.iloc[:, {p.x_index}], errors="coerce")  # 数値にできない値は NaN にする')
     else:
-        b.add(f"x = df.iloc[:, {p.x_index}]")
+        b.add(f"x = {p.data_var}.iloc[:, {p.x_index}]")
 
 
 def _emit_y_data(b: _Builder, p: SeriesPlan) -> None:
-    b.add(f'y = pd.to_numeric(df.iloc[:, {p.y_index}], errors="coerce")  # 数値にできない値は NaN にする')
+    b.add(f'y = pd.to_numeric({p.data_var}.iloc[:, {p.y_index}], errors="coerce")  # 数値にできない値は NaN にする')
 
 
 def _emit_ok_mask(b: _Builder) -> None:
@@ -329,10 +399,16 @@ def _emit_scatter_series(b: _Builder, settings: Settings, plan: PlotPlan) -> Non
 
 
 def _emit_bar_x(b: _Builder, plan: PlotPlan) -> None:
+    df = plan.series[0].data_var  # 棒グラフは全系列が同じデータ元
     if plan.bar_x_index is None:
-        b.add("x = pd.Series(df.index)  # X は指定なし。行番号を使う")
+        b.add(f"x = pd.Series({df}.index)  # X は指定なし。行番号を使う")
+    elif plan.datetime_x:
+        b.add(
+            f"x = {df}.iloc[:, {plan.bar_x_index}].dt.strftime({literal(plan.bar_date_format)})"
+            "  # 日時を文字列にして、棒をカテゴリとして並べる"
+        )
     else:
-        b.add(f"x = df.iloc[:, {plan.bar_x_index}]")
+        b.add(f"x = {df}.iloc[:, {plan.bar_x_index}]")
 
 
 def _emit_bar_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
@@ -355,7 +431,7 @@ def _emit_bar_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
         b.add("bar_data = pd.DataFrame({")
         b.add('    "x": x,')
         for p in plan.series:
-            b.add(f'    "y{p.number}": pd.to_numeric(df.iloc[:, {p.y_index}], errors="coerce"),  # {_column_comment(p, "y")}')
+            b.add(f'    "y{p.number}": pd.to_numeric({p.data_var}.iloc[:, {p.y_index}], errors="coerce"),  # {_column_comment(p, "y")}')
         b.add("})")
         keys = ", ".join(literal(f"y{p.number}") for p in plan.series)
         b.add(f'bar_data = bar_data.dropna(subset=[{keys}], how="all")  # 全ての系列が欠けている行は描かない')
@@ -395,6 +471,28 @@ def _axis_lines(var: str, which: str, scale: str, lo, hi) -> list[str]:
     return lines
 
 
+def _x_tick_lines(settings: Settings, plan: PlotPlan) -> list[str]:
+    """X 軸の目盛の書式（日時の軸、文字列の列の間引き）。line / scatter だけ。"""
+    if plan.plot_type not in {"line", "scatter"}:
+        return []
+    if _uses_date_axis(plan):
+        fmt = settings.axes.x.date_format
+        if fmt:
+            return [f"ax.xaxis.set_major_formatter(mdates.DateFormatter({literal(fmt)}))  # 日時の表示書式"]
+        return [
+            "# X が日時の列: 範囲に合わせて目盛の間隔と表示を自動で決める",
+            "date_locator = mdates.AutoDateLocator()",
+            "ax.xaxis.set_major_locator(date_locator)",
+            "ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(date_locator))",
+        ]
+    if plan.thin_categorical_x:
+        return [
+            "# X が文字列の列: 目盛に X の値を出す（25個を超えるので間引く）",
+            "ax.xaxis.set_major_locator(ticker.MaxNLocator(nbins=25, integer=True))",
+        ]
+    return []
+
+
 def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
     b.section("5. 軸（ラベル・スケール・範囲・目盛）")
     plot, axes = settings.plot, settings.axes
@@ -413,8 +511,8 @@ def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
         if var == "ax2" and not plan.uses_secondary:
             continue
         lines = _axis_lines(var, which, axis.scale, axis.min, axis.max)
-        if var == "ax" and which == "x" and axis.scale == "linear" and any(p.categorical_x and p.has_points for p in plan.series):
-            lines.insert(0, 'ax.set_xscale("linear")  # X が文字列・日時の列: 目盛は位置の番号になる（値を目盛にするには、この行を消す）')
+        if var == "ax" and which == "x":
+            lines = _x_tick_lines(settings, plan) + lines
         if lines:
             with b.step(axis_error_message(label), f"{label}軸の範囲"):
                 b.add(*lines)
@@ -525,12 +623,17 @@ def _emit_output(b: _Builder, settings: Settings) -> None:
 # ---------------------------------------------------------------- entry
 
 
-def generate_script(settings: Settings, source: SourceInfo, plan: PlotPlan) -> GeneratedScript:
-    """設定・読み込んだファイルの情報・描画計画から、完全なスクリプトを作る。"""
+def generate_script(settings: Settings, source, plan: PlotPlan) -> GeneratedScript:
+    """設定・読み込んだファイルの情報・描画計画から、完全なスクリプトを作る。
+
+    source は SourceInfo（1つ）または {ファイル id: SourceInfo}（plan.sources のすべてを含む）。"""
+    if isinstance(source, SourceInfo):
+        source = {src.id: source for src in plan.sources}
+    infos = [source[src.id] for src in plan.sources]
     b = _Builder()
-    _emit_header(b, source, settings.plot.latin_font)
+    _emit_header(b, infos, settings.plot.latin_font, plan)
     b.add(f"FONT_SIZE = {literal(settings.plot.font_size)}  # 文字の大きさ（pt）")
-    _emit_load(b, source)
+    _emit_load(b, plan, infos)
     _emit_skip_rows(b, plan)
     _emit_figure(b, settings)
     _emit_series(b, settings, plan)

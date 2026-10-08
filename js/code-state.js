@@ -4,7 +4,7 @@
 // DOM には <html data-code-mode="sync|edit"> だけ反映する。
 const root = typeof document !== "undefined" ? document.documentElement : null;
 const listeners = new Set();
-const state = { mode: "sync", generatedCode: "", generation: null };
+const state = { mode: "sync", generatedCode: "", generation: null, stale: false };
 
 if (root) root.dataset.codeMode = state.mode;
 
@@ -16,6 +16,7 @@ export const getCodeMode = () => state.mode;
 export const isEditMode = () => state.mode === "edit";
 export const getGeneratedCode = () => state.generatedCode;
 export const getGeneratedGeneration = () => state.generation;
+export const isCodeStale = () => state.stale;
 
 export const subscribeCode = (fn) => {
   listeners.add(fn);
@@ -26,6 +27,7 @@ export const setCodeMode = (mode) => {
   if (mode !== "sync" && mode !== "edit") return;
   if (state.mode === mode) return;
   state.mode = mode;
+  state.stale = false; // 編集モードでは「最新でない」表示は使わない（同期に戻すと再描画される）
   if (root) root.dataset.codeMode = mode;
   notify({ kind: "mode" });
 };
@@ -34,5 +36,13 @@ export const setCodeMode = (mode) => {
 export const setGeneratedCode = (code, generation) => {
   state.generatedCode = code;
   state.generation = generation;
+  state.stale = false;
   notify({ kind: "generated" });
+};
+
+// 同期モードで、描画またはコードの更新に失敗して、表示中のコードが最新の設定を反映していない
+export const setCodeStale = (stale) => {
+  if (state.stale === stale) return;
+  state.stale = stale;
+  notify({ kind: "stale" });
 };
