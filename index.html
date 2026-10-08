@@ -64,6 +64,42 @@
             <input id="hasHeader" type="checkbox" checked />
             <label for="hasHeader">先頭行をヘッダとして扱う</label>
           </div>
+
+          <div class="group" id="sheetGroup" hidden>
+            <label for="sheetSelect">シート</label>
+            <select id="sheetSelect"></select>
+          </div>
+
+          <div class="group">
+            <label for="skipLines">ヘッダより前に読み飛ばす行数</label>
+            <input id="skipLines" type="number" min="0" step="1" value="0" />
+            <div id="skipLinesHelp" class="help-text">ファイル先頭の説明の行など。ヘッダ行より前にある行の数です。</div>
+          </div>
+
+          <div class="row group">
+            <div>
+              <label for="thousands">桁区切り</label>
+              <select id="thousands">
+                <option value="">なし</option>
+                <option value=",">カンマ（1,234）</option>
+                <option value=".">ピリオド（1.234）</option>
+                <option value=" ">空白（1 234）</option>
+                <option value="'">アポストロフィ（1'234）</option>
+              </select>
+            </div>
+            <div>
+              <label for="decimal">小数点</label>
+              <select id="decimal">
+                <option value=".">ピリオド（1.5）</option>
+                <option value=",">カンマ（1,5）</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="group">
+            <label for="commentChar">コメント記号</label>
+            <input id="commentChar" maxlength="1" placeholder="なし（例: #）" autocomplete="off" />
+          </div>
           </div>
         </details>
 
@@ -82,6 +118,7 @@
           <div class="group">
             <label for="skipRows">描画から除外する先頭行数</label>
             <input id="skipRows" type="number" min="0" step="1" value="0" />
+            <div id="skipRowsHelp" class="help-text">ヘッダの後のデータ行を数えます。除外する行はデータ確認タブでグレーになります。</div>
           </div>
 
           <div class="row group">
@@ -392,6 +429,7 @@
               <button id="copyCodeBtn" class="small-btn ghost-btn" type="button">コピー</button>
               <button id="downloadCodeBtn" class="small-btn ghost-btn" type="button">.py で保存</button>
             </div>
+            <div id="codeStaleNote" class="code-stale-note" role="status" hidden>エラーのため、表示中のコードは最新の設定を反映していません。エラーを直すと更新されます。</div>
             <div class="code-editor-box">
               <div id="codeLineNumbers" class="code-gutter" aria-hidden="true">1</div>
               <textarea id="customPyCode" spellcheck="false" wrap="off" readonly aria-label="Pythonコード" placeholder="ファイルを読み込むと、ここに Python コードが表示されます。"></textarea>

@@ -5,20 +5,23 @@
 // - Python の起動前に選んだファイル・変えた設定は保持され、起動後に最新の内容で1回読込・描画する。
 // - Pythonコードタブのモード（code-state.js）: sync は GUI の設定から生成したコードで描く。edit は利用者が編集したコードを
 //   「実行」したときだけ描き、GUI の変更では再描画しない（読込は行うが自動実行しない）。
-import { subscribe, toJson, getSettings } from "./state.js";
+import { subscribe, toJson, getSettings, setPath } from "./state.js";
 import { addStickyWarning, removeStickyWarning, setStatus, warningTexts } from "./ui/notify.js";
 import { showPlot } from "./ui/plotView.js";
 import { showCodeOutput } from "./ui/codeOutput.js";
-import { getGeneratedGeneration, isEditMode, setCodeMode, setGeneratedCode } from "./code-state.js";
+import { getGeneratedCode, getGeneratedGeneration, isEditMode, setCodeMode, setCodeStale, setGeneratedCode } from "./code-state.js";
 import { applySkipRows, showPreview } from "./ui/dataPreview.js";
 import { setColumns } from "./ui/series.js";
 import { showEncoding, showFileName } from "./ui/fileInfo.js";
+import { showSheets } from "./ui/loadSection.js";
 import { setBusy, showProgress } from "./ui/progress.js";
 import { RUNTIME_MESSAGE, watchStartup } from "./startup-progress.js";
 import { FONT_FIRST_RENDER_WAIT_MS, isFontCached, loadFont } from "./font-cache.js";
 
 const RENDER_DELAY_MS = 250;
 const LOAD_DELAY_MS = { file: 0, header: 0, delimiter: 450 };
+const SLOW_LOAD_PATHS = new Set(["load.delimiter", "load.skipLines", "load.comment"]); // 入力欄（打鍵のたびに読み直さない）
+const SOURCE_ID = "d1"; // 読み込むファイルは1つ（複数ファイルは D6 で対応）
 const FONT_FAILED_MESSAGE = "日本語フォントを取得できませんでした。日本語が正しく表示されない場合があります。";
 const FONT_LOADING_MESSAGE = "日本語フォントを取得中…";
 const LATIN_LOADING_MESSAGE = "欧文フォントを取得中…";
@@ -212,6 +215,11 @@ const waitForFonts = async () => {
   }
 };
 
+// 同期モードで新しいコードを作れなかったとき、表示中のコードが最新でないことを示す（表示中のコードがあるときだけ）
+const markCodeStale = () => {
+  if (!isEditMode() && getGeneratedCode()) setCodeStale(true);
+};
+
 // ---- 描画 ----
 const executeRender = async (generation) => {
   const stale = () => generation !== latestGeneration || !canRender();
@@ -240,6 +248,7 @@ const executeRender = async (generation) => {
       const traceback = result.error && result.error.traceback ? result.error.traceback : "";
       showCodeOutput({ output: result.output, traceback, kind: traceback ? "error" : "ok" });
       reportError(result.error);
+      markCodeStale();
     }
   } catch (err) {
     if (generation === latestGeneration) reportException(err, "render");
@@ -321,6 +330,7 @@ const refreshScript = () => {
     } else {
       scriptRefreshFailed = true;
       reportError(result.error);
+      markCodeStale();
     }
   } catch (err) {
     reportException(err, "script");
@@ -363,23 +373,26 @@ const doLoad = async () => {
         loadWarnings = [];
         showEncoding(undefined);
         reportError(installed.error);
+        markCodeStale();
         return;
       }
       excelReady = true;
       setStatus("");
     }
     const loadJson = JSON.stringify({ version: getSettings().version, load: getSettings().load });
-    const result = callPython("loadFile", file.name, bytes, loadJson);
+    const result = callPython("loadFile", file.name, bytes, loadJson, SOURCE_ID);
     if (seq !== loadSeq) return;
     if (!result.ok) {
       setDataState("error");
       loadWarnings = [];
       showEncoding(undefined);
       reportError(result.error);
+      markCodeStale();
       return;
     }
     loadWarnings = warningTexts(result.warnings);
     showEncoding(result.encoding === undefined ? null : result.encoding);
+    showSheets(result.sheets, result.sheet);
     setColumns(result.columns);
     showPreview(result.preview, getSettings().plot.skipRows);
     setDataState("ready");
@@ -415,7 +428,9 @@ export const selectFile = (file) => {
   if (!file) return;
   selectedFile = file;
   loadWarnings = [];
+  setPath("load.files", [{ id: SOURCE_ID, name: file.name, sheet: "" }], "reconcile"); // 新しいファイルは先頭のシート（再読込は下で予約する）
   showFileName(file.name);
+  showSheets([], null);
   scheduleLoad(LOAD_DELAY_MS.file);
 };
 
@@ -551,7 +566,7 @@ const routeChange = (_settings, change) => {
   const path = change.kind === "path" ? change.path : "series";
   if (path === "plot.skipRows") applySkipRows(getSettings().plot.skipRows); // 表の灰色表示は Python を呼ばず即時更新
   if (path.startsWith("load.")) {
-    scheduleLoad(path === "load.delimiter" ? LOAD_DELAY_MS.delimiter : LOAD_DELAY_MS.header);
+    scheduleLoad(SLOW_LOAD_PATHS.has(path) ? LOAD_DELAY_MS.delimiter : LOAD_DELAY_MS.header);
   } else if (path.startsWith("save.")) {
     if (!isEditMode()) scheduleScriptRefresh(); // 画像は変わらない。保存設定を反映したコードだけ作り直す
   } else {

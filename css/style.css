@@ -491,6 +491,43 @@ button.secondary:hover {
   margin-bottom: 8px;
   font-size: 13px;
 }
+#dataPreamble {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12px;
+}
+#dataPreamble .preamble-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+#dataPreamble .preamble-lines {
+  margin: 0;
+  max-height: 9em;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+  color: var(--text-muted);
+}
+#dataPreamble .preamble-more {
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+.code-stale-note {
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--status-warning);
+  border-radius: 6px;
+  background: var(--warning-bg);
+  color: var(--status-warning);
+  font-size: 12px;
+  font-weight: 700;
+}
+.code-stale-note[hidden] {
+  display: none;
+}
 #codePanel {
   overflow: auto;
 }
