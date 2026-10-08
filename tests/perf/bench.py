@@ -18,7 +18,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "tests" / "e2e"))
 from helpers import (  # noqa: E402
-    enter_edit_mode, image_generation, load_fixture, plot_src,
+    add_series_with_source, enter_edit_mode, image_generation, load_fixture, paste_text, plot_src,
     set_save_dpi, wait_app_ready, wait_copy_state, wait_data_ready, wait_latin_state,
     wait_plot_changed,
 )
@@ -294,6 +294,156 @@ def bench_japanese_font(browser, url, reps):
     return total, after_ready
 
 
+# --- Phase 4: データ読込の追加機能（貼り付け・シート切替・日時・複数ファイル） ---
+# シートの切り替えは change イベント（select）。測り方は CHANGE_JS と同じ。
+SHEET_JS = CHANGE_JS.replace("'input'", "'change'")
+
+
+def make_tsv(rows=10_000, ys=5):
+    import math
+    lines = ["\t".join(["x"] + [f"y{k + 1}" for k in range(ys)])]
+    for i in range(rows):
+        x = i * 0.01
+        lines.append("\t".join([str(round(x, 4))] + [str(round(math.sin(x * (k + 1)) + 0.1 * k, 5)) for k in range(ys)]))
+    return "\r\n".join(lines) + "\r\n"
+
+
+def make_xlsx(path, rows=10_000, sheets=2):
+    import math
+    from openpyxl import Workbook
+    wb = Workbook(write_only=True)
+    for s in range(sheets):
+        ws = wb.create_sheet(f"シート{s + 1}")
+        ws.append(["x", "y1", "y2", "y3", "y4", "y5"])
+        for i in range(rows):
+            x = i * 0.01
+            ws.append([round(x, 4)] + [round(math.sin(x * (k + 1) + s) + 0.1 * k, 5) for k in range(5)])
+    wb.save(path)
+
+
+def make_datetime_csv(path, rows=10_000):
+    import datetime
+    import math
+    t0 = datetime.datetime(2026, 1, 1)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["time", "y1", "y2", "y3", "y4", "y5"])
+        for i in range(rows):
+            x = i * 0.01
+            t = t0 + datetime.timedelta(seconds=30 * i)
+            w.writerow([t.strftime("%Y/%m/%d %H:%M:%S")] + [round(math.sin(x * (k + 1)) + 0.1 * k, 5) for k in range(5)])
+
+
+def bench_paste(browser, url, reps, big_text, small_text):
+    """貼り付け（ClipboardEvent を #pasteArea へ）→ 最初のプロット。終了条件は「初回ファイル読込」と同じ。"""
+    out = {}
+    ctx = browser.new_context()
+    p0 = ctx.new_page()
+    p0.goto(url, timeout=TIMEOUT)
+    wait_app_ready(p0, TIMEOUT)
+    paste_text(p0, small_text)
+    wait_data_ready(p0, TIMEOUT)
+    wait_plot_changed(p0, "", TIMEOUT)
+    p0.close()
+    for name, text in (("paste_10000x6_first_plot_ms", big_text), ("paste_small_30rows_first_plot_ms", small_text)):
+        out[name] = []
+        for _ in range(reps):
+            page = ctx.new_page()
+            page.set_default_timeout(TIMEOUT)
+            page.goto(url)
+            wait_app_ready(page, TIMEOUT)
+            t = time.perf_counter()
+            paste_text(page, text)
+            wait_data_ready(page, TIMEOUT)
+            wait_plot_changed(page, "", TIMEOUT)
+            out[name].append((time.perf_counter() - t) * 1000)
+            page.close()
+    ctx.close()
+    return out
+
+
+def bench_sheet_switch(browser, url, reps, xlsx_path):
+    """2 シート × 10,000 行の xlsx。(a) 初回読込 → 最初のプロット（Excel 用 wheel 取得込み、HTTP キャッシュは温めた状態）、
+    (b) 系列5本を設定した後、#sheetSelect で 2 枚目へ → 新しい画像（change イベントから。読み直し + 描画）。"""
+    first, switch = [], []
+    ctx = browser.new_context()
+    p0 = ctx.new_page()
+    p0.goto(url, timeout=TIMEOUT)
+    wait_app_ready(p0, TIMEOUT)
+    load_fixture(p0, xlsx_path)
+    wait_plot_changed(p0, "", TIMEOUT)
+    p0.close()
+    for _ in range(reps):
+        page = ctx.new_page()
+        page.set_default_timeout(TIMEOUT)
+        page.goto(url)
+        wait_app_ready(page, TIMEOUT)
+        t = time.perf_counter()
+        page.set_input_files("#fileInput", str(xlsx_path))
+        wait_data_ready(page, TIMEOUT)
+        wait_plot_changed(page, "", TIMEOUT)
+        first.append((time.perf_counter() - t) * 1000)
+        setup_series(page)  # 既定の系列は X 列そのものを描くので、シートで絵が変わるよう 5 系列にしておく
+        page.wait_for_timeout(3000)
+        switch.append(page.evaluate(SHEET_JS, ["#sheetSelect", "シート2"]))
+        page.close()
+    ctx.close()
+    return first, switch
+
+
+def bench_datetime(browser, url, reps, dt_path):
+    """日時の列（%Y/%m/%d %H:%M:%S）+ 数値5列、10,000 行。X = 日時の列、系列5本。"""
+    first, change = [], []
+    ctx = _warm_context(browser, url, dt_path)
+    for i in range(reps):
+        page = ctx.new_page()
+        page.set_default_timeout(TIMEOUT)
+        page.goto(url)
+        wait_app_ready(page, TIMEOUT)
+        t = time.perf_counter()
+        page.set_input_files("#fileInput", str(dt_path))
+        wait_data_ready(page, TIMEOUT)
+        wait_plot_changed(page, "", TIMEOUT)
+        first.append((time.perf_counter() - t) * 1000)
+        setup_series(page)
+        page.wait_for_timeout(3000)
+        change.append(page.evaluate(CHANGE_JS, ["#title", f"bench title {i}"]))
+        page.close()
+    ctx.close()
+    return first, change
+
+
+def bench_two_files(browser, url, reps, path1, path2):
+    """2つの 10,000 行 CSV を #fileInput（multiple）で同時に選ぶ → 最初のプロット。
+    設定変更: 系列1 はファイル1、系列2 はファイル2 の 2 系列でタイトルを変える。"""
+    first, change = [], []
+    ctx = browser.new_context()
+    p0 = ctx.new_page()
+    p0.goto(url, timeout=TIMEOUT)
+    wait_app_ready(p0, TIMEOUT)
+    p0.set_input_files("#fileInput", [str(path1), str(path2)])
+    wait_data_ready(p0, TIMEOUT)
+    wait_plot_changed(p0, "", TIMEOUT)
+    p0.close()
+    for i in range(reps):
+        page = ctx.new_page()
+        page.set_default_timeout(TIMEOUT)
+        page.goto(url)
+        wait_app_ready(page, TIMEOUT)
+        t = time.perf_counter()
+        page.set_input_files("#fileInput", [str(path1), str(path2)])
+        wait_data_ready(page, TIMEOUT)
+        wait_plot_changed(page, "", TIMEOUT)
+        first.append((time.perf_counter() - t) * 1000)
+        page.wait_for_timeout(2000)
+        add_series_with_source(page, "d2", y="__idx__1", series_id="s2")
+        page.wait_for_timeout(3000)
+        change.append(page.evaluate(CHANGE_JS, ["#title", f"bench title {i}"]))
+        page.close()
+    ctx.close()
+    return first, change
+
+
 def fmt(name, xs):
     s = stats(xs)
     return f"{name:<44} median {s['median']:9.0f}  min {s['min']:9.0f}  max {s['max']:9.0f}  (ms, n={s['n']})"
@@ -304,40 +454,68 @@ def main():
     ap.add_argument("--reps", type=int, default=5)
     ap.add_argument("--headed", action="store_true")
     ap.add_argument("--json")
+    ap.add_argument("--only", choices=["old", "new"], help="old: Phase 3 までの項目だけ / new: Phase 4 の項目だけ")
     a = ap.parse_args()
     serve = Path(os.environ.get("E2E_SERVE_DIR") or REPO)
     srv, url = start_server(serve)
     tmp = Path(tempfile.mkdtemp(prefix="bench_"))
     csv_path = tmp / "bench_10000x6.csv"
     make_csv(csv_path)
+    csv2_path = tmp / "bench_10000x6_b.csv"
+    make_csv(csv2_path)
+    xlsx_path = tmp / "bench_2sheets_10000x6.xlsx"
+    make_xlsx(xlsx_path)
+    dt_path = tmp / "bench_datetime_10000x6.csv"
+    make_datetime_csv(dt_path)
+    big_tsv = make_tsv()
+    small_tsv = make_tsv(rows=30, ys=2)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not a.headed)
         print("chromium", browser.version, "headed" if a.headed else "headless", "platform", platform.platform())
-        cold, warm = bench_startup(browser, url, a.reps)
-        first, change, save, edit_run = bench_render(browser, url, a.reps, csv_path)
-        xlsx = bench_xlsx(browser, url, a.reps, REPO / "tests" / "fixtures" / "multi_sheet.xlsx")
-        save120, save300 = bench_save_dpi(browser, url, a.reps, csv_path)
-        latin_first, latin_cached, latin_fetch = bench_latin_font(browser, url, a.reps, csv_path)
-        copy = bench_copy(browser, url, a.reps, csv_path)
-        jp_total, jp_after_ready = bench_japanese_font(browser, url, a.reps)
+        res = {}
+        if a.only != "new":
+            cold, warm = bench_startup(browser, url, a.reps)
+            first, change, save, edit_run = bench_render(browser, url, a.reps, csv_path)
+            xlsx = bench_xlsx(browser, url, a.reps, REPO / "tests" / "fixtures" / "multi_sheet.xlsx")
+            save120, save300 = bench_save_dpi(browser, url, a.reps, csv_path)
+            latin_first, latin_cached, latin_fetch = bench_latin_font(browser, url, a.reps, csv_path)
+            copy = bench_copy(browser, url, a.reps, csv_path)
+            jp_total, jp_after_ready = bench_japanese_font(browser, url, a.reps)
+            res.update({
+                "cold_startup_ms": cold, "warm_startup_ms": warm,
+                "first_plot_ms": first, "change_to_plot_ms": change,
+                "change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in change],
+                "save_png_ms": save,
+                "edit_mode_run_ms": edit_run,
+                "first_xlsx_plot_ms": xlsx,
+                # Phase 3 で追加。save_png_ms は既定 300 dpi（Phase 2 までは 120 dpi 固定）
+                "save_png_120dpi_ms": save120,
+                "save_png_300dpi_ms": save300,
+                "latin_font_first_select_to_plot_ms": latin_first,
+                "latin_font_cached_select_to_plot_ms": latin_cached,
+                "latin_font_first_select_to_font_ready_ms": latin_fetch,  # 参考値
+                "copy_to_clipboard_300dpi_ms": copy,
+                "japanese_font_cold_navigate_to_font_ready_ms": jp_total,
+                "japanese_font_cold_after_app_ready_ms": jp_after_ready,
+            })
+        if a.only != "old":
+            paste = bench_paste(browser, url, a.reps, big_tsv, small_tsv)
+            xlsx_first, sheet_switch = bench_sheet_switch(browser, url, a.reps, xlsx_path)
+            dt_first, dt_change = bench_datetime(browser, url, a.reps, dt_path)
+            two_first, two_change = bench_two_files(browser, url, a.reps, csv_path, csv2_path)
+            res.update({
+                # Phase 4 で追加
+                **paste,
+                "xlsx_2sheets_10000_first_plot_ms": xlsx_first,
+                "xlsx_sheet_switch_to_plot_ms": sheet_switch,
+                "datetime_10000_first_plot_ms": dt_first,
+                "datetime_change_to_plot_ms": dt_change,
+                "datetime_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in dt_change],
+                "two_files_first_plot_ms": two_first,
+                "two_files_change_to_plot_ms": two_change,
+                "two_files_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in two_change],
+            })
         browser.close()
-    res = {
-        "cold_startup_ms": cold, "warm_startup_ms": warm,
-        "first_plot_ms": first, "change_to_plot_ms": change,
-        "change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in change],
-        "save_png_ms": save,
-        "edit_mode_run_ms": edit_run,
-        "first_xlsx_plot_ms": xlsx,
-        # Phase 3 で追加。save_png_ms は既定 300 dpi（Phase 2 までは 120 dpi 固定）
-        "save_png_120dpi_ms": save120,
-        "save_png_300dpi_ms": save300,
-        "latin_font_first_select_to_plot_ms": latin_first,
-        "latin_font_cached_select_to_plot_ms": latin_cached,
-        "latin_font_first_select_to_font_ready_ms": latin_fetch,  # 参考値
-        "copy_to_clipboard_300dpi_ms": copy,
-        "japanese_font_cold_navigate_to_font_ready_ms": jp_total,
-        "japanese_font_cold_after_app_ready_ms": jp_after_ready,
-    }
     for k, v in res.items():
         print(fmt(k, v))
     if a.json:
