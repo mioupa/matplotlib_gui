@@ -18,7 +18,7 @@ pytestmark = pytest.mark.unit
 
 def test_defaults_are_complete_and_parse():
     d = default_settings()
-    assert d["version"] == SCHEMA_VERSION == 2
+    assert d["version"] == SCHEMA_VERSION == 3
     assert set(d) == {"version", "load", "plot", "axes", "series", "save"}
     assert set(d["axes"]) == {"x", "y", "y2"}
     s = parse_settings(d)
@@ -36,7 +36,7 @@ def test_default_settings_returns_fresh_objects():
 
 
 def test_missing_keys_are_filled_from_defaults():
-    s = parse_settings({"version": 2, "plot": {"title": "  T  "}, "series": [{"y": "__idx__2"}]})
+    s = parse_settings({"version": 3, "plot": {"title": "  T  "}, "series": [{"y": "__idx__2"}]})
     assert s.plot.title == "T"  # 前後の空白は取り除く
     assert s.plot.font_size == 15 and s.plot.legend_location == "best"
     assert s.series[0].y == "__idx__2" and s.series[0].line_width == 2 and s.series[0].id == "s1"
@@ -143,7 +143,7 @@ def test_unknown_version_rejected():
     raw = default_settings()
     del raw["version"]
     parse_settings(raw)  # version 欠落は現行版として扱う
-    for bad in (3, 0, "1", None, True, "2"):
+    for bad in (4, 0, "1", None, True, "2", "3"):
         raw = default_settings()
         raw["version"] = bad
         with pytest.raises(UserError) as info:
@@ -305,6 +305,15 @@ def _v1():
     for key in ("latinFont", "palette"):
         del raw["plot"][key]
     raw["save"] = {"filename": "x", "format": "jpg", "transparent": False}
+    return _strip_v3(raw)
+
+
+def _strip_v3(raw):
+    """v3 で足した項目を取り除く（v1 / v2 の設定の形にする）。"""
+    raw["load"] = {"delimiter": "", "hasHeader": True}
+    del raw["axes"]["x"]["dateFormat"]
+    for item in raw["series"]:
+        del item["source"]
     return raw
 
 
@@ -313,10 +322,10 @@ def test_migrate_v1_to_v2():
     before = copy.deepcopy(raw)
     out = migrate_settings(raw)
     assert raw == before  # 引数は変更しない
-    assert out["version"] == 2 and out["save"]["dpi"] == 120  # v1 は 120 dpi で保存していた
+    assert out["version"] == 3 and out["save"]["dpi"] == 120 and out["load"]["parseDates"] is False  # v1 は 120 dpi で保存していた
     assert out["save"]["filename"] == "x"
     s = parse_settings(raw)
-    assert s.version == 2 and s.save.dpi == 120 and s.save.format == "jpg"
+    assert s.version == 3 and s.save.dpi == 120 and s.save.format == "jpg" and s.load.parse_dates is False
     assert s.plot.figure.unit == "in" and s.plot.figure.width == 7
     assert s.plot.latin_font == "default" and s.plot.palette == "ud" and s.save.svg_text == "path"
 
@@ -335,12 +344,159 @@ def test_migrate_v1_through_save_and_load_parsers():
     assert parse_load_settings(_v1()).has_header is True
 
 
-def test_migrate_v2_passthrough_and_unknown_versions():
+def test_migrate_v3_passthrough_and_unknown_versions():
     raw = default_settings()
     out = migrate_settings(raw)
     assert out == raw and out is not raw
     assert migrate_settings({}) == {}  # バージョンの欠落は現行版として扱う（何も足さない）
-    for bad in (3, 0, "2", True, None):
+    for bad in (4, 0, "2", "3", True, None):
         with pytest.raises(UserError) as info:
             migrate_settings({"version": bad})
         assert "バージョン" in info.value.message
+
+
+# ---------------------------------------------------------------- Phase 4: schema version 3
+
+
+def _load(**kw):
+    raw = default_settings()
+    raw["load"].update(kw)
+    return raw
+
+
+def _err(raw, parser=parse_settings):
+    with pytest.raises(UserError) as info:
+        parser(raw)
+    return info.value
+
+
+def test_v3_defaults():
+    d = default_settings()
+    assert d["load"] == {
+        "delimiter": "", "hasHeader": True, "skipLines": 0, "thousands": "", "decimal": ".",
+        "comment": "", "parseDates": True, "files": [],
+    }
+    assert d["axes"]["x"]["dateFormat"] == "" and "dateFormat" not in d["axes"]["y"] and "dateFormat" not in d["axes"]["y2"]
+    assert d["series"][0]["source"] == ""
+    s = parse_settings(d)
+    assert s.load.skip_lines == 0 and s.load.thousands == "" and s.load.decimal == "." and s.load.comment == ""
+    assert s.load.parse_dates is True and s.load.files == () and s.axes.x.date_format == "" and s.series[0].source == ""
+    assert s.axes.y.date_format == "" and s.axes.y2.date_format == ""
+
+
+def test_v3_valid_load_values():
+    raw = _load(skipLines="3", thousands="'", decimal=",", comment="#", parseDates=False,
+                files=[{"id": "d1", "name": "a.csv", "sheet": ""}, {"id": "d12", "name": "b.xlsx", "sheet": "S2"}])
+    s = parse_load_settings(raw)
+    assert s.skip_lines == 3 and s.thousands == "'" and s.decimal == "," and s.comment == "#" and s.parse_dates is False
+    assert [(f.id, f.name, f.sheet) for f in s.files] == [("d1", "a.csv", ""), ("d12", "b.xlsx", "S2")]
+    for t in ("", ",", ".", " ", "'"):
+        assert parse_load_settings(_load(thousands=t, decimal="." if t != "." else ",")).thousands == t
+    assert parse_load_settings(_load(skipLines=1_000_000)).skip_lines == 1_000_000
+    assert parse_load_settings(_load(skipLines="")).skip_lines == 0
+
+
+@pytest.mark.parametrize("parser", [parse_settings, parse_load_settings])
+def test_v3_invalid_load_values(parser):
+    label = "ヘッダより前に読み飛ばす行数"
+    for bad in (-1, 1.5, "x"):
+        e = _err(_load(skipLines=bad), parser)
+        assert e.field == label and e.message == f"「{label}」は0以上の整数で入力してください。"
+    assert _err(_load(skipLines=1_000_001), parser).field == label
+    assert _err(_load(thousands="x"), parser).field == "桁区切り"
+    assert _err(_load(decimal=";"), parser).field == "小数点"
+    e = _err(_load(thousands=",", decimal=","), parser)
+    assert e.field == "桁区切り" and e.message == "「桁区切り」と「小数点」に同じ記号は使えません。"
+    assert _err(_load(comment="##"), parser).message == "「コメント記号」は1文字で指定してください（例: #）。"
+    for bad in ('"', " ", "\t"):
+        e = _err(_load(comment=bad), parser)
+        assert e.field == "コメント記号" and e.message == "「コメント記号」に \" や空白は使えません。"
+    e = _err(_load(comment=",", thousands=","), parser)
+    assert e.message == "「コメント記号」に、桁区切り・小数点と同じ記号は使えません。" and e.field == "コメント記号"
+    assert _err(_load(comment="."), parser).field == "コメント記号"  # 小数点の既定値と同じ
+    assert _err(_load(comment=5), parser).field == "コメント記号"
+    assert _err(_load(parseDates="yes"), parser).field == "日時の列を自動で認識する"
+
+
+@pytest.mark.parametrize("parser", [parse_settings, parse_load_settings])
+def test_v3_invalid_files(parser):
+    assert _err(_load(files="d1"), parser).field == "読み込むファイル"
+    assert _err(_load(files=["d1"]), parser).field == "読み込むファイル"
+    for bad_id in ("x1", "d", "d12345", "D1", 1, None):
+        assert _err(_load(files=[{"id": bad_id, "name": "a", "sheet": ""}]), parser).field == "読み込むファイル"
+    dup = [{"id": "d1", "name": "a", "sheet": ""}, {"id": "d1", "name": "b", "sheet": ""}]
+    assert _err(_load(files=dup), parser).field == "読み込むファイル"
+    ten = [{"id": f"d{i}", "name": "a", "sheet": ""} for i in range(1, 11)]
+    assert len(parse_load_settings(_load(files=ten)).files) == 10
+    eleven = ten + [{"id": "d11", "name": "a", "sheet": ""}]
+    assert _err(_load(files=eleven), parser).message == "読み込めるファイルは10個までです。"
+    assert _err(_load(files=[{"id": "d1", "name": 1, "sheet": ""}]), parser).field == "ファイル名"
+
+
+def test_v3_series_source():
+    raw = _load(files=[{"id": "d1", "name": "a.csv", "sheet": ""}, {"id": "d2", "name": "b.csv", "sheet": ""}])
+    raw["series"] = [{"y": "__idx__1", "source": "d2"}, {"y": "__idx__1"}]
+    s = parse_settings(raw)
+    assert [x.source for x in s.series] == ["d2", ""]
+    raw["series"].append({"y": "__idx__1", "source": "d9"})
+    e = _err(raw)
+    assert e.message == "系列3のデータ元が見つかりません。データ元を選び直してください。" and e.field == "系列3のデータ元"
+    raw = default_settings()
+    raw["series"][0]["source"] = "d1"  # files が空
+    assert _err(raw).field == "系列1のデータ元"
+    raw["series"][0]["source"] = 3
+    assert _err(raw).field == "データ元"
+
+
+def test_v3_date_format():
+    for ok in ("", "%Y/%m/%d", "%m月%d日", "%H:%M", "%Y-%m-%d %H:%M:%S"):
+        raw = default_settings()
+        raw["axes"]["x"]["dateFormat"] = ok
+        assert parse_settings(raw).axes.x.date_format == ok
+    msg = "「X軸の日時の書式」が正しくありません。%Y/%m/%d のように、% で始まる指定を含めてください。"
+    for bad in ("Y/m/d", "%Y" + "x" * 64, 5, ["%Y"]):
+        raw = default_settings()
+        raw["axes"]["x"]["dateFormat"] = bad
+        e = _err(raw)
+        assert e.message == msg and e.field == "X軸の日時の書式", bad
+    raw = default_settings()
+    raw["axes"]["y"]["dateFormat"] = "bad"  # Y 軸には書式の項目が無い（無視される）
+    assert parse_settings(raw).axes.y.date_format == ""
+
+
+def test_migrate_v2_to_v3():
+    raw = _strip_v3(default_settings())
+    raw["version"] = 2
+    before = copy.deepcopy(raw)
+    out = migrate_settings(raw)
+    assert raw == before  # 引数は変更しない
+    assert out["version"] == 3 and out["load"]["parseDates"] is False
+    s = parse_settings(raw)
+    assert s.version == 3 and s.load.parse_dates is False and s.load.skip_lines == 0 and s.load.decimal == "."
+    assert s.load.files == () and s.axes.x.date_format == "" and s.series[0].source == ""
+    assert s.save.dpi == 300  # v2 の dpi はそのまま
+    assert parse_load_settings(raw).parse_dates is False
+    assert parse_save_settings(raw).dpi == 300
+
+
+def test_migrate_v2_keeps_an_existing_parse_dates():
+    raw = _strip_v3(default_settings())
+    raw["version"] = 2
+    raw["load"]["parseDates"] = True
+    assert migrate_settings(raw)["load"]["parseDates"] is True
+    raw = {"version": 2}
+    assert migrate_settings(raw) == {"version": 3, "load": {"parseDates": False}}
+    assert parse_settings({"version": 2}).load.parse_dates is False
+
+
+def test_v1_migrates_through_to_v3():
+    out = migrate_settings(_v1())
+    assert out["version"] == 3 and out["save"]["dpi"] == 120 and out["load"]["parseDates"] is False
+
+
+def test_v3_without_parse_dates_defaults_to_true():
+    assert parse_settings({"version": 3}).load.parse_dates is True
+    assert parse_settings({}).load.parse_dates is True
+    raw = default_settings()
+    del raw["load"]["parseDates"]
+    assert migrate_settings(raw) == raw and parse_load_settings(raw).parse_dates is True

@@ -45,6 +45,8 @@ def test_new_series_color_is_first_unused_palette_color(tmp_path):
     out.second = nextSeriesColor();                       // #03AF7A（#FF4B00 #005AFF は使用済み）
     while (getSettings().series.length < PALETTE.length) addSeries();
     out.allUsed = new Set(getSettings().series.map((s) => s.color)).size;
+    out.newSource = getSettings().series[getSettings().series.length - 1].source;  // v3: データ元は空
+    out.version = getSettings().version;
     out.cycled = nextSeriesColor();                       // すべて使用済み → 系列数で循環
     out.cycledExpected = PALETTE[getSettings().series.length % PALETTE.length];
     console.log(JSON.stringify(out));
@@ -54,6 +56,7 @@ def test_new_series_color_is_first_unused_palette_color(tmp_path):
     assert res["first"] == "#FF4B00"
     assert res["second"] == "#03AF7A"
     assert res["allUsed"] == 11
+    assert res["newSource"] == "" and res["version"] == 3
     assert res["cycled"] == res["cycledExpected"]
 
 

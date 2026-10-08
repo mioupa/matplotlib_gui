@@ -1,7 +1,7 @@
 // 設定オブジェクトの既定値。純粋な ES module（DOM に触れない）。
 // py/mplgui/settings.py の default_settings() と同一でなければならない（tests/unit/test_defaults_parity.py が比較する）。
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 // UDカラーセット（系列の既定色の候補。この順で未使用の色を割り当てる）
 export const PALETTE = [
@@ -28,11 +28,21 @@ export const DEFAULT_SERIES = {
   markerSize: null,
   label: "",
   secondaryAxis: false,
+  source: "",
 };
 
 export const DEFAULT_SETTINGS = {
   version: SCHEMA_VERSION,
-  load: { delimiter: "", hasHeader: true },
+  load: {
+    delimiter: "",
+    hasHeader: true,
+    skipLines: 0,
+    thousands: "",
+    decimal: ".",
+    comment: "",
+    parseDates: true,
+    files: [],
+  },
   plot: {
     type: "line",
     skipRows: 0,
@@ -47,7 +57,7 @@ export const DEFAULT_SETTINGS = {
     margins: { left: null, right: null, bottom: null, top: null },
   },
   axes: {
-    x: { label: "", scale: "linear", min: null, max: null },
+    x: { label: "", scale: "linear", min: null, max: null, dateFormat: "" },
     y: { label: "", scale: "linear", min: null, max: null },
     y2: { label: "", scale: "linear", min: null, max: null },
   },
