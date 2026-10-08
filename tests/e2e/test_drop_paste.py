@@ -25,6 +25,7 @@ from helpers import (
 
 pytestmark = pytest.mark.e2e
 
+PASTE_WHILE_LOADED = "表を貼り付けて読み込むときは、「表を貼り付け」欄に貼り付けてください（読み込み済みのデータは置き換わります）。"
 NOT_A_TABLE = "貼り付けた内容が表ではありません。Excel などで表の範囲をコピーしてから貼り付けてください。"
 
 
@@ -272,3 +273,34 @@ def test_edit_mode_code_can_read_pasted_file(start):
     )
     run_edited_code(page)
     assert "rows 4" in page.inner_text("#codeOutput")
+
+
+def test_document_paste_with_data_loaded_warns_and_does_not_load(start, fixtures_dir):
+    page = start
+    page.set_input_files("#fileInput", str(fixtures_dir / "utf8.csv"))
+    wait_data_ready(page)
+    wait_settled(page)
+    before = load_count(page)
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    assert paste_text(page, EXCEL_TABLE, selector=None) is True
+    page.wait_for_timeout(600)
+    assert load_count(page) == before
+    assert page.inner_text("#fileNameLabel") == "utf8.csv"
+    assert status_kind(page) == "warning" and PASTE_WHILE_LOADED in status_text(page)
+
+
+def test_paste_area_replaces_even_when_data_is_loaded(start, fixtures_dir):
+    page = start
+    page.set_input_files("#fileInput", str(fixtures_dir / "utf8.csv"))
+    wait_data_ready(page)
+    wait_settled(page)
+    paste_and_wait(page, EXCEL_TABLE)
+    assert "貼り付けたデータ" in page.inner_text("#fileNameLabel")
+
+
+def test_overlay_hides_when_dragleave_has_no_types(start, fixtures_dir):
+    page = start
+    drag_event(page, "dragenter", "body", [fixture_file(fixtures_dir, "utf8.csv")])
+    assert drop_overlay_visible(page)
+    drag_event(page, "dragleave", "body")  # Safari: types が空になる
+    assert not drop_overlay_visible(page)

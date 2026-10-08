@@ -6,6 +6,8 @@ import { setStatus } from "./notify.js";
 
 export const PASTED_FILENAME = "pasted_data.tsv";
 export const NOT_A_TABLE_MESSAGE = "貼り付けた内容が表ではありません。Excel などで表の範囲をコピーしてから貼り付けてください。";
+export const PASTE_WHILE_LOADED_MESSAGE =
+  "表を貼り付けて読み込むときは、「表を貼り付け」欄に貼り付けてください（読み込み済みのデータは置き換わります）。";
 const NO_FILE_MESSAGE = "ドロップされたものから読み込めるファイルが見つかりませんでした（フォルダは読み込めません）。";
 
 const hasFiles = (event) => {
@@ -89,7 +91,9 @@ const bindDrop = () => {
     highlightZone(event.target);
   });
   window.addEventListener("dragleave", (event) => {
-    if (!hasFiles(event)) return;
+    // オーバーレイを出している間は、types が空になるブラウザ（Safari）でも数える（出しっぱなしにしない）
+    const el = overlay();
+    if (!hasFiles(event) && !(el && !el.hidden)) return;
     dragDepth -= 1;
     if (dragDepth <= 0) hideOverlay();
   });
@@ -140,6 +144,11 @@ const bindPaste = () => {
     const text = event.clipboardData ? event.clipboardData.getData("text/plain") : "";
     if (text.trim() === "") return;
     event.preventDefault();
+    if (hasLoadedFiles()) {
+      // 読み込み済みのデータを、うっかり貼り付けで置き換えない（「表を貼り付け」欄なら置き換える）
+      setStatus(PASTE_WHILE_LOADED_MESSAGE, "warning");
+      return;
+    }
     loadPastedText(text);
   });
 };
