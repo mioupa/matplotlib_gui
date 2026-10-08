@@ -6,12 +6,13 @@ py/main.py はこの関数を window.mplgui に登録するだけ。引数・戻
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import struct
 import traceback
 from pathlib import Path
 
-from . import fonts
+from . import fonts, loader
 from .codegen import GENERIC_ERROR_MESSAGE, GeneratedScript, generate_script
 from .dataprep import plan_plot
 from .errors import UserError
@@ -37,12 +38,34 @@ class Session:
         self.source: SourceInfo | None = None
         self.workdir: Path | None = None  # 設定すると、アップロードしたファイルを元の名前でここに置く
         self._written: Path | None = None
+        self.excel = None  # 開いた pd.ExcelFile（同じバイト列の間だけ保持して、シートの切り替えを速くする）
+        self.excel_key: str | None = None
 
-    def forget(self) -> None:
+    def forget(self, keep_excel: bool = False) -> None:
         self.df = None
         self.filename = None
         self.source = None
         self._remove_written()
+        if not keep_excel:
+            self.drop_excel()
+
+    def drop_excel(self) -> None:
+        if self.excel is not None:
+            try:
+                self.excel.close()
+            except Exception:  # noqa: BLE001 - 閉じられなくても続行する
+                pass
+        self.excel = None
+        self.excel_key = None
+
+    def excel_for(self, raw: bytes):
+        """raw（xlsx のバイト列）の ExcelFile。同じバイト列なら開き直さない。"""
+        key = hashlib.sha256(raw).hexdigest()
+        if self.excel is None or self.excel_key != key:
+            self.drop_excel()
+            self.excel = loader.open_excel(raw)
+            self.excel_key = key
+        return self.excel
 
     def _remove_written(self) -> None:
         if self._written is not None:
@@ -109,22 +132,37 @@ def _parse_json(text: str) -> dict:
 
 
 @_guard("load_file")
-def load_file_json(name: str, data: bytes, load_settings_json: str) -> dict:
-    """ファイルを読み込み、列の選択肢とプレビューを返す。失敗時は読込済みデータを破棄する。"""
-    SESSION.forget()
+def load_file_json(name: str, data: bytes, load_settings_json: str, source_id: str = "d1", pasted: bool = False) -> dict:
+    """ファイルを読み込み、列の選択肢とプレビューを返す。失敗時は読込済みデータを破棄する。
+
+    xlsx のシートは、読み込み設定の load.files のうち source_id の項目から決める（無ければ先頭のシート）。"""
+    SESSION.forget(keep_excel=True)
     load = parse_load_settings(_parse_json(load_settings_json))
     raw = bytes(data)
-    loaded = load_file(raw, name, load.delimiter, load.has_header)
+    sheet = next((f.sheet for f in load.files if f.id == source_id), "")
+    excel = None
+    if Path(name).suffix.lower() == ".xlsx":
+        excel = SESSION.excel_for(raw)
+    else:
+        SESSION.drop_excel()
+    loaded = load_file(
+        raw, name, load.delimiter, load.has_header,
+        skip_lines=load.skip_lines, thousands=load.thousands, decimal=load.decimal, comment=load.comment,
+        sheet=sheet, excel=excel,
+    )
     SESSION.df = loaded.df
     SESSION.filename = name
     SESSION.source = loaded.source
     SESSION.write_upload(name, raw)
+    source = loaded.source
     return {
         "ok": True,
         "encoding": loaded.encoding,
         "columns": column_options(loaded.df),
-        "preview": build_preview(loaded.df, PREVIEW_ROWS),
-        "warnings": [],
+        "preview": build_preview(loaded.df, PREVIEW_ROWS, preamble=(loaded.preamble_lines, loaded.preamble_total)),
+        "sheets": list(source.sheets) if source.kind == "xlsx" else [],
+        "sheet": source.sheet_name if source.kind == "xlsx" else None,
+        "warnings": list(loaded.warnings),
     }
 
 

@@ -72,8 +72,12 @@ async def _ensure_excel():
         return json.dumps({"ok": False, "error": err.to_dict()}, ensure_ascii=False)
 
 
-def _load_file(name, data, load_settings_json):
-    return api.load_file_json(str(name), data.to_py(), str(load_settings_json))
+def _load_file(name, data, load_settings_json, source_id=None, pasted=None):
+    # source_id / pasted は JS が渡さない（null / undefined）ときは既定値
+    return api.load_file_json(
+        str(name), data.to_py(), str(load_settings_json),
+        source_id if isinstance(source_id, str) else "d1", pasted is True,
+    )
 
 
 def _code(value):

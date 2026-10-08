@@ -98,7 +98,7 @@ def test_render_returns_generated_code_summary_and_output():
     load()
     r = json.loads(api.render_json(json.dumps(default_settings())))
     assert r["ok"] is True and r["output"] == ""
-    assert r["code"].startswith("# matplotlib GUI が生成したスクリプト") and "pd.read_csv(DATA_FILE" in r["code"]
+    assert r["code"].startswith("# matplotlib GUI が生成したスクリプト") and "pd.read_csv(\n    DATA_FILE," in r["code"]
     assert 'encoding="utf-8"' in r["code"] and "plt.show()" in r["code"]  # 表示用は完全なスクリプト
     assert r["summary"][0]["lines"] == 1 and r["summary"][0]["xlabel"] == "index" and r["summary"][0]["ylabel"] == "時間 [0]"
 

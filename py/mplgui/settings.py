@@ -50,7 +50,7 @@ DECIMAL_CHOICES = (".", ",")
 MAX_SKIP_LINES = 1_000_000
 MAX_FILES = 10
 MAX_DATE_FORMAT_LENGTH = 64
-_FILE_ID_RE = re.compile(r"^d[0-9]{1,4}$")
+_FILE_ID_RE = re.compile(r"d[0-9]{1,4}")
 
 _DEFAULT_SERIES = {
     "id": "s1",
@@ -409,7 +409,7 @@ def _parse_files(raw_files: Any) -> tuple[FileEntry, ...]:
         if not isinstance(item, dict):
             raise UserError(f"「{label}」の値が不正です。", field=label)
         fid = item.get("id")
-        if not isinstance(fid, str) or not _FILE_ID_RE.match(fid):
+        if not isinstance(fid, str) or not _FILE_ID_RE.fullmatch(fid):
             raise UserError(f"「{label}」のIDが不正です。", field=label)
         if fid in seen:
             raise UserError(f"「{label}」のIDが重複しています。", field=label)

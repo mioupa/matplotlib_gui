@@ -6,6 +6,7 @@ js / pyodide には依存しない。列指定は "__idx__N"（列番号）形�
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import pandas as pd
@@ -52,9 +53,29 @@ def coerce_numeric(raw: pd.Series) -> tuple[pd.Series, int, list[str]]:
     return numeric, count, examples
 
 
-def dropped_warning(series_no: int, what: str, count: int, examples: list[str]) -> dict:
+_THOUSANDS_LIKE = re.compile(r"[+-]?\d{1,3}(,\d{3})+(\.\d+)?")  # 1,234 / -1,234,567.5
+_DECIMAL_COMMA_LIKE = re.compile(r"[+-]?(\d+,\d+|\d{1,3}(\.\d{3})+,\d+)")  # 1,5 / 1.234,5
+THOUSANDS_HINT = "（桁区切りのカンマなら、「データ読み込み」の「桁区切り」をカンマにしてください）"
+DECIMAL_HINT = "（小数点がカンマなら、「データ読み込み」の「小数点」をカンマにしてください）"
+
+
+def load_hint(examples: list[str], load) -> str:
+    """除外した値の例が、桁区切り・小数点カンマの数に見えるのに読込設定がそうなっていないとき、設定の案内を返す。"""
+    if load is None:
+        return ""
+    for text in examples:
+        value = text.strip()
+        if _THOUSANDS_LIKE.fullmatch(value):  # 両方に当てはまる 1,234 は桁区切りとして案内する
+            if load.thousands != ",":
+                return THOUSANDS_HINT
+        elif _DECIMAL_COMMA_LIKE.fullmatch(value) and load.decimal != ",":
+            return DECIMAL_HINT
+    return ""
+
+
+def dropped_warning(series_no: int, what: str, count: int, examples: list[str], load=None) -> dict:
     ex = ", ".join(f'"{e}"' for e in examples)
-    message = f"{what}: 数値に変換できない値が{count}件あったため、その行を除外しました（例: {ex}）。"
+    message = f"{what}: 数値に変換できない値が{count}件あったため、その行を除外しました（例: {ex}）。{load_hint(examples, load)}"
     return {"series": series_no, "message": message}
 
 
@@ -200,10 +221,10 @@ def _plan_xy(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> Plo
             convert_x = True
             x_series, x_dropped, x_examples = coerce_numeric(x_series)
             if x_dropped:
-                warnings.append(dropped_warning(n, f"系列{n}のX列（{x_label}）", x_dropped, x_examples))
+                warnings.append(dropped_warning(n, f"系列{n}のX列（{x_label}）", x_dropped, x_examples, settings.load))
         y_numeric, y_dropped, y_examples = coerce_numeric(df.iloc[:, y_index])
         if y_dropped:
-            warnings.append(dropped_warning(n, f"系列{n}（{y_name}）", y_dropped, y_examples))
+            warnings.append(dropped_warning(n, f"系列{n}（{y_name}）", y_dropped, y_examples, settings.load))
 
         has_points = bool((y_numeric.notna() & pd.notna(x_series)).any())
         plans.append(
@@ -253,7 +274,7 @@ def _plan_bar(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> Pl
         numeric, dropped, examples = coerce_numeric(df.iloc[:, y_index])
         frame[f"y_{i}"] = numeric
         if dropped:
-            warnings.append(dropped_warning(n, f"系列{n}（{y_name}）", dropped, examples))
+            warnings.append(dropped_warning(n, f"系列{n}（{y_name}）", dropped, examples, settings.load))
         plans.append(
             SeriesPlan(
                 number=n,

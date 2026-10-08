@@ -443,7 +443,7 @@ def test_xlsx_load_section(tmp_path):
     raw["series"] = [S(1, x="__idx__0")]
     settings = parse_settings(raw)
     script = generate_script(settings, loaded.source, plan_plot(loaded.df, settings))
-    assert 'pd.read_excel(DATA_FILE, sheet_name="Sheet1", header=0)' in script.text and "openpyxl" in script.text
+    assert "pd.read_excel(\n    DATA_FILE,\n" in script.text and '    sheet_name="Sheet1",  # シート\n' in script.text and "openpyxl" in script.text
     with run_script(script.text, cwd=tmp_path) as r:
         assert len(lines(r.fig.axes[0])) == 1
 

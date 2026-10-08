@@ -89,6 +89,49 @@ def main():
     wb.save(OUT / "multi_sheet.xlsx")
     _normalize_zip(OUT / "multi_sheet.xlsx")
 
+    # 前置き行（装置の説明）が3行。3行目はカンマの数が違うので、skipLines 無しでは表として読めない
+    pre = [
+        "装置: テスト用ロガー,型番: X-100,単位: V",
+        "備考: この行はデータではありません",
+        "測定日: 2026-01-01,担当: 合成データ,単位: V と mA,備考: 5列,終",
+    ]
+    (OUT / "preamble.csv").write_bytes(("\n".join(pre) + "\n" + text).encode("utf-8"))
+
+    # ヨーロッパ式の数値: 区切り ;、小数点 ,、桁区切り .（1.234,5）
+    eu = [(i + 1, f"{(i + 1) * 1234.5:,.1f}".replace(",", "_").replace(".", ",").replace("_", "."), f"{i * 0.25:.2f}".replace(".", ",")) for i in range(12)]
+    eu.append((13, "-1.234.567,5", "-0,5"))
+    (OUT / "european.csv").write_bytes(csv_text(["番号", "値", "比"], eu, sep=";").encode("utf-8"))
+
+    # 引用符付きの桁区切り（カンマ区切りで "1,234"）。負の値も含む
+    th = [(i + 1, f'"{(i + 1) * 1234:,}"', f'"{-(i + 1) * 98765.5:,.1f}"') for i in range(12)]
+    (OUT / "thousands.csv").write_bytes(csv_text(["番号", "金額", "差額"], th).encode("utf-8"))
+
+    # コメント: 行全体の # と、データ行の末尾の # note
+    cm = ["# 全体のコメント", "x,y"]
+    for i in range(10):
+        cm.append(f"{i},{i * i}" + (" # note" if i == 4 else ""))
+        if i == 6:
+            cm.append("# 途中のコメント行")
+    (OUT / "comments.csv").write_bytes(("\n".join(cm) + "\n").encode("utf-8"))
+
+    # 2 シート。2 枚目は見出しの前に説明の行が 2 行ある
+    wb2 = openpyxl.Workbook()
+    p1 = wb2.active
+    p1.title = "データ"
+    p1.append(["t", "v"])
+    for i in range(15):
+        p1.append([i, i * 2])
+    p2 = wb2.create_sheet("説明つき")
+    p2.append(["測定条件: 合成データ"])
+    p2.append(["単位: V"])
+    p2.append(["t", "v", "w"])
+    for i in range(15):
+        p2.append([i, i * i, 100 - i])
+    wb2.properties.created = fixed
+    wb2.properties.modified = fixed
+    wb2.save(OUT / "preamble.xlsx")
+    _normalize_zip(OUT / "preamble.xlsx")
+
     dup = ["温度", "温度", "値"]
     # 同名列(温度)で値が異なる
     d = [(20 + i * 0.5, 100 - i * 2, round(math.sqrt(i + 1), 4)) for i in range(N)]

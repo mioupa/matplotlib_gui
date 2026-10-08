@@ -194,26 +194,42 @@ def _font_list_literal() -> str:
     return "[" + ", ".join(literal(name) for name in SANS_SERIF_PRIORITY) + "]"
 
 
+# 読込の引数ごとのコメント（SourceInfo.read_kwargs の全てのキーに必要。読込部はこの順・この内容で、全ての引数を明記する）
+_READ_COMMENTS = {
+    "sep": "区切り文字",
+    "header": "先頭行をヘッダにする（None: ヘッダなし）",
+    "skiprows": "ヘッダより前に読み飛ばす行数",
+    "thousands": "桁区切り（None: なし）",
+    "decimal": "小数点",
+    "comment": "コメント記号（None: なし）。この記号から行末までを読まない",
+    "engine": None,
+    "sheet_name": "シート",
+}
+_READ_COMMENTS_XLSX = {
+    "thousands": "桁区切り（文字列のセルだけに効く。None: なし）",
+    "decimal": "小数点（文字列のセルだけに効く）",
+}
+_KIND_NOTES = {"csv": "CSV（.csv）", "txt": "テキスト（.txt）", "xlsx": "Excel（.xlsx）"}
+
+
 def _emit_load(b: _Builder, source: SourceInfo) -> None:
     start = b.section("1. データの読み込み")
-    header_arg = literal(0 if source.has_header else None)
-    header_note = "あり" if source.has_header else "なし"
-    if source.kind == "xlsx":
-        b.add(
-            f"# 形式: Excel（.xlsx）、シート: {comment_text(source.sheet_name)}（先頭のシート）、先頭行をヘッダにする: {header_note}",
-            "# .xlsx の読み込みには openpyxl が必要です（pip install openpyxl）",
-            f"DATA_FILE = {literal(source.filename)}",
-            "# 前置き行（データの前にある説明の行）を飛ばすときは、read_excel に skiprows=行数 を足す",
-            f"df = pd.read_excel(DATA_FILE, sheet_name={literal(source.sheet_name)}, header={header_arg})",
-        )
-    else:
-        b.add(
-            f"# 文字コード: {comment_text(source.encoding)}（自動判定）、区切り文字: {comment_text(literal(source.separator))}、先頭行をヘッダにする: {header_note}",
-            f"DATA_FILE = {literal(source.filename)}",
-            "# 前置き行（データの前にある説明の行）を飛ばすときは、read_csv に skiprows=行数 を足す",
-            f"df = pd.read_csv(DATA_FILE, encoding={literal(source.encoding)}, sep={literal(source.separator)}, "
-            f'header={header_arg}, engine="python")',
-        )
+    xlsx = source.kind == "xlsx"
+    b.add(f"# 形式: {_KIND_NOTES.get(source.kind, comment_text(source.kind))}")
+    if xlsx:
+        b.add("# 読み込みには openpyxl が必要です（pip install openpyxl）")
+        if source.sheets:
+            b.add(f"# ファイル内のシート: {comment_text(', '.join(source.sheets))}")
+    b.add(f"DATA_FILE = {literal(source.filename)}")
+    func = "pd.read_excel" if xlsx else "pd.read_csv"
+    b.add(f"df = {func}(", "    DATA_FILE,")
+    if not xlsx:
+        b.add(f"    encoding={literal(source.encoding)},  # 文字コード（自動判定）")
+    for key, value in source.read_kwargs().items():
+        note = (_READ_COMMENTS_XLSX.get(key) if xlsx else None) or _READ_COMMENTS[key]
+        line = f"    {key}={literal(value)},"
+        b.add(f"{line}  # {note}" if note else line)
+    b.add(")")
     if not source.has_header:
         b.add('df.columns = [f"column_{i}" for i in range(len(df.columns))]  # 列名を column_0, column_1, ... にする')
     b.load_lines = (start, len(b.lines))
