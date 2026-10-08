@@ -35,3 +35,9 @@ export const showEncoding = (encoding) => {
   label.textContent = encoding === null ? `形式: ${name}` : `文字コード: ${name}`;
   label.dataset.encoding = encoding === null ? "excel" : String(encoding);
 };
+
+// 「貼り付けたデータを保存（.tsv）」（#savePastedBtn）は、現在のデータ元が貼り付けたデータのときだけ表示する
+export const showPastedSave = (visible) => {
+  const button = document.getElementById("savePastedBtn");
+  if (button) button.hidden = !visible;
+};

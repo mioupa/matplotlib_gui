@@ -910,3 +910,55 @@ button.series-color-chip.active {
   font-size: 13px;
   white-space: nowrap;
 }
+
+/* 表の貼り付け欄とファイルのドロップ */
+.paste-area {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 8px;
+  border: 2px dashed var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+}
+.paste-area:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+#savePastedBtn {
+  margin-top: 8px;
+}
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: var(--busy-bg);
+}
+.drop-overlay[hidden] {
+  display: none;
+}
+.drop-zones {
+  display: flex;
+  flex: 1;
+  gap: 24px;
+}
+.drop-zone {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 3px dashed var(--accent);
+  border-radius: 16px;
+  background: var(--card);
+  color: var(--accent);
+  font-size: 22px;
+  font-weight: 700;
+  text-align: center;
+}

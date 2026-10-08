@@ -12,7 +12,7 @@ import { showCodeOutput } from "./ui/codeOutput.js";
 import { getGeneratedCode, getGeneratedGeneration, isEditMode, setCodeMode, setCodeStale, setGeneratedCode } from "./code-state.js";
 import { applySkipRows, showPreview } from "./ui/dataPreview.js";
 import { setColumns } from "./ui/series.js";
-import { showEncoding, showFileName } from "./ui/fileInfo.js";
+import { showEncoding, showFileName, showPastedSave } from "./ui/fileInfo.js";
 import { showSheets } from "./ui/loadSection.js";
 import { setBusy, showProgress } from "./ui/progress.js";
 import { RUNTIME_MESSAGE, watchStartup } from "./startup-progress.js";
@@ -32,6 +32,8 @@ const SCRIPT_REFRESH_DELAY_MS = 250;
 const root = document.documentElement;
 let api = null; // window.mplgui（Python 側が登録）
 let selectedFile = null;
+let selectedPasted = false; // 貼り付けたデータ（pasted_data.tsv）か
+let selectedNotes = []; // ファイルの選び方に由来する警告（複数ファイルのドロップなど）。読込結果の警告に添える
 let dataReady = false;
 let renderTimer = null;
 let loadTimer = null;
@@ -347,6 +349,8 @@ const doLoad = async () => {
   if (!api || !selectedFile) return;
   const seq = ++loadSeq;
   const file = selectedFile;
+  const pasted = selectedPasted;
+  const notes = selectedNotes;
   setDataState("loading");
   if (renderRunning) {
     // 実行中の描画は古いデータのものなので結果を捨てる
@@ -380,17 +384,19 @@ const doLoad = async () => {
       setStatus("");
     }
     const loadJson = JSON.stringify({ version: getSettings().version, load: getSettings().load });
-    const result = callPython("loadFile", file.name, bytes, loadJson, SOURCE_ID);
+    const result = callPython("loadFile", file.name, bytes, loadJson, SOURCE_ID, pasted);
     if (seq !== loadSeq) return;
     if (!result.ok) {
       setDataState("error");
       loadWarnings = [];
+      showPastedSave(false);
       showEncoding(undefined);
       reportError(result.error);
       markCodeStale();
       return;
     }
-    loadWarnings = warningTexts(result.warnings);
+    loadWarnings = [...notes, ...warningTexts(result.warnings)];
+    showPastedSave(pasted);
     showEncoding(result.encoding === undefined ? null : result.encoding);
     showSheets(result.sheets, result.sheet);
     setColumns(result.columns);
@@ -424,15 +430,22 @@ export const scheduleLoad = (delay = LOAD_DELAY_MS.file) => {
 };
 
 // 同じファイルをもう一度選んだ場合も再読込する（入力欄は main.js が空に戻す）
-export const selectFile = (file) => {
+// options.pasted: 貼り付けたデータ。options.notes: 読込結果の警告に添える文字列の配列
+export const selectFile = (file, options = {}) => {
   if (!file) return;
   selectedFile = file;
-  loadWarnings = [];
+  selectedPasted = options.pasted === true;
+  selectedNotes = Array.isArray(options.notes) ? options.notes : [];
+  loadWarnings = [...selectedNotes];
+  showPastedSave(false); // 読込に成功したら、貼り付けたデータのときだけ出す
   setPath("load.files", [{ id: SOURCE_ID, name: file.name, sheet: "" }], "reconcile"); // 新しいファイルは先頭のシート（再読込は下で予約する）
-  showFileName(file.name);
+  showFileName(selectedPasted ? `貼り付けたデータ（${file.name}）` : file.name);
   showSheets([], null);
   scheduleLoad(LOAD_DELAY_MS.file);
 };
+
+// 現在のデータ元（貼り付けたデータの保存用）
+export const getSelectedSource = () => ({ file: selectedFile, pasted: selectedPasted });
 
 // ---- Pythonコードタブのモード切替・実行 ----
 // 予約済み・実行中の GUI 同期描画を無効にする（世代を進める。結果は画像にもコードにもステータスにも反映されない）

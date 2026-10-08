@@ -38,6 +38,11 @@
     <script type="module" src="https://pyscript.net/releases/2026.7.3/core.js" onerror="__mplguiLoadFailed()"></script>
   </head>
   <body>
+    <div id="dropOverlay" class="drop-overlay" hidden aria-hidden="true">
+      <div class="drop-zones">
+        <div id="dropLoad" class="drop-zone">ここにドロップして読み込む</div>
+      </div>
+    </div>
     <div class="layout">
       <aside class="panel">
         <h1>Matplotlib GUI</h1>
@@ -46,13 +51,19 @@
           <summary class="section-header"><span class="section-title">データ読み込み</span></summary>
           <div class="section-body">
           <div class="group">
-            <label for="fileInput">入力ファイル (.xlsx/.csv/.txt)</label>
+            <label for="fileInput">入力ファイル (.xlsx/.csv/.txt/.tsv)</label>
             <div class="file-picker">
               <span class="file-picker-btn" aria-hidden="true">ファイルを選択</span>
               <span id="fileNameLabel" class="file-picker-name" data-selected="false">選択されていません</span>
-              <input id="fileInput" type="file" accept=".xlsx,.csv,.txt" aria-describedby="fileNameLabel" />
+              <input id="fileInput" type="file" accept=".xlsx,.csv,.txt,.tsv" aria-describedby="fileNameLabel" />
             </div>
             <div id="encodingLabel" class="file-info"></div>
+          </div>
+
+          <div class="group">
+            <label for="pasteArea">表を貼り付け</label>
+            <textarea id="pasteArea" class="paste-area" rows="3" spellcheck="false" autocomplete="off" placeholder="Excel などでコピーした表を、ここに貼り付け（Ctrl/Cmd+V）"></textarea>
+            <button id="savePastedBtn" type="button" class="secondary" hidden>貼り付けたデータを保存（.tsv）</button>
           </div>
 
           <div class="group">

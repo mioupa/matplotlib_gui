@@ -339,3 +339,51 @@ def code_is_stale(page) -> bool:
     note = page.evaluate("!document.getElementById('codeStaleNote').hidden")
     assert attr == note, "data-stale と #codeStaleNote の表示が食い違っている"
     return attr
+
+
+# --- ドロップ・貼り付け（D1） ---
+DRAG_JS = """([type, selector, files, text]) => {
+  const dt = new DataTransfer();
+  for (const f of files) dt.items.add(new File([new Uint8Array(f.bytes)], f.name));
+  if (text !== null) dt.setData('text/plain', text);
+  const target = document.querySelector(selector);
+  const event = new DragEvent(type, {dataTransfer: dt, bubbles: true, cancelable: true});
+  target.dispatchEvent(event);
+  return event.defaultPrevented;
+}"""
+
+
+def drag_event(page, type_, selector="body", files=(), text=None) -> bool:
+    """ファイル（名前, バイト列）や文字列を持つ DragEvent を要素に送る。defaultPrevented を返す。"""
+    payload = [{"name": name, "bytes": list(data)} for name, data in files]
+    return page.evaluate(DRAG_JS, [type_, selector, payload, text])
+
+
+def drop_files(page, files, selector="body"):
+    """ドロップの一連のイベント（dragenter → dragover → drop）を送る。"""
+    drag_event(page, "dragenter", selector, files)
+    drag_event(page, "dragover", selector, files)
+    return drag_event(page, "drop", selector, files)
+
+
+def drop_overlay_visible(page) -> bool:
+    return page.evaluate("!document.getElementById('dropOverlay').hidden")
+
+
+PASTE_JS = """([selector, text]) => {
+  const target = selector ? document.querySelector(selector) : document.body;
+  if (selector) target.focus();
+  const dt = new DataTransfer();
+  dt.setData('text/plain', text);
+  const event = new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true});
+  target.dispatchEvent(event);
+  return event.defaultPrevented;
+}"""
+
+
+def paste_text(page, text, selector="#pasteArea") -> bool:
+    """ClipboardEvent('paste') を送る（selector=None は body）。defaultPrevented を返す。"""
+    return page.evaluate(PASTE_JS, [selector, text])
+
+
+EXCEL_TABLE = "時間\t電圧\t電流\r\n0\t0\t1.5\r\n1\t0.5\t1.4\r\n2\t0.9\t1.1\r\n3\t1.0\t0.8\r\n"

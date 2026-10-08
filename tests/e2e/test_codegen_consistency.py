@@ -15,6 +15,8 @@ from helpers import (
     image_summary,
     load_fixture,
     open_code_tab,
+    paste_text,
+    wait_data_ready,
     wait_app_ready,
     wait_code_contains,
     wait_code_generated,
@@ -99,7 +101,17 @@ def _configure_second_sheet(page):
 # 読込の設定を変えた場合: 生成スクリプトの読込部が、GUI の読み方と同じ図を作る
 PRE_STEPS = {"preamble_csv": _pre_preamble, "european_csv": _pre_european}
 
+PASTED_FIXTURE = "tab.txt"  # 貼り付けた表の代わりに、タブ区切りのフィクスチャの中身を貼り付ける
+
+
+def _paste_fixture(page, fixtures_dir):
+    text = (fixtures_dir / PASTED_FIXTURE).read_text(encoding="utf-8").replace("\n", "\r\n")  # Excel のコピーは CRLF
+    paste_text(page, text)
+    wait_data_ready(page)
+
+
 CASES = {
+    "pasted_tsv": (None, _configure_xy_1),
     "line": ("growth.csv", _configure_line),
     "scatter": ("utf8.csv", _configure_scatter),
     "bar": ("categories.csv", _configure_bar),
@@ -132,7 +144,10 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
     wait_app_ready(page)
     if case in PRE_STEPS:
         PRE_STEPS[case](page)
-    load_fixture(page, fixtures_dir / fixture)
+    if fixture is None:
+        _paste_fixture(page, fixtures_dir)
+    else:
+        load_fixture(page, fixtures_dir / fixture)
     wait_settled(page)
     configure(page)
     wait_settled(page)
@@ -147,7 +162,13 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
         page.click("#downloadCodeBtn")
     script = tmp_path / dl.value.suggested_filename
     dl.value.save_as(script)
-    shutil.copy(fixtures_dir / fixture, tmp_path / fixture)  # データは元のファイル名でスクリプトの隣に置く
+    if fixture is None:
+        with page.expect_download() as pasted_dl:
+            page.click("#savePastedBtn")  # 貼り付けたデータは、保存したファイルをスクリプトの隣に置く
+        pasted_dl.value.save_as(tmp_path / pasted_dl.value.suggested_filename)
+        assert pasted_dl.value.suggested_filename == "pasted_data.tsv"
+    else:
+        shutil.copy(fixtures_dir / fixture, tmp_path / fixture)  # データは元のファイル名でスクリプトの隣に置く
     local, stderr = _run_in_cpython(script, tmp_path)
 
     assert len(local) == len(browser)
@@ -169,6 +190,9 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
         if case == "european_csv":
             assert 'decimal=",",' in text and 'sep=";",' in text
             assert browser[0]["ylim"][1] > 1000  # 1.234,5 が数値として読めている
+    if case == "pasted_tsv":
+        assert len(browser) == 1 and browser[0]["lines"] == 1
+        assert "# 貼り付けたデータ:" in script.read_text(encoding="utf-8")
     if case == "bar":
         assert local[0]["xticklabels"] == browser[0]["xticklabels"]
         assert "品目A" in browser[0]["xticklabels"][0]
