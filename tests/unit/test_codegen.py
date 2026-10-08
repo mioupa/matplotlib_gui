@@ -355,8 +355,10 @@ def test_x_numeric_strings_are_converted_and_text_x_is_positional(tmp_path):
     b = Built(tmp_path, df.assign(x=["1", "2", "3", "x"]), None, [S(2, x="__idx__0")])
     assert 'x = pd.to_numeric(df.iloc[:, 0], errors="coerce")' in b.script.text
     b = Built(tmp_path, df, None, [S(2, x="__idx__1")])
-    assert 'ax.set_xscale("linear")' in b.script.text
-    b.summaries()
+    assert "set_xscale" not in b.script.text  # 文字列の X は、目盛にカテゴリの値が出る（Phase 4 で Phase 2 の方式をやめた）
+    full, auto = b.summaries()
+    assert full == auto
+    assert full[0]["xticklabels"] == ["a", "b", "c", "d"]
 
 
 def test_no_header_file(tmp_path):
@@ -588,7 +590,7 @@ def test_series_blocks_are_separated_by_a_blank_line(tmp_path, data):
 
 def test_comments_use_the_same_word_for_tick_marks(tmp_path, data):
     b = Built(tmp_path, data, None, [S(1, x="__idx__3")])
-    assert "set_xscale" in b.script.text and "目盛り" not in b.script.text
+    assert "目盛は内向き" in b.script.text and "目盛り" not in b.script.text
 
 
 # ---------------------------------------------------------------- Phase 3: figure size, latin fonts, save rc

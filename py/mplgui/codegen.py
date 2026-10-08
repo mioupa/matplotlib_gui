@@ -16,7 +16,7 @@ from typing import Callable
 from .dataprep import PlotPlan, SeriesPlan
 from .fonts import LATIN_FONTS, SANS_SERIF_PRIORITY
 from .formats import FORMATS, build_filename, savefig_kwargs, savefig_rc
-from .loader import SourceInfo
+from .loader import DatetimeColumn, SourceInfo
 from .settings import SeriesSettings, Settings
 
 SCRIPT_NAME = "plot.py"
@@ -153,7 +153,7 @@ def _label_size_expr(font_size: float) -> str:
 # ---------------------------------------------------------------- sections
 
 
-def _emit_header(b: _Builder, source: SourceInfo, latin_font: str = "default") -> None:
+def _emit_header(b: _Builder, source: SourceInfo, latin_font: str = "default", plan: PlotPlan | None = None) -> None:
     name = comment_text(source.filename)
     latin = LATIN_FONTS.get(latin_font)
     if source.pasted:
@@ -164,8 +164,12 @@ def _emit_header(b: _Builder, source: SourceInfo, latin_font: str = "default") -
         "# matplotlib GUI が生成したスクリプト",
         usage,
         "# 必要なライブラリ: pandas, matplotlib, numpy",
-        "import matplotlib.pyplot as plt",
     )
+    if plan is not None and _uses_date_axis(plan):
+        b.add("import matplotlib.dates as mdates")
+    b.add("import matplotlib.pyplot as plt")
+    if plan is not None and plan.thin_categorical_x:
+        b.add("import matplotlib.ticker as ticker")
     if latin is not None:
         b.add("from matplotlib import font_manager")
     b.add(
@@ -194,6 +198,10 @@ def _emit_header(b: _Builder, source: SourceInfo, latin_font: str = "default") -
             b.add(f'plt.rcParams["mathtext.fontset"] = {literal(latin.mathtext_fontset)}  # 数式（$...$）も Times 系の字形にする（STIX は matplotlib に同梱）')
 
 
+def _uses_date_axis(plan: PlotPlan) -> bool:
+    return plan.datetime_x and plan.plot_type in {"line", "scatter"}
+
+
 def _font_list_literal() -> str:
     return "[" + ", ".join(literal(name) for name in SANS_SERIF_PRIORITY) + "]"
 
@@ -214,6 +222,14 @@ _READ_COMMENTS_XLSX = {
     "decimal": "小数点（文字列のセルだけに効く）",
 }
 _KIND_NOTES = {"csv": "CSV（.csv）", "txt": "テキスト（.txt）", "tsv": "TSV（.tsv）", "xlsx": "Excel（.xlsx）"}
+
+
+def _datetime_expr(spec: DatetimeColumn) -> str:
+    """列を日時にする式。loader.convert_datetime と同じ内容（単体テストで一致を確かめる）。"""
+    source = f"df.iloc[:, {spec.index}]" + (".str.strip()" if spec.strip else "")
+    utc = ", utc=True" if spec.utc else ""
+    expr = f'pd.to_datetime({source}, format={literal(spec.format)}, errors="coerce"{utc})'
+    return expr + ".dt.tz_localize(None)" if spec.has_tz else expr
 
 
 def _emit_load(b: _Builder, source: SourceInfo) -> None:
@@ -241,6 +257,10 @@ def _emit_load(b: _Builder, source: SourceInfo) -> None:
     b.add(")")
     if not source.has_header:
         b.add('df.columns = [f"column_{i}" for i in range(len(df.columns))]  # 列名を column_0, column_1, ... にする')
+    if source.datetime_columns:
+        b.add("# 日時の列を日時に変換する（自動で認識した書式。読めない値は NaT（欠損）になる）")
+        for spec in source.datetime_columns:
+            b.add(f"df.isetitem({spec.index}, {_datetime_expr(spec)})  # {comment_text(spec.name)} [{spec.index}]")
     b.load_lines = (start, len(b.lines))
 
 
@@ -282,6 +302,8 @@ def _target(p: SeriesPlan) -> str:
 def _emit_x_data(b: _Builder, p: SeriesPlan) -> None:
     if p.x_index is None:
         b.add("x = pd.Series(df.index)  # X は指定なし。行番号を使う")
+    elif p.datetime_x:
+        b.add(f"x = df.iloc[:, {p.x_index}]  # 日時の列（読み込み時に日時に変換済み）")
     elif p.convert_x:
         b.add(f'x = pd.to_numeric(df.iloc[:, {p.x_index}], errors="coerce")  # 数値にできない値は NaN にする')
     else:
@@ -356,6 +378,11 @@ def _emit_scatter_series(b: _Builder, settings: Settings, plan: PlotPlan) -> Non
 def _emit_bar_x(b: _Builder, plan: PlotPlan) -> None:
     if plan.bar_x_index is None:
         b.add("x = pd.Series(df.index)  # X は指定なし。行番号を使う")
+    elif plan.datetime_x:
+        b.add(
+            f"x = df.iloc[:, {plan.bar_x_index}].dt.strftime({literal(plan.bar_date_format)})"
+            "  # 日時を文字列にして、棒をカテゴリとして並べる"
+        )
     else:
         b.add(f"x = df.iloc[:, {plan.bar_x_index}]")
 
@@ -420,6 +447,28 @@ def _axis_lines(var: str, which: str, scale: str, lo, hi) -> list[str]:
     return lines
 
 
+def _x_tick_lines(settings: Settings, plan: PlotPlan) -> list[str]:
+    """X 軸の目盛の書式（日時の軸、文字列の列の間引き）。line / scatter だけ。"""
+    if plan.plot_type not in {"line", "scatter"}:
+        return []
+    if _uses_date_axis(plan):
+        fmt = settings.axes.x.date_format
+        if fmt:
+            return [f"ax.xaxis.set_major_formatter(mdates.DateFormatter({literal(fmt)}))  # 日時の表示書式"]
+        return [
+            "# X が日時の列: 範囲に合わせて目盛の間隔と表示を自動で決める",
+            "date_locator = mdates.AutoDateLocator()",
+            "ax.xaxis.set_major_locator(date_locator)",
+            "ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(date_locator))",
+        ]
+    if plan.thin_categorical_x:
+        return [
+            "# X が文字列の列: 目盛に X の値を出す（25個を超えるので間引く）",
+            "ax.xaxis.set_major_locator(ticker.MaxNLocator(nbins=25, integer=True))",
+        ]
+    return []
+
+
 def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
     b.section("5. 軸（ラベル・スケール・範囲・目盛）")
     plot, axes = settings.plot, settings.axes
@@ -438,8 +487,8 @@ def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
         if var == "ax2" and not plan.uses_secondary:
             continue
         lines = _axis_lines(var, which, axis.scale, axis.min, axis.max)
-        if var == "ax" and which == "x" and axis.scale == "linear" and any(p.categorical_x and p.has_points for p in plan.series):
-            lines.insert(0, 'ax.set_xscale("linear")  # X が文字列・日時の列: 目盛は位置の番号になる（値を目盛にするには、この行を消す）')
+        if var == "ax" and which == "x":
+            lines = _x_tick_lines(settings, plan) + lines
         if lines:
             with b.step(axis_error_message(label), f"{label}軸の範囲"):
                 b.add(*lines)
@@ -553,7 +602,7 @@ def _emit_output(b: _Builder, settings: Settings) -> None:
 def generate_script(settings: Settings, source: SourceInfo, plan: PlotPlan) -> GeneratedScript:
     """設定・読み込んだファイルの情報・描画計画から、完全なスクリプトを作る。"""
     b = _Builder()
-    _emit_header(b, source, settings.plot.latin_font)
+    _emit_header(b, source, settings.plot.latin_font, plan)
     b.add(f"FONT_SIZE = {literal(settings.plot.font_size)}  # 文字の大きさ（pt）")
     _emit_load(b, source)
     _emit_skip_rows(b, plan)

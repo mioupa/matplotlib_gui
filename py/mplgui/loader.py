@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import dataclasses
 import io
 import re
 import warnings
@@ -32,7 +33,7 @@ class SourceInfo:
     decimal: str = "."
     comment: str | None = None  # None = なし
     sheets: tuple[str, ...] = ()  # xlsx のシート一覧
-    datetime_columns: tuple = ()  # D5 用（未使用）
+    datetime_columns: tuple["DatetimeColumn", ...] = ()  # 読込のあとで日時に変換した列（生成コードの読込部に変換の行を書く）
     pasted: bool = False  # 貼り付けたデータ（pasted_data.tsv）。生成コードに保存の案内を書く
 
     def read_kwargs(self) -> dict:
@@ -50,6 +51,18 @@ class SourceInfo:
         if self.kind == "xlsx":
             return {"sheet_name": self.sheet_name, **common}
         return {"sep": self.separator, **common, "engine": "python"}
+
+
+@dataclass(frozen=True)
+class DatetimeColumn:
+    """自動で日時と認識した文字列の列。変換の式は convert_datetime（loader）と codegen が同じ内容で持つ。"""
+
+    index: int  # 列番号
+    name: str  # 列名（コメント・警告用）
+    format: str  # pd.to_datetime の format
+    strip: bool = False  # 値に前後の空白があるので .str.strip() してから変換する
+    utc: bool = False  # タイムゾーンが混在しているので utc=True で UTC にそろえる
+    has_tz: bool = False  # format に %z を含む（変換後に .dt.tz_localize(None) で書かれた時刻にする）
 
 
 @dataclass
@@ -202,6 +215,133 @@ def _excel_preamble(excel: pd.ExcelFile, sheet: str, skip_lines: int) -> tuple[s
     return tuple(lines)
 
 
+# ---------------------------------------------------------------- datetime recognition (D5)
+
+_DATE_PARTS = ("%Y-%m-%d", "%Y/%m/%d", "%Y年%m月%d日")  # 年が先頭のものだけ（月日の順が曖昧な 01/02/2024 は認識しない）
+_TIME_PARTS = ("", " %H:%M", " %H:%M:%S", " %H:%M:%S.%f")
+_ISO_TIME_PARTS = ("T%H:%M", "T%H:%M:%S", "T%H:%M:%S.%f")
+
+
+def _candidate_formats() -> tuple[str, ...]:
+    out: list[str] = []
+    for date in _DATE_PARTS:
+        out.extend(date + t for t in _TIME_PARTS)
+        if date == "%Y-%m-%d":
+            out.extend(date + t for t in _ISO_TIME_PARTS)
+            # 時刻のあるもの（スペース区切り・T 区切り）は、末尾にタイムゾーン（Z / +09:00）が付いた書式も候補にする
+            out.extend(date + t + "%z" for t in _TIME_PARTS[1:] + _ISO_TIME_PARTS)
+    return tuple(out)
+
+
+DATETIME_FORMATS = _candidate_formats()
+DATETIME_SAMPLE = 100  # 先頭から、すべてが読めなければならない値の数
+DATETIME_MIN_RATIO = 0.9  # 空欄以外のうち、読めなければならない割合
+_OFFSET = re.compile(r"(Z|[+-]\d{2}(?::?\d{2})?)$")
+
+
+def _is_blank(value) -> bool:
+    if value is None:
+        return True
+    try:
+        if pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return isinstance(value, str) and value.strip() == ""
+
+
+def _offset_of(text: str) -> str:
+    m = _OFFSET.search(text)
+    if not m:
+        return ""
+    o = m.group(1).replace(":", "")
+    if o == "Z":
+        return "+0000"
+    return o if len(o) == 5 else o + "00"
+
+
+def _parses(values: list[str], fmt: str) -> int:
+    """fmt で読める値の数（%z の書式は、オフセットが混在していても読めるものとして数える）。"""
+    kwargs = {"utc": True} if "%z" in fmt else {}
+    try:
+        return int(pd.to_datetime(pd.Series(values, dtype=object), format=fmt, errors="coerce", **kwargs).notna().sum())
+    except (ValueError, TypeError, OverflowError):
+        return 0
+
+
+def _detect_one(index: int, name, column: pd.Series) -> DatetimeColumn | None:
+    if not (pd.api.types.is_object_dtype(column.dtype) or pd.api.types.is_string_dtype(column.dtype)):
+        return None
+    raw = [v for v in column.tolist() if not _is_blank(v)]
+    if not raw or any(not isinstance(v, str) for v in raw):
+        return None
+    texts = [v.strip() for v in raw]
+    numeric = pd.to_numeric(pd.Series(texts, dtype=object), errors="coerce").notna().sum()
+    if numeric * 2 >= len(texts):
+        return None
+    sample = texts[:DATETIME_SAMPLE]
+    for fmt in DATETIME_FORMATS:
+        if _parses(sample, fmt) != len(sample):
+            continue
+        if _parses(texts, fmt) < DATETIME_MIN_RATIO * len(texts):
+            continue
+        has_tz = "%z" in fmt
+        utc = has_tz and len({_offset_of(t) for t in texts if _OFFSET.search(t)}) > 1
+        strip = any(v != v.strip() for v in raw)
+        return DatetimeColumn(index=index, name=str(name), format=fmt, strip=strip, utc=utc, has_tz=has_tz)
+    return None
+
+
+def detect_datetime_columns(df: pd.DataFrame) -> tuple[DatetimeColumn, ...]:
+    """日時として読める文字列の列を探す（df は変更しない）。採用条件は、前後の空白を除いた先頭 100 個の
+    空欄以外の値がすべて読め、かつ空欄以外の 90% 以上が読めること。数値の列（半数以上が数値）は除く。"""
+    found = []
+    for i in range(df.shape[1]):
+        spec = _detect_one(i, df.columns[i], df.iloc[:, i])
+        if spec is not None:
+            found.append(spec)
+    return tuple(found)
+
+
+def convert_datetime(series: pd.Series, spec: DatetimeColumn) -> pd.Series:
+    """列を日時に変換する。生成コードの `df.isetitem(i, pd.to_datetime(...))` の式と同じ内容（codegen が文字列にする）。"""
+    source = series.str.strip() if spec.strip else series
+    kwargs = {"utc": True} if spec.utc else {}
+    out = pd.to_datetime(source, format=spec.format, errors="coerce", **kwargs)
+    return out.dt.tz_localize(None) if spec.has_tz else out
+
+
+def apply_datetime_columns(df: pd.DataFrame, specs: tuple[DatetimeColumn, ...]) -> list[str]:
+    """df の列を（その場で）日時に変換し、警告の文を返す（読めない値は NaT になる）。"""
+    warnings_out: list[str] = []
+    for spec in specs:
+        original = df.iloc[:, spec.index]
+        converted = convert_datetime(original, spec)
+        df.isetitem(spec.index, converted)
+        where = f"列「{spec.name}」[{spec.index}]"
+        if spec.utc:
+            warnings_out.append(f"{where}: タイムゾーンの異なる日時が混在しているため、UTC の時刻にそろえました。")
+        failed = [str(v).strip() for v, ok in zip(original.tolist(), converted.notna().tolist()) if not ok and not _is_blank(v)]
+        if failed:
+            examples: list[str] = []
+            for text in failed:
+                if text not in examples:
+                    examples.append(text)
+                if len(examples) >= 3:
+                    break
+            ex = ", ".join(f'"{e}"' for e in examples)
+            warnings_out.append(f"{where}: 日時として読めない値が{len(failed)}件あったため、欠損として扱います（例: {ex}）。")
+    return warnings_out
+
+
+def column_kind(dtype) -> str:
+    if pd.api.types.is_datetime64_any_dtype(dtype):
+        return "datetime"
+    if pd.api.types.is_numeric_dtype(dtype) and not pd.api.types.is_bool_dtype(dtype):
+        return "number"
+    return "text"
+
+
 def load_file(
     file_bytes: bytes,
     filename: str,
@@ -214,6 +354,7 @@ def load_file(
     comment: str = "",
     sheet: str = "",
     excel: pd.ExcelFile | None = None,
+    parse_dates: bool = True,
 ) -> LoadedData:
     suffix = Path(filename).suffix.lower()
     if suffix not in SUPPORTED:
@@ -298,10 +439,14 @@ def load_file(
         if hint:
             warnings_out.append(hint)
 
+    # 日時の列の認識（Excel の日付セルは、もともと datetime64 なので対象外で、設定に関係なく日時）
+    datetime_columns = detect_datetime_columns(df) if parse_dates else ()
+    warnings_out.extend(apply_datetime_columns(df, datetime_columns))
+
     return LoadedData(
         df=df,
         encoding=used_encoding,
-        source=make_source(),
+        source=dataclasses.replace(make_source(), datetime_columns=datetime_columns),
         warnings=warnings_out,
         preamble_lines=preamble,
         preamble_total=skip_lines if preamble else 0,
@@ -314,7 +459,10 @@ def load_dataframe(file_bytes: bytes, filename: str, delimiter: str, has_header:
 
 def column_options(df: pd.DataFrame) -> list[dict]:
     """列セレクト用の選択肢。値は列番号ベース（"__idx__N"）で、同名列も区別できる。"""
-    return [{"value": f"__idx__{i}", "label": f"{col} [{i}]"} for i, col in enumerate(df.columns)]
+    return [
+        {"value": f"__idx__{i}", "label": f"{col} [{i}]", "kind": column_kind(df.dtypes.iloc[i])}
+        for i, col in enumerate(df.columns)
+    ]
 
 
 def _format_cells(preview_df: pd.DataFrame) -> list[list[str]]:
@@ -335,6 +483,7 @@ def build_preview(df: pd.DataFrame, limit: int = PREVIEW_ROWS, preamble: tuple[t
     return {
         "preamble": {"lines": list(lines[:PREAMBLE_LINES]), "total": int(total)} if total > 0 else None,
         "columns": [str(c) for c in df.columns],
+        "columnKinds": [column_kind(dt) for dt in df.dtypes],
         "rows": _format_cells(preview_df),
         "totalRows": int(len(df)),
         "totalColumns": int(len(df.columns)),

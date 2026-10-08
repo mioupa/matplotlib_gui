@@ -4,7 +4,7 @@
 """
 import math
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import openpyxl
@@ -144,6 +144,51 @@ def main():
         unit = f"{i * 3 + 1} mV"
         lines.append(f"{i},{amount},{volt},{unit}")
     (OUT / "non_numeric.csv").write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+
+    make_datetime_fixtures(fixed)
+
+
+def make_datetime_fixtures(fixed):
+    """日時の列（D5）。年をまたぐ時間刻み、ISO 8601（タイムゾーン付き）、日本語の日付、Excel の日時セル。"""
+    # 時間刻み。値は 150 行（先頭 100 行は正しい日時。120 行目は読めない値、130 行目は空欄）
+    t0 = datetime(2025, 12, 31, 22, 0)
+    lines = ["日時,ID,通番,温度,湿度"]
+    for i in range(150):
+        stamp = (t0 + timedelta(hours=i)).strftime("%Y/%m/%d %H:%M")
+        if i == 120:
+            stamp = "測定エラー"
+        elif i == 130:
+            stamp = ""
+        lines.append(f"{stamp},A-{i + 1:03d},{1001 + i},{round(15 + 5 * math.sin(i / 8), 3)},{round(60 - i * 0.1, 2)}")
+    (OUT / "datetime.csv").write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+
+    # ISO 8601: 時刻は同じオフセット（+09:00）、混在は Z と +09:00 が交互
+    iso = ["時刻,混在,値"]
+    base = datetime(2026, 1, 5, 9, 0)
+    for i in range(30):
+        local = (base + timedelta(hours=i)).strftime("%Y-%m-%dT%H:%M:%S")
+        mixed = local + ("Z" if i % 2 == 0 else "+09:00")
+        iso.append(f"{local}+09:00,{mixed},{round(10 + i * 0.5, 2)}")
+    (OUT / "datetime_iso_tz.csv").write_bytes(("\n".join(iso) + "\n").encode("utf-8"))
+
+    # 日本語の日付（時刻なし）。棒グラフ用
+    ja = ["日付,売上"]
+    for i in range(8):
+        day = datetime(2026, 1, 5) + timedelta(days=i)
+        ja.append(f"{day.year}年{day.month}月{day.day}日,{100 + i * 13 % 47}")
+    (OUT / "dates_ja.csv").write_bytes(("\n".join(ja) + "\n").encode("utf-8"))
+
+    # Excel の日時セル（もともと datetime 型）
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws.append(["日時", "値", "温度"])
+    for i in range(24):
+        ws.append([datetime(2026, 1, 5, 12, 0) + timedelta(hours=6 * i), i * 2, round(20 + math.sin(i / 3), 3)])
+    wb.properties.created = fixed
+    wb.properties.modified = fixed
+    wb.save(OUT / "datetime.xlsx")
+    _normalize_zip(OUT / "datetime.xlsx")
 
 
 if __name__ == "__main__":

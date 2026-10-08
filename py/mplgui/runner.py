@@ -106,6 +106,7 @@ def figure_summary(fig) -> list[dict]:
                 "patches": len(ax.patches),
                 "legend": [t.get_text() for t in legend.get_texts()] if legend is not None else [],
                 "xticklabels": [t.get_text() for t in ax.get_xticklabels()],
+                "xconverter": type(ax.xaxis.get_converter()).__name__ if ax.xaxis.get_converter() is not None else None,
             }
         )
     return out

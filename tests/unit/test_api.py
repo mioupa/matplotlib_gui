@@ -34,7 +34,7 @@ def load(name="utf8.csv", settings=None):
 def test_load_file_response_shape():
     r = load()
     assert r["ok"] is True and r["encoding"] == "utf-8" and r["warnings"] == []
-    assert r["columns"][0] == {"value": "__idx__0", "label": "時間 [0]"}
+    assert r["columns"][0] == {"value": "__idx__0", "label": "時間 [0]", "kind": "number"}
     assert r["preview"]["totalRows"] == 30
 
 

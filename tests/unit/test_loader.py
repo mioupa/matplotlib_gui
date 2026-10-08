@@ -157,7 +157,7 @@ def test_non_numeric_fixture_loads_as_text_columns():
 def test_preview_payload_shape():
     df = _load("utf8.csv").df
     p = build_preview(df)
-    assert set(p) == {"columns", "rows", "totalRows", "totalColumns", "limit", "truncated", "preamble"}
+    assert set(p) == {"columns", "rows", "totalRows", "totalColumns", "limit", "truncated", "preamble", "columnKinds"}
     assert p["preamble"] is None
     assert p["columns"] == ["時間", "電圧", "電流"]
     assert p["totalRows"] == 30 and p["totalColumns"] == 3 and p["truncated"] is False

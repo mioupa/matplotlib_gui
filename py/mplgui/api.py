@@ -149,7 +149,7 @@ def load_file_json(name: str, data: bytes, load_settings_json: str, source_id: s
     loaded = load_file(
         raw, name, load.delimiter, load.has_header,
         skip_lines=load.skip_lines, thousands=load.thousands, decimal=load.decimal, comment=load.comment,
-        sheet=sheet, excel=excel,
+        sheet=sheet, excel=excel, parse_dates=load.parse_dates,
     )
     SESSION.df = loaded.df
     SESSION.filename = name
