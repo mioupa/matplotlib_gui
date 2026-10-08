@@ -6,6 +6,7 @@ py/main.py はこの関数を window.mplgui に登録するだけ。引数・戻
 from __future__ import annotations
 
 import base64
+import dataclasses
 import hashlib
 import json
 import struct
@@ -152,9 +153,11 @@ def load_file_json(name: str, data: bytes, load_settings_json: str, source_id: s
     )
     SESSION.df = loaded.df
     SESSION.filename = name
-    SESSION.source = loaded.source
-    SESSION.write_upload(name, raw)
     source = loaded.source
+    if pasted:
+        source = dataclasses.replace(source, pasted=True)
+    SESSION.source = source
+    SESSION.write_upload(name, raw)
     return {
         "ok": True,
         "encoding": loaded.encoding,

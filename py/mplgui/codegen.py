@@ -156,9 +156,13 @@ def _label_size_expr(font_size: float) -> str:
 def _emit_header(b: _Builder, source: SourceInfo, latin_font: str = "default") -> None:
     name = comment_text(source.filename)
     latin = LATIN_FONTS.get(latin_font)
+    if source.pasted:
+        usage = f"# 使い方: 貼り付けたデータを保存した「{name}」と同じフォルダに置いて、python {SCRIPT_NAME} で実行します。"
+    else:
+        usage = f"# 使い方: データファイル「{name}」と同じフォルダに置いて、python {SCRIPT_NAME} で実行します。"
     b.add(
         "# matplotlib GUI が生成したスクリプト",
-        f"# 使い方: データファイル「{name}」と同じフォルダに置いて、python {SCRIPT_NAME} で実行します。",
+        usage,
         "# 必要なライブラリ: pandas, matplotlib, numpy",
         "import matplotlib.pyplot as plt",
     )
@@ -209,12 +213,17 @@ _READ_COMMENTS_XLSX = {
     "thousands": "桁区切り（文字列のセルだけに効く。None: なし）",
     "decimal": "小数点（文字列のセルだけに効く）",
 }
-_KIND_NOTES = {"csv": "CSV（.csv）", "txt": "テキスト（.txt）", "xlsx": "Excel（.xlsx）"}
+_KIND_NOTES = {"csv": "CSV（.csv）", "txt": "テキスト（.txt）", "tsv": "TSV（.tsv）", "xlsx": "Excel（.xlsx）"}
 
 
 def _emit_load(b: _Builder, source: SourceInfo) -> None:
     start = b.section("1. データの読み込み")
     xlsx = source.kind == "xlsx"
+    if source.pasted:
+        b.add(
+            f"# 貼り付けたデータ: 「データ読み込み」の「貼り付けたデータを保存」で {comment_text(source.filename)} を保存し、"
+            "このスクリプトと同じフォルダに置いてください。"
+        )
     b.add(f"# 形式: {_KIND_NOTES.get(source.kind, comment_text(source.kind))}")
     if xlsx:
         b.add("# 読み込みには openpyxl が必要です（pip install openpyxl）")

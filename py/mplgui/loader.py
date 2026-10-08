@@ -12,7 +12,7 @@ import pandas as pd
 
 from .errors import UserError
 
-SUPPORTED = {".xlsx", ".csv", ".txt"}
+SUPPORTED = {".xlsx", ".csv", ".txt", ".tsv"}
 PREVIEW_ROWS = 100
 PREAMBLE_LINES = 20  # 前置き行として画面に出す最大の行数
 
@@ -22,7 +22,7 @@ class SourceInfo:
     """読み込んだファイルの情報。codegen が生成スクリプトの「データの読み込み」部に使う。"""
 
     filename: str
-    kind: str  # "csv" | "txt" | "xlsx"
+    kind: str  # "csv" | "txt" | "tsv" | "xlsx"
     encoding: str | None = None  # xlsx は None
     separator: str | None = None  # デコード後の区切り文字（csv / txt）。xlsx は None
     has_header: bool = True
@@ -33,7 +33,7 @@ class SourceInfo:
     comment: str | None = None  # None = なし
     sheets: tuple[str, ...] = ()  # xlsx のシート一覧
     datetime_columns: tuple = ()  # D5 用（未使用）
-    pasted: bool = False  # D1 用（未使用）
+    pasted: bool = False  # 貼り付けたデータ（pasted_data.tsv）。生成コードに保存の案内を書く
 
     def read_kwargs(self) -> dict:
         """pd.read_csv / pd.read_excel に渡す引数（文字コードとファイルを除く）。順序は生成スクリプトの並びと同じ。
@@ -91,6 +91,8 @@ def decode_delimiter(delimiter: str, suffix: str) -> str:
             ) from exc
     if suffix == ".csv":
         return ","
+    if suffix == ".tsv":
+        return "\t"
     return r"\s+"
 
 
@@ -215,7 +217,7 @@ def load_file(
 ) -> LoadedData:
     suffix = Path(filename).suffix.lower()
     if suffix not in SUPPORTED:
-        raise UserError("対応していない拡張子です。xlsx/csv/txtを選択してください。", field="入力ファイル")
+        raise UserError("対応していない拡張子です。xlsx/csv/txt/tsvを選択してください。", field="入力ファイル")
 
     used_encoding: str | None = None
     sep: str | None = None
