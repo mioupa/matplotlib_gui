@@ -41,7 +41,15 @@ export const showPreview = (preview, skipRows = 0) => {
   const numHead = el("th", "#");
   numHead.className = "row-number";
   headRow.appendChild(numHead);
-  for (const name of preview.columns) headRow.appendChild(el("th", name));
+  preview.columns.forEach((name, i) => {
+    const th = el("th", name);
+    if (preview.columnKinds && preview.columnKinds[i] === "datetime") {
+      const tag = el("span", "日時"); // 日時として読み込んだ列の印
+      tag.className = "col-kind-tag";
+      th.appendChild(tag);
+    }
+    headRow.appendChild(th);
+  });
   table.appendChild(el("thead")).appendChild(headRow);
   const body = el("tbody");
   preview.rows.forEach((row, idx) => {

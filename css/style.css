@@ -962,3 +962,16 @@ button.series-color-chip.active {
   font-weight: 700;
   text-align: center;
 }
+
+.col-kind-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: normal;
+  line-height: 1.5;
+  vertical-align: middle;
+}

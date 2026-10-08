@@ -238,7 +238,7 @@ uv run pytest tests/e2e        # E2E（Chromium とローカルの静的サー�
 - 生成スクリプトの最後は `fig.savefig(...)`（GUI の「保存」と同じ形式・解像度）と `plt.show()`。
 - 編集は明示的な「編集」ボタンで始める。`useCustomCode`（「使用する」）は廃止した。編集中は GUI の変更で、コードも図も変わらない。
 - 棒グラフ（1系列・複数系列）は、カテゴリの目盛ラベルを保つ（Phase 1 の不具合を修正）。複数系列は、棒の位置にラベルを付ける（25個を超えたら間引く）。
-- line / scatter で X が数値でない列（文字列・日時）のとき、Phase 1 と同じ見た目を保つため、生成コードに `ax.set_xscale("linear")` を入れる（目盛は位置の番号になる）。D5（日付軸）で見直す（Phase 4）。
+- line / scatter で X が数値でない列（文字列・日時）のとき、Phase 1 と同じ見た目を保つため、生成コードに `ax.set_xscale("linear")` を入れる（目盛は位置の番号になる）。Phase 4 の D5 で見直した: 日時の列は日時の軸（`AutoDateLocator` + `ConciseDateFormatter`）にし、文字列の列は `set_xscale("linear")` を入れず、目盛に値を出す（25 種を超えると `MaxNLocator` で間引く）。
 - ファイル選択欄に、選んだファイル名を欄の中に表示する（`#fileNameLabel`。`input` は選択のたびに空に戻すため、JS が表示する）。
 
 ### 13.2 Phase 3（2026-10-08）

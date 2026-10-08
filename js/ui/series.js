@@ -3,7 +3,15 @@ import { addSeries, getSettings, hasSecondaryAxis, removeSeries, updateSeries, s
 import { bindSeriesColorControls } from "./colorPicker.js";
 import { readNumber } from "./forms.js";
 
-let columns = []; // [{value: "__idx__0", label: "時間 [0]"}]（読込のたびに更新）
+let columns = []; // [{value: "__idx__0", label: "時間 [0]", kind: "number"}]（読込のたびに更新。kind: datetime / number / text）
+
+const isDatetimeColumn = (value) => !!value && columns.some((c) => c.value === value && c.kind === "datetime");
+
+// X に日時の列を使っているか（line / scatter はどれかの系列の X、bar は X列）
+export const usesDatetimeX = () => {
+  const { plot, series } = getSettings();
+  return plot.type === "bar" ? isDatetimeColumn(plot.xColumn) : series.some((s) => isDatetimeColumn(s.x));
+};
 
 const esc = (text) =>
   String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -112,6 +120,8 @@ export const syncVisibility = () => {
   for (const group of document.querySelectorAll("#seriesList .series-x-wrap")) {
     group.style.display = usePerSeriesX ? "block" : "none";
   }
+  const dateGroup = document.getElementById("xDateFormatGroup");
+  if (dateGroup) dateGroup.hidden = !usesDatetimeX();
   const hasY2 = hasSecondaryAxis();
   for (const id of ["y2LabelGroup", "y2AxisSettingsGroup"]) {
     const el = document.getElementById(id);

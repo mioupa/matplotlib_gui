@@ -9,6 +9,7 @@ import { bindSaveFormatEvents, syncSaveFormatOptions } from "./ui/saveFormat.js"
 import { bindDropPaste } from "./ui/dropPaste.js";
 import { bindLoadSection } from "./ui/loadSection.js";
 import { bindSaveSection } from "./ui/saveSection.js";
+import { bindDateFormat } from "./ui/dateFormat.js";
 import { bindClipboard } from "./ui/clipboard.js";
 import { bindSeriesEvents, renderSeriesList, setColumns, syncMarkerSizeDisplay, syncVisibility } from "./ui/series.js";
 import { bindStyleSection } from "./ui/styleSection.js";
@@ -34,6 +35,7 @@ bindSaveFormatEvents();
 bindLoadSection();
 bindDropPaste();
 bindSaveSection();
+bindDateFormat();
 bindClipboard();
 bindCodeTab();
 bindColorPanelOutsideClick();

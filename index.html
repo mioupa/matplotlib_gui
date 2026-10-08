@@ -76,6 +76,11 @@
             <label for="hasHeader">先頭行をヘッダとして扱う</label>
           </div>
 
+          <div class="group inline">
+            <input id="parseDates" type="checkbox" checked />
+            <label for="parseDates">日時の列を自動で認識する</label>
+          </div>
+
           <div class="group" id="sheetGroup" hidden>
             <label for="sheetSelect">シート</label>
             <select id="sheetSelect"></select>
@@ -198,6 +203,24 @@
               <label for="xMax">X軸最大値</label>
               <input id="xMax" type="number" step="any" placeholder="自動" />
             </div>
+          </div>
+
+          <div id="xDateFormatGroup" class="group" hidden>
+            <label for="xDateFormat">X軸の日時の表示書式</label>
+            <div id="xDateFormatRow" class="dpi-row">
+              <select id="xDateFormat">
+                <option value="">自動</option>
+                <option value="%Y-%m-%d">2024-01-31（%Y-%m-%d）</option>
+                <option value="%Y/%m/%d">2024/01/31（%Y/%m/%d）</option>
+                <option value="%m/%d">01/31（%m/%d）</option>
+                <option value="%m月%d日">01月31日（%m月%d日）</option>
+                <option value="%H:%M">13:45（%H:%M）</option>
+                <option value="%m/%d %H:%M">01/31 13:45（%m/%d %H:%M）</option>
+                <option value="custom">任意</option>
+              </select>
+              <input id="xDateFormatCustom" type="text" placeholder="%Y/%m/%d %H:%M" autocomplete="off" aria-label="日時の表示書式（任意）" hidden />
+            </div>
+            <div class="help-text">X が日時の列のときの目盛の書き方です。棒グラフでは、棒のラベルの書き方になります。</div>
           </div>
 
           <div class="group">

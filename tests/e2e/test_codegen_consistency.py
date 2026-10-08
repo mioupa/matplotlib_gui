@@ -91,6 +91,16 @@ def _configure_xy_1(page):
     page.select_option("#series-s1-y", "__idx__1")
 
 
+def _configure_datetime_line(page):
+    page.select_option("#series-s1-x", "__idx__0")
+    page.select_option("#series-s1-y", "__idx__3")
+
+
+def _configure_xlsx_datetime(page):
+    page.select_option("#series-s1-x", "__idx__0")
+    page.select_option("#series-s1-y", "__idx__1")
+
+
 def _configure_second_sheet(page):
     page.select_option("#sheetSelect", "二枚目")
     page.wait_for_function("document.documentElement.dataset.loadCount === '2'")
@@ -116,6 +126,8 @@ CASES = {
     "scatter": ("utf8.csv", _configure_scatter),
     "bar": ("categories.csv", _configure_bar),
     "xlsx_second_sheet": ("multi_sheet.xlsx", _configure_second_sheet),
+    "datetime_axis": ("datetime.csv", _configure_datetime_line),
+    "xlsx_datetime": ("datetime.xlsx", _configure_xlsx_datetime),
     "preamble_csv": ("preamble.csv", _configure_xy_1),
     "european_csv": ("european.csv", _configure_xy_1),
     "scatter_paper1": ("utf8.csv", _configure_scatter_paper1),
@@ -193,6 +205,10 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
     if case == "pasted_tsv":
         assert len(browser) == 1 and browser[0]["lines"] == 1
         assert "# 貼り付けたデータ:" in script.read_text(encoding="utf-8")
+    if case in ("datetime_axis", "xlsx_datetime"):
+        assert "Date" in browser[0]["xconverter"] and local[0]["xconverter"] == browser[0]["xconverter"]
+        assert local[0]["xticklabels"] == browser[0]["xticklabels"] and any(browser[0]["xticklabels"])
+        assert ("to_datetime" in script.read_text(encoding="utf-8")) == (case == "datetime_axis")
     if case == "bar":
         assert local[0]["xticklabels"] == browser[0]["xticklabels"]
         assert "品目A" in browser[0]["xticklabels"][0]
