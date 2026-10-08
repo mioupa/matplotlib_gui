@@ -114,7 +114,6 @@ def _rows(n_good, n_bad, bad="x"):
 
 
 def test_ninety_percent_threshold_boundary():
-    # 先頭 100 個はすべて読めなければならないので、90% の境界は 100 個より多い列でだけ意味を持つ
     def column(n_bad, total=1000):
         good = [f"2026-01-{(i % 28) + 1:02d}" for i in range(total - n_bad)]
         return good + ["x"] * n_bad
@@ -125,21 +124,29 @@ def test_ninety_percent_threshold_boundary():
     assert fmts(csv(column(101))) == []  # 899 / 1000: 採用しない
 
 
-def test_short_columns_need_every_value_to_parse():
+def test_small_columns_tolerate_one_bad_value_in_ten():
     good = [f"2026-01-{d:02d}" for d in range(1, 10)]
-    assert fmts(csv(good)) == [(0, "%Y-%m-%d")]
-    assert fmts(csv(good + ["x"])) == []  # 先頭 100 個（ここでは全部）に読めない値がある
+    r = csv(good + ["x"])  # 9 / 10: 採用し、1 件は NaT + 警告
+    assert fmts(r) == [(0, "%Y-%m-%d")] and pd.isna(r.df.iloc[9, 0])
+    assert r.warnings == ['列「t」[0]: 日時として読めない値が1件あったため、欠損として扱います（例: "x"）。']
+    assert fmts(csv(good[:8] + ["x", "y"])) == []  # 8 / 10: 認識しない
 
 
-def test_first_100_values_must_all_parse():
+def test_bad_values_inside_the_first_100_of_a_long_column():
     good = [f"2026-01-01 {i % 24:02d}:00" for i in range(150)]
-    bad_early = list(good)
-    bad_early[50] = "x"  # 先頭 100 個の中に読めない値: 採用しない（全体の 99% が読めても）
-    assert fmts(csv(bad_early)) == []
-    bad_late = list(good)
-    bad_late[120] = "x"  # 100 個より後ろ: 採用し、NaT + 警告
-    r = csv(bad_late)
-    assert fmts(r) == [(0, "%Y-%m-%d %H:%M")] and len(r.warnings) == 1
+    values = list(good)
+    values[10] = values[50] = values[90] = "x"  # 先頭 100 個のうち 97%、全体の 98%
+    r = csv(values)
+    assert fmts(r) == [(0, "%Y-%m-%d %H:%M")] and "3件" in r.warnings[0]
+    for i in range(11):  # 先頭 100 個の中の読めない値が 11 個: 89% で、書式を選べない
+        values[i * 8] = "x"
+    assert fmts(csv(values)) == []
+
+
+def test_format_with_most_matches_in_sample_wins():
+    values = [f"2026-01-{(i % 28) + 1:02d}" for i in range(20)]
+    r = csv(values)
+    assert fmts(r) == [(0, "%Y-%m-%d")]
 
 
 def test_blank_values_are_not_counted_and_not_warned():

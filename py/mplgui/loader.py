@@ -234,8 +234,8 @@ def _candidate_formats() -> tuple[str, ...]:
 
 
 DATETIME_FORMATS = _candidate_formats()
-DATETIME_SAMPLE = 100  # 先頭から、すべてが読めなければならない値の数
-DATETIME_MIN_RATIO = 0.9  # 空欄以外のうち、読めなければならない割合
+DATETIME_SAMPLE = 100  # 書式を選ぶために調べる、先頭からの値の数
+DATETIME_MIN_RATIO = 0.9  # 先頭の値・全体の、それぞれで読めなければならない割合
 _OFFSET = re.compile(r"(Z|[+-]\d{2}(?::?\d{2})?)$")
 
 
@@ -280,21 +280,24 @@ def _detect_one(index: int, name, column: pd.Series) -> DatetimeColumn | None:
     if numeric * 2 >= len(texts):
         return None
     sample = texts[:DATETIME_SAMPLE]
+    # 先頭 100 個のうち 90% 以上が読める書式のうち、最も多く読めるもの（同数なら一覧の先に並べたもの）
+    best_fmt, best_count = None, -1
     for fmt in DATETIME_FORMATS:
-        if _parses(sample, fmt) != len(sample):
-            continue
-        if _parses(texts, fmt) < DATETIME_MIN_RATIO * len(texts):
-            continue
-        has_tz = "%z" in fmt
-        utc = has_tz and len({_offset_of(t) for t in texts if _OFFSET.search(t)}) > 1
-        strip = any(v != v.strip() for v in raw)
-        return DatetimeColumn(index=index, name=str(name), format=fmt, strip=strip, utc=utc, has_tz=has_tz)
-    return None
+        count = _parses(sample, fmt)
+        if count >= DATETIME_MIN_RATIO * len(sample) and count > best_count:
+            best_fmt, best_count = fmt, count
+    if best_fmt is None or _parses(texts, best_fmt) < DATETIME_MIN_RATIO * len(texts):
+        return None
+    fmt = best_fmt
+    has_tz = "%z" in fmt
+    utc = has_tz and len({_offset_of(t) for t in texts if _OFFSET.search(t)}) > 1
+    strip = any(v != v.strip() for v in raw)
+    return DatetimeColumn(index=index, name=str(name), format=fmt, strip=strip, utc=utc, has_tz=has_tz)
 
 
 def detect_datetime_columns(df: pd.DataFrame) -> tuple[DatetimeColumn, ...]:
     """日時として読める文字列の列を探す（df は変更しない）。採用条件は、前後の空白を除いた先頭 100 個の
-    空欄以外の値がすべて読め、かつ空欄以外の 90% 以上が読めること。数値の列（半数以上が数値）は除く。"""
+    空欄以外の値の 90% 以上が読める書式があり、かつ空欄以外の全体の 90% 以上がその書式で読めること。数値の列（半数以上が数値）は除く。"""
     found = []
     for i in range(df.shape[1]):
         spec = _detect_one(i, df.columns[i], df.iloc[:, i])
