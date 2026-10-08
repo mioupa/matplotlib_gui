@@ -153,13 +153,20 @@ def _label_size_expr(font_size: float) -> str:
 # ---------------------------------------------------------------- sections
 
 
-def _emit_header(b: _Builder, source: SourceInfo, latin_font: str = "default", plan: PlotPlan | None = None) -> None:
-    name = comment_text(source.filename)
+def _emit_header(b: _Builder, sources: list[SourceInfo], latin_font: str = "default", plan: PlotPlan | None = None) -> None:
     latin = LATIN_FONTS.get(latin_font)
-    if source.pasted:
-        usage = f"# 使い方: 貼り付けたデータを保存した「{name}」と同じフォルダに置いて、python {SCRIPT_NAME} で実行します。"
+    if len(sources) == 1:
+        source = sources[0]
+        name = comment_text(source.filename)
+        if source.pasted:
+            usage = f"# 使い方: 貼り付けたデータを保存した「{name}」と同じフォルダに置いて、python {SCRIPT_NAME} で実行します。"
+        else:
+            usage = f"# 使い方: データファイル「{name}」と同じフォルダに置いて、python {SCRIPT_NAME} で実行します。"
     else:
-        usage = f"# 使い方: データファイル「{name}」と同じフォルダに置いて、python {SCRIPT_NAME} で実行します。"
+        names = "".join(
+            f"「{comment_text(src.filename)}」" + ("（貼り付けたデータを保存したもの）" if src.pasted else "") for src in sources
+        )
+        usage = f"# 使い方: データファイル {names} を、このスクリプトと同じフォルダに置いて、python {SCRIPT_NAME} で実行します。"
     b.add(
         "# matplotlib GUI が生成したスクリプト",
         usage,
@@ -224,16 +231,16 @@ _READ_COMMENTS_XLSX = {
 _KIND_NOTES = {"csv": "CSV（.csv）", "txt": "テキスト（.txt）", "tsv": "TSV（.tsv）", "xlsx": "Excel（.xlsx）"}
 
 
-def _datetime_expr(spec: DatetimeColumn) -> str:
+def _datetime_expr(spec: DatetimeColumn, df: str = "df") -> str:
     """列を日時にする式。loader.convert_datetime と同じ内容（単体テストで一致を確かめる）。"""
-    source = f"df.iloc[:, {spec.index}]" + (".str.strip()" if spec.strip else "")
+    source = f"{df}.iloc[:, {spec.index}]" + (".str.strip()" if spec.strip else "")
     utc = ", utc=True" if spec.utc else ""
     expr = f'pd.to_datetime({source}, format={literal(spec.format)}, errors="coerce"{utc})'
     return expr + ".dt.tz_localize(None)" if spec.has_tz else expr
 
 
-def _emit_load(b: _Builder, source: SourceInfo) -> None:
-    start = b.section("1. データの読み込み")
+def _emit_read(b: _Builder, source: SourceInfo, data_file: str, df: str) -> None:
+    """1つのファイルの読み込み（DATA_FILE と df の名前は呼び出し側が決める）。"""
     xlsx = source.kind == "xlsx"
     if source.pasted:
         b.add(
@@ -245,9 +252,9 @@ def _emit_load(b: _Builder, source: SourceInfo) -> None:
         b.add("# 読み込みには openpyxl が必要です（pip install openpyxl）")
         if source.sheets:
             b.add(f"# ファイル内のシート: {comment_text(', '.join(source.sheets))}")
-    b.add(f"DATA_FILE = {literal(source.filename)}")
+    b.add(f"{data_file} = {literal(source.filename)}")
     func = "pd.read_excel" if xlsx else "pd.read_csv"
-    b.add(f"df = {func}(", "    DATA_FILE,")
+    b.add(f"{df} = {func}(", f"    {data_file},")
     if not xlsx:
         b.add(f"    encoding={literal(source.encoding)},  # 文字コード（自動判定）")
     for key, value in source.read_kwargs().items():
@@ -256,18 +263,32 @@ def _emit_load(b: _Builder, source: SourceInfo) -> None:
         b.add(f"{line}  # {note}" if note else line)
     b.add(")")
     if not source.has_header:
-        b.add('df.columns = [f"column_{i}" for i in range(len(df.columns))]  # 列名を column_0, column_1, ... にする')
+        b.add(f'{df}.columns = [f"column_{{i}}" for i in range(len({df}.columns))]  # 列名を column_0, column_1, ... にする')
     if source.datetime_columns:
         b.add("# 日時の列を日時に変換する（自動で認識した書式。読めない値は NaT（欠損）になる）")
         for spec in source.datetime_columns:
-            b.add(f"df.isetitem({spec.index}, {_datetime_expr(spec)})  # {comment_text(spec.name)} [{spec.index}]")
+            b.add(f"{df}.isetitem({spec.index}, {_datetime_expr(spec, df)})  # {comment_text(spec.name)} [{spec.index}]")
+
+
+def _emit_load(b: _Builder, plan: PlotPlan, infos: list[SourceInfo]) -> None:
+    start = b.section("1. データの読み込み")
+    if not plan.multi_source:
+        _emit_read(b, infos[0], "DATA_FILE", "df")
+    else:
+        for i, (src, info) in enumerate(zip(plan.sources, infos)):
+            if i > 0:
+                b.blank()
+            b.add(f"# データ{src.number}: {comment_text(info.filename)}")
+            _emit_read(b, info, f"DATA_FILE_{src.number}", src.var)
     b.load_lines = (start, len(b.lines))
 
 
 def _emit_skip_rows(b: _Builder, plan: PlotPlan) -> None:
     b.section("2. 描画に使う行")
     if plan.skip_rows > 0:
-        b.add(f"df = df.iloc[{literal(plan.skip_rows)}:].reset_index(drop=True)  # 先頭の{plan.skip_rows}行を描画から除外する")
+        for src in plan.sources:
+            v = src.var
+            b.add(f"{v} = {v}.iloc[{literal(plan.skip_rows)}:].reset_index(drop=True)  # 先頭の{plan.skip_rows}行を描画から除外する")
     else:
         b.add("# 先頭の行は除外しない（全ての行を使う）")
 
@@ -292,6 +313,8 @@ def _emit_figure(b: _Builder, settings: Settings) -> None:
 
 def _series_comment(p: SeriesPlan, *, bar_x: bool = False) -> str:
     where = "（第2Y軸）" if p.secondary else ""
+    if p.data_var != "df":
+        where += f"（{p.data_var}）"
     return f"# 系列{p.number}{where}: X = {_column_comment(p, 'x')}、Y = {_column_comment(p, 'y')}"
 
 
@@ -301,17 +324,17 @@ def _target(p: SeriesPlan) -> str:
 
 def _emit_x_data(b: _Builder, p: SeriesPlan) -> None:
     if p.x_index is None:
-        b.add("x = pd.Series(df.index)  # X は指定なし。行番号を使う")
+        b.add(f"x = pd.Series({p.data_var}.index)  # X は指定なし。行番号を使う")
     elif p.datetime_x:
-        b.add(f"x = df.iloc[:, {p.x_index}]  # 日時の列（読み込み時に日時に変換済み）")
+        b.add(f"x = {p.data_var}.iloc[:, {p.x_index}]  # 日時の列（読み込み時に日時に変換済み）")
     elif p.convert_x:
-        b.add(f'x = pd.to_numeric(df.iloc[:, {p.x_index}], errors="coerce")  # 数値にできない値は NaN にする')
+        b.add(f'x = pd.to_numeric({p.data_var}.iloc[:, {p.x_index}], errors="coerce")  # 数値にできない値は NaN にする')
     else:
-        b.add(f"x = df.iloc[:, {p.x_index}]")
+        b.add(f"x = {p.data_var}.iloc[:, {p.x_index}]")
 
 
 def _emit_y_data(b: _Builder, p: SeriesPlan) -> None:
-    b.add(f'y = pd.to_numeric(df.iloc[:, {p.y_index}], errors="coerce")  # 数値にできない値は NaN にする')
+    b.add(f'y = pd.to_numeric({p.data_var}.iloc[:, {p.y_index}], errors="coerce")  # 数値にできない値は NaN にする')
 
 
 def _emit_ok_mask(b: _Builder) -> None:
@@ -376,15 +399,16 @@ def _emit_scatter_series(b: _Builder, settings: Settings, plan: PlotPlan) -> Non
 
 
 def _emit_bar_x(b: _Builder, plan: PlotPlan) -> None:
+    df = plan.series[0].data_var  # 棒グラフは全系列が同じデータ元
     if plan.bar_x_index is None:
-        b.add("x = pd.Series(df.index)  # X は指定なし。行番号を使う")
+        b.add(f"x = pd.Series({df}.index)  # X は指定なし。行番号を使う")
     elif plan.datetime_x:
         b.add(
-            f"x = df.iloc[:, {plan.bar_x_index}].dt.strftime({literal(plan.bar_date_format)})"
+            f"x = {df}.iloc[:, {plan.bar_x_index}].dt.strftime({literal(plan.bar_date_format)})"
             "  # 日時を文字列にして、棒をカテゴリとして並べる"
         )
     else:
-        b.add(f"x = df.iloc[:, {plan.bar_x_index}]")
+        b.add(f"x = {df}.iloc[:, {plan.bar_x_index}]")
 
 
 def _emit_bar_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
@@ -407,7 +431,7 @@ def _emit_bar_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
         b.add("bar_data = pd.DataFrame({")
         b.add('    "x": x,')
         for p in plan.series:
-            b.add(f'    "y{p.number}": pd.to_numeric(df.iloc[:, {p.y_index}], errors="coerce"),  # {_column_comment(p, "y")}')
+            b.add(f'    "y{p.number}": pd.to_numeric({p.data_var}.iloc[:, {p.y_index}], errors="coerce"),  # {_column_comment(p, "y")}')
         b.add("})")
         keys = ", ".join(literal(f"y{p.number}") for p in plan.series)
         b.add(f'bar_data = bar_data.dropna(subset=[{keys}], how="all")  # 全ての系列が欠けている行は描かない')
@@ -599,12 +623,17 @@ def _emit_output(b: _Builder, settings: Settings) -> None:
 # ---------------------------------------------------------------- entry
 
 
-def generate_script(settings: Settings, source: SourceInfo, plan: PlotPlan) -> GeneratedScript:
-    """設定・読み込んだファイルの情報・描画計画から、完全なスクリプトを作る。"""
+def generate_script(settings: Settings, source, plan: PlotPlan) -> GeneratedScript:
+    """設定・読み込んだファイルの情報・描画計画から、完全なスクリプトを作る。
+
+    source は SourceInfo（1つ）または {ファイル id: SourceInfo}（plan.sources のすべてを含む）。"""
+    if isinstance(source, SourceInfo):
+        source = {src.id: source for src in plan.sources}
+    infos = [source[src.id] for src in plan.sources]
     b = _Builder()
-    _emit_header(b, source, settings.plot.latin_font, plan)
+    _emit_header(b, infos, settings.plot.latin_font, plan)
     b.add(f"FONT_SIZE = {literal(settings.plot.font_size)}  # 文字の大きさ（pt）")
-    _emit_load(b, source)
+    _emit_load(b, plan, infos)
     _emit_skip_rows(b, plan)
     _emit_figure(b, settings)
     _emit_series(b, settings, plan)

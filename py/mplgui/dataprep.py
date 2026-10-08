@@ -7,7 +7,7 @@ js / pyodide には依存しない。列指定は "__idx__N"（列番号）形�
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pandas as pd
 
@@ -171,6 +171,18 @@ class SeriesPlan:
     has_points: bool
     secondary: bool
     datetime_x: bool = False  # X が日時の列（読み込み時に日時に変換済み）
+    data_id: str = ""  # データ元のファイル id
+    data_var: str = "df"  # 生成コードでこの系列が使う DataFrame の変数名（複数ファイルのときは df1, df2, ...）
+
+
+@dataclass(frozen=True)
+class PlanSource:
+    """描画に使うデータ元（load.files の並びの順）。"""
+
+    id: str
+    number: int  # 「データN」の N（load.files の位置。ファイルの一覧が空なら 1）
+    var: str  # DataFrame の変数名（"df" または "dfN"）
+    name: str  # ファイル名（load.files の name。無ければ空）
 
 
 @dataclass(frozen=True)
@@ -188,6 +200,8 @@ class PlotPlan:
     datetime_x: bool = False  # 日時の X 軸（line / scatter は日時の軸、bar は日時を文字列にしたカテゴリ）
     thin_categorical_x: bool = False  # line / scatter で X が文字列の列。カテゴリが多いので目盛を間引く
     bar_date_format: str | None = None  # bar で X が日時のときの strftime の書式
+    sources: tuple[PlanSource, ...] = ()  # 描画に使うデータ元だけ（load.files の順）
+    multi_source: bool = False  # load.files が2つ以上（生成コードで DATA_FILE_N / dfN と書く）
 
     @property
     def plotted(self) -> tuple[SeriesPlan, ...]:
@@ -217,22 +231,65 @@ def _label_for(df: pd.DataFrame, idx: int) -> tuple[str, str]:
     return name, f"{name} [{idx}]"
 
 
-def plan_plot(df_full: pd.DataFrame, settings: Settings) -> PlotPlan:
-    """データと設定から描画計画を作る。データ由来の問題は UserError にする。"""
+NOT_LOADED_MESSAGE = "データ{n}（{name}）を読み込めていません。読込設定やファイルを確認してください。"
+BAR_SOURCE_MESSAGE = "棒グラフでは、すべての系列に同じデータ元を選んでください。"
+
+
+def plan_plot(data, settings: Settings) -> PlotPlan:
+    """データと設定から描画計画を作る。データ由来の問題は UserError にする。
+
+    data は DataFrame（1つ）または {ファイル id: DataFrame}（読み込めたファイルだけ）。"""
     plot = settings.plot
-    df = slice_skip_rows(df_full, plot.skip_rows)
-    y_requests = resolve_y_indices(df, [s.y for s in settings.series])
+    files = settings.load.files
+    numbers = {f.id: i + 1 for i, f in enumerate(files)}
+    names = {f.id: f.name for f in files}
+    if isinstance(data, pd.DataFrame):
+        data = {files[0].id if files else "d1": data}
+    if not data:
+        raise UserError("先にファイルを読み込んでください。")
+    default_id = files[0].id if files else next(iter(data))
+    multi = len(files) >= 2
+
+    ids: list[str] = []  # 系列ごとのデータ元
+    for n, s in enumerate(settings.series, start=1):
+        sid = s.source or default_id
+        if sid not in data:
+            raise UserError(
+                NOT_LOADED_MESSAGE.format(n=numbers.get(sid, 1), name=names.get(sid, "")), field=f"系列{n}のデータ元"
+            )
+        ids.append(sid)
+    if plot.type == "bar" and len(set(ids)) > 1:
+        raise UserError(BAR_SOURCE_MESSAGE, field="データ元")
+
+    order = [f.id for f in files if f.id in set(ids)] if files else list(dict.fromkeys(ids))
+    frames = {sid: slice_skip_rows(data[sid], plot.skip_rows) for sid in order}
+    sources = tuple(
+        PlanSource(id=sid, number=numbers.get(sid, 1), var=f"df{numbers[sid]}" if multi else "df", name=names.get(sid, ""))
+        for sid in order
+    )
+    var_of = {src.id: src.var for src in sources}
+
+    y_requests = [""] * len(settings.series)
+    for sid in order:
+        idx = [i for i, x in enumerate(ids) if x == sid]
+        resolved = resolve_y_indices(frames[sid], [settings.series[i].y for i in idx])
+        for i, r in zip(idx, resolved):
+            y_requests[i] = r
+    dfs = [frames[sid] for sid in ids]
     if plot.type in {"line", "scatter"}:
-        return _plan_xy(df, settings, y_requests)
-    return _plan_bar(df, settings, y_requests)
+        plan = _plan_xy(dfs, settings, y_requests)
+    else:
+        plan = _plan_bar(dfs[0], settings, y_requests)
+    series = tuple(replace(sp, data_id=sid, data_var=var_of[sid]) for sp, sid in zip(plan.series, ids))
+    return replace(plan, series=series, sources=sources, multi_source=multi)
 
 
-def _plan_xy(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> PlotPlan:
+def _plan_xy(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str]) -> PlotPlan:
     plot_type = settings.plot.type
     plans: list[SeriesPlan] = []
     warnings: list[dict] = []
     category_values: set = set()
-    for n, (series, y_request) in enumerate(zip(settings.series, y_requests), start=1):
+    for n, (df, series, y_request) in enumerate(zip(dfs, settings.series, y_requests), start=1):
         x_index = resolve_column_index(df, series.x) if series.x else None
         x_label = str(df.columns[x_index]) if x_index is not None else "index"
         y_index = resolve_column_index(df, y_request)

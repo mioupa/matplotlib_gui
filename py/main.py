@@ -80,6 +80,14 @@ def _load_file(name, data, load_settings_json, source_id=None, pasted=None):
     )
 
 
+def _remove_source(source_id):
+    return api.remove_source_json(str(source_id))
+
+
+def _clear_sources():
+    return api.clear_sources_json()
+
+
 def _code(value):
     # JS の null / undefined は Python では None とは限らない（jsnull）。文字列のときだけコードとして扱う
     return value if isinstance(value, str) else None
@@ -114,6 +122,8 @@ def _script_filename(save_filename):
 _PROXIES = {
     "ensureExcel": create_proxy(_ensure_excel),
     "loadFile": create_proxy(_load_file),
+    "removeSource": create_proxy(_remove_source),
+    "clearSources": create_proxy(_clear_sources),
     "render": create_proxy(_render),
     "save": create_proxy(_save),
     "copyImage": create_proxy(_copy_image),
