@@ -99,12 +99,12 @@ def test_text_drag_does_not_show_overlay(start):
     assert page.get_attribute("html", "data-data-state") == "none"
 
 
-def test_drop_two_files_loads_first_with_warning(start, fixtures_dir):
+def test_drop_two_files_loads_both(start, fixtures_dir):
     page = start
     drop_and_wait(page, [fixture_file(fixtures_dir, "utf8.csv"), fixture_file(fixtures_dir, "growth.csv")])
-    assert "utf8.csv" in page.inner_text("#fileNameLabel")
-    assert "複数のファイルがドロップされました。先頭の「utf8.csv」だけを読み込みました。" in status_warnings(page)
-    assert status_kind(page) == "warning"
+    assert "utf8.csv ほか 1 件" in page.inner_text("#fileNameLabel")
+    assert page.locator("#fileList .file-row").count() == 2
+    assert status_warnings(page) == []
 
 
 def test_drop_on_code_textarea_loads_instead_of_navigating(start, fixtures_dir):

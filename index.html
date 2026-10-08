@@ -41,6 +41,8 @@
     <div id="dropOverlay" class="drop-overlay" hidden aria-hidden="true">
       <div class="drop-zones">
         <div id="dropLoad" class="drop-zone">ここにドロップして読み込む</div>
+        <div id="dropReplace" class="drop-zone" hidden>置き換えて読み込む</div>
+        <div id="dropAdd" class="drop-zone" hidden>追加して読み込む</div>
       </div>
     </div>
     <div class="layout">
@@ -55,9 +57,14 @@
             <div class="file-picker">
               <span class="file-picker-btn" aria-hidden="true">ファイルを選択</span>
               <span id="fileNameLabel" class="file-picker-name" data-selected="false">選択されていません</span>
-              <input id="fileInput" type="file" accept=".xlsx,.csv,.txt,.tsv" aria-describedby="fileNameLabel" />
+              <input id="fileInput" type="file" accept=".xlsx,.csv,.txt,.tsv" multiple aria-describedby="fileNameLabel" />
             </div>
             <div id="encodingLabel" class="file-info"></div>
+            <div class="add-file-row">
+              <button id="addFileBtn" type="button" class="small-btn secondary">+ ファイルを追加</button>
+              <input id="addFileInput" type="file" accept=".xlsx,.csv,.txt,.tsv" multiple hidden aria-label="追加するファイル" />
+            </div>
+            <ul id="fileList" class="file-list" hidden aria-label="読み込んだファイル"></ul>
           </div>
 
           <div class="group">
@@ -451,6 +458,10 @@
           <div id="plotArea" aria-busy="false"></div>
         </div>
         <div id="dataPanel" class="canvas-wrap tab-panel hidden" role="tabpanel" aria-labelledby="tabDataBtn">
+          <div id="previewSourceGroup" class="preview-source" hidden>
+            <label for="previewSource">表示するデータ</label>
+            <select id="previewSource"></select>
+          </div>
           <div id="dataArea"></div>
         </div>
         <div id="codePanel" class="canvas-wrap tab-panel hidden" role="tabpanel" aria-labelledby="tabCodeBtn">

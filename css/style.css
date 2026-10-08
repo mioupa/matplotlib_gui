@@ -975,3 +975,79 @@ button.series-color-chip.active {
   line-height: 1.5;
   vertical-align: middle;
 }
+
+.drop-zone[hidden] {
+  display: none;
+}
+.drop-zone.drop-zone-active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+.add-file-row {
+  margin-top: 8px;
+}
+.file-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.file-list[hidden] {
+  display: none;
+}
+.file-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  font-size: 13px;
+}
+.file-row[data-state="error"] {
+  border-color: var(--error-border);
+}
+.file-row-no {
+  font-weight: 700;
+  color: var(--accent);
+}
+.file-row-name {
+  flex: 1 1 120px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-row-kind {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.file-row select {
+  max-width: 100%;
+}
+.file-row-error {
+  flex-basis: 100%;
+  color: var(--error-text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.file-row-loading {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.preview-source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.preview-source[hidden] {
+  display: none;
+}
+.series-source-wrap[hidden] {
+  display: none;
+}

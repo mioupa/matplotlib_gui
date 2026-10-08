@@ -88,6 +88,8 @@ Python が登録し、登録後に `mplgui-ready` イベントを送る。引数
 | `copyImage(settingsJson, code)` | 同上 | `{mime, dataUri, width, height, output}`（保存形式にかかわらず PNG） |
 | `script(settingsJson)` | 設定 JSON | `{code}`（設定から生成した完全なスクリプトだけ。実行しない。読込済みデータが必要（無いと「先にファイルを読み込んでください。」）） |
 | `scriptFilename(saveFilename)` | 保存ファイル名の入力値 | 「.py で保存」のファイル名（文字列）。保存ファイル名と同じ規則（`formats.build_filename`）で拡張子を `.py` にする |
+| `removeSource(id)` | ファイル id（`d1` など） | `{ok}`（そのデータ元と作業フォルダのファイルを取り除く。無い id でも `ok`） |
+| `clearSources()` | なし | `{ok}`（すべてのデータ元と作業フォルダのファイルを取り除く。「置き換えて読み込む」の前に JS が呼ぶ） |
 | `registerFont(bytes, kind)` | フォントのバイト列、種類（`japanese`（省略時）/ `arimo` / `tinos`。他は「未対応のフォントの種類」の `UserError`） | `{registered, kind}`（種類ごとに登録は1回だけ。2回目以降は `registered: false`） |
 | `fontStatus()` | なし | `{registered, kinds}`（`registered` は日本語フォントの登録済みか、`kinds` は登録済みの種類の一覧） |
 
@@ -105,6 +107,13 @@ Python が登録し、登録後に `mplgui-ready` イベントを送る。引数
 - `render` は読込済みデータが無いと（GUI 同期のとき）「先にファイルを読み込んでください。」を返す。
 - 画素数の検査（`formats.check_raster_size`）: PNG / JPG は、書き出す前に `int(幅inch × dpi)` × `int(高さinch × dpi)`（Agg と同じ切り捨て。`raster_pixels`）が 1 億画素（`MAX_RASTER_PIXELS`）を超える、または1辺が 65536（`MAX_RASTER_SIDE`）以上なら、`UserError`（「保存する画像が大きすぎます（幅 N × 高さ M ピクセル）。保存 DPI か図のサイズを小さくしてください。」、`field` は「保存 DPI」）にする。`runner.figure_to_bytes` で行うので、`render`（dpi 100）・`save`・`copyImage`・編集モードのどれにも効く。SVG / PDF には使わない。
 - 数式（mathtext）の書き間違い（C6）: `runner.is_mathtext_error` が、matplotlib の `_mathtext.py` から出た `ValueError` または pyparsing の `ParseBaseException`（`__cause__` / `__context__` の連鎖を含む）を判定する。GUI 同期では、実行中（`tight_layout` など）でも、画像にするとき（`MathtextError`）でも、`api.MATHTEXT_ERROR`（`field` は「数式」。例 `m$^2$`、`H$_2$O`、`$\alpha$`、`\$` を案内する日本語）にする。編集モードでは、`runner.MATHTEXT_HINT` が日本語の説明（`japanese_hint`）として「N行目、ValueError: …」に付く（実行中に見つかったとき。画像にするときに見つかった場合は `field` が「数式」）。内部エラーにはしない。
+
+### 複数ファイル（Phase 4 D6）
+
+- `loadFile(name, bytes, loadJson, id, pasted)` は id ごとに読み込み、その id のデータ元だけを置き換える（失敗したら、その id だけを破棄。ほかは残る）。`api.Session.sources` は `{id: LoadedSource(df, info, written)}`、Excel の `ExcelFile` も id ごと。
+- データ元の解決: `series.source` が空なら `load.files` の先頭、`load.files` が空なら読み込んだ先頭。読み込めていないデータ元を使う系列は「データN（name）を読み込めていません…」（`field` は「系列Nのデータ元」）。`dataprep.plan_plot(data, settings)` は DataFrame または `{id: DataFrame}` を受け、`skipRows` と Y の自動割り当てをデータ元ごとに行う。棒グラフは全系列が同じデータ元（違えば「データ元」のエラー）。
+- 生成コード: `load.files` が 1 件以下なら従来どおり（`DATA_FILE` / `df`）。2 件以上なら、系列が使うファイルだけを `DATA_FILE_N` / `dfN`（N は一覧の位置 = 画面の「データN」）で読む。自動描画では `{"df1": ..., "df2": ...}` を注入する。
+- JS（`bridge.js`）: ファイルごとに `{File, bytes, pasted, state(loading|ready|error), result, error}` を持つ。`#fileInput`（置き換え）、`#addFileBtn` / `#addFileInput`（追加）、ドロップの `#dropReplace` / `#dropAdd`、一覧 `#fileList`（行 `file-<id>`、`file-<id>-sheet`、`file-<id>-remove`）、データ確認の `#previewSource`、系列の `series-<id>-source`。同じ名前のファイルは同じ id で置き換え、上限は 10 個。`data-data-state` は読込中が1つでもあれば `loading`、失敗が1つでもあれば `error`（ほかのファイルが読めていれば描画は行い、失敗は警告に出す）。`data-load-count` は、読み込めたデータ元がある読込の完了ごとに増える。
 
 ## 4.1 コード生成（Phase 2）
 

@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 
 from helpers import (
+    add_files,
+    add_series_with_source,
     image_summary,
     load_fixture,
     open_code_tab,
@@ -108,6 +110,19 @@ def _configure_second_sheet(page):
     _configure_xy_1(page)
 
 
+def _configure_two_csv(page):
+    page.select_option("#series-s1-y", "__idx__1")
+    add_series_with_source(page, "d2", "__idx__2")
+
+
+def _configure_csv_and_second_sheet(page):
+    page.select_option("#file-d2-sheet", "二枚目")
+    page.wait_for_function("document.documentElement.dataset.loadCount === '3'")
+    wait_settled(page)
+    page.select_option("#series-s1-y", "__idx__1")
+    add_series_with_source(page, "d2", "__idx__2")
+
+
 # 読込の設定を変えた場合: 生成スクリプトの読込部が、GUI の読み方と同じ図を作る
 PRE_STEPS = {"preamble_csv": _pre_preamble, "european_csv": _pre_european}
 
@@ -128,6 +143,8 @@ CASES = {
     "xlsx_second_sheet": ("multi_sheet.xlsx", _configure_second_sheet),
     "datetime_axis": ("datetime.csv", _configure_datetime_line),
     "xlsx_datetime": ("datetime.xlsx", _configure_xlsx_datetime),
+    "two_csv_files": (("utf8.csv", "growth.csv"), _configure_two_csv),
+    "csv_and_xlsx_second_sheet": (("utf8.csv", "multi_sheet.xlsx"), _configure_csv_and_second_sheet),
     "preamble_csv": ("preamble.csv", _configure_xy_1),
     "european_csv": ("european.csv", _configure_xy_1),
     "scatter_paper1": ("utf8.csv", _configure_scatter_paper1),
@@ -159,7 +176,11 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
     if fixture is None:
         _paste_fixture(page, fixtures_dir)
     else:
-        load_fixture(page, fixtures_dir / fixture)
+        names = fixture if isinstance(fixture, tuple) else (fixture,)
+        load_fixture(page, fixtures_dir / names[0])
+        wait_settled(page)
+        for extra in names[1:]:
+            add_files(page, [fixtures_dir / extra])
     wait_settled(page)
     configure(page)
     wait_settled(page)
@@ -180,7 +201,8 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
         pasted_dl.value.save_as(tmp_path / pasted_dl.value.suggested_filename)
         assert pasted_dl.value.suggested_filename == "pasted_data.tsv"
     else:
-        shutil.copy(fixtures_dir / fixture, tmp_path / fixture)  # データは元のファイル名でスクリプトの隣に置く
+        for name in fixture if isinstance(fixture, tuple) else (fixture,):
+            shutil.copy(fixtures_dir / name, tmp_path / name)  # データは元のファイル名でスクリプトの隣に置く
     local, stderr = _run_in_cpython(script, tmp_path)
 
     assert len(local) == len(browser)
@@ -190,6 +212,10 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
             assert l_ax[key] == b_ax[key], key
         assert l_ax["xlim"] == pytest.approx(b_ax["xlim"], rel=1e-6)
         assert l_ax["ylim"] == pytest.approx(b_ax["ylim"], rel=1e-6)
+    if case in ("two_csv_files", "csv_and_xlsx_second_sheet"):
+        text = script.read_text(encoding="utf-8")
+        assert browser[0]["lines"] == 2 and "DATA_FILE_1" in text and "DATA_FILE_2" in text and "df2.iloc[:, 2]" in text
+        assert ('sheet_name="二枚目",' in text) == (case == "csv_and_xlsx_second_sheet")
     if case in ("xlsx_second_sheet", "preamble_csv", "european_csv"):
         assert len(browser) == 1 and browser[0]["lines"] == 1
         text = script.read_text(encoding="utf-8")

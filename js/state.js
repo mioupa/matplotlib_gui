@@ -46,7 +46,7 @@ export const setFileSheet = (id, sheet, origin = "user") => {
   const file = settings.load.files.find((f) => f.id === id);
   if (!file || file.sheet === sheet) return;
   file.sheet = sheet;
-  notify({ kind: "path", path: "load.files", origin });
+  notify({ kind: "path", path: "load.files", origin, fileId: id });
 };
 
 const findSeries = (id) => settings.series.find((s) => s.id === id);

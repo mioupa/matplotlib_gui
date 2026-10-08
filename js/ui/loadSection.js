@@ -1,8 +1,6 @@
 // データ読み込み区分: シートの選択（#sheetGroup / #sheetSelect。.xlsx のときだけ表示）。
 // 選んだシートは設定の load.files に書く（読み直しは bridge.js が load.files の変更を購読して行う）。
-import { setFileSheet } from "../state.js";
-
-const SOURCE_ID = "d1";
+import { getSettings, setFileSheet } from "../state.js";
 
 // sheets: シート名の配列（xlsx 以外は空）、sheet: 読んだシート名
 export const showSheets = (sheets, sheet) => {
@@ -24,5 +22,10 @@ export const showSheets = (sheets, sheet) => {
 
 export const bindLoadSection = () => {
   const select = document.getElementById("sheetSelect");
-  if (select) select.addEventListener("change", () => setFileSheet(SOURCE_ID, select.value));
+  if (select) {
+    select.addEventListener("change", () => {
+      const first = getSettings().load.files[0]; // このセレクトは、ファイルが1つのときだけ見える
+      if (first) setFileSheet(first.id, select.value);
+    });
+  }
 };

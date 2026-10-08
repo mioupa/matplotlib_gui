@@ -1,7 +1,7 @@
 // ファイルのドラッグ&ドロップ（ページ全体）と、表の貼り付け（#pasteArea とページ上の paste）。
 // どちらも bridge.js の selectFile に渡すだけ（ファイルを選んだのと同じ経路で読み込む）。
 // 貼り付けたデータは UTF-8 の pasted_data.tsv というファイルにして読み込む。
-import { getSelectedSource, selectFile } from "../bridge.js";
+import { getSelectedSource, hasLoadedFiles, selectFile, selectFiles } from "../bridge.js";
 import { setStatus } from "./notify.js";
 
 export const PASTED_FILENAME = "pasted_data.tsv";
@@ -14,20 +14,35 @@ const hasFiles = (event) => {
 };
 
 // ---- ドロップ ----
-// D6 では、データが読込済みのときにここへ「置き換える」「追加する」の2区画（#dropReplace / #dropAdd）を出す。
+// データが読込済みのときは「置き換えて読み込む」「追加して読み込む」の2区画（#dropReplace / #dropAdd）を出し、
+// ポインタの下の区画で決める（区画の外は置き換え）。未読込のときは #dropLoad だけ。
 const overlay = () => document.getElementById("dropOverlay");
 let dragDepth = 0;
+
+const zone = (id) => document.getElementById(id);
 
 const showOverlay = () => {
   const el = overlay();
   if (!el) return;
+  const loaded = hasLoadedFiles();
+  if (zone("dropLoad")) zone("dropLoad").hidden = loaded;
+  if (zone("dropReplace")) zone("dropReplace").hidden = !loaded;
+  if (zone("dropAdd")) zone("dropAdd").hidden = !loaded;
   el.hidden = false;
   el.setAttribute("aria-hidden", "false");
+};
+const highlightZone = (target) => {
+  const under = target instanceof Element ? target.closest(".drop-zone") : null;
+  for (const id of ["dropLoad", "dropReplace", "dropAdd"]) {
+    const z = zone(id);
+    if (z) z.classList.toggle("drop-zone-active", z === under);
+  }
 };
 const hideOverlay = () => {
   dragDepth = 0;
   const el = overlay();
   if (!el) return;
+  highlightZone(null);
   el.hidden = true;
   el.setAttribute("aria-hidden", "true");
 };
@@ -55,8 +70,8 @@ const handleDrop = (event) => {
     setStatus(NO_FILE_MESSAGE, "warning");
     return;
   }
-  const notes = files.length > 1 ? [`複数のファイルがドロップされました。先頭の「${files[0].name}」だけを読み込みました。`] : [];
-  selectFile(files[0], { notes });
+  const under = event.target instanceof Element ? event.target.closest(".drop-zone") : null;
+  selectFiles(files, { mode: under && under.id === "dropAdd" ? "add" : "replace" });
 };
 
 const bindDrop = () => {
@@ -71,6 +86,7 @@ const bindDrop = () => {
     event.preventDefault(); // ブラウザがファイルを開かないように
     event.dataTransfer.dropEffect = "copy";
     showOverlay();
+    highlightZone(event.target);
   });
   window.addEventListener("dragleave", (event) => {
     if (!hasFiles(event)) return;
@@ -133,7 +149,7 @@ const bindSavePasted = () => {
   const button = document.getElementById("savePastedBtn");
   if (!button) return;
   button.addEventListener("click", async () => {
-    const { file, pasted } = getSelectedSource();
+    const { file, pasted } = getSelectedSource(); // 貼り付けたデータのデータ元（あれば）
     if (!file || !pasted) return;
     const blob = new Blob([await file.arrayBuffer()], { type: "text/tab-separated-values" });
     const url = URL.createObjectURL(blob);

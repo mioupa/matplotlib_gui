@@ -387,3 +387,34 @@ def paste_text(page, text, selector="#pasteArea") -> bool:
 
 
 EXCEL_TABLE = "時間\t電圧\t電流\r\n0\t0\t1.5\r\n1\t0.5\t1.4\r\n2\t0.9\t1.1\r\n3\t1.0\t0.8\r\n"
+
+
+# --- 複数ファイル（D6） ---
+def add_files(page, paths, selector="#addFileInput", timeout=120_000):
+    """ファイルを追加（または selector で置き換え）し、読み込みと描画が済むまで待つ。"""
+    before = load_count(page)
+    page.set_input_files(selector, [str(p) for p in paths])
+    wait_load_count(page, before + 1, timeout=timeout)
+    wait_settled(page, timeout=timeout)
+
+
+def file_row_ids(page) -> list[str]:
+    """一覧（#fileList）の行の id（file-d1 など）。"""
+    return page.evaluate("[...document.querySelectorAll('#fileList .file-row')].map(e => e.id)")
+
+
+def file_row_states(page) -> dict[str, str]:
+    return page.evaluate("Object.fromEntries([...document.querySelectorAll('#fileList .file-row')].map(e => [e.id, e.dataset.state]))")
+
+
+def settings_files(page) -> list[dict]:
+    """画面のファイル一覧に対応する、データ元セレクト（#previewSource）の選択肢の値。"""
+    return page.evaluate("[...document.querySelectorAll('#previewSource option')].map(o => o.value)")
+
+
+def add_series_with_source(page, source, y="__idx__1", series_id="s2"):
+    """系列を追加し、データ元と Y 列を選ぶ。"""
+    page.click("#addSeriesBtn")
+    page.select_option(f"#series-{series_id}-source", source)
+    page.select_option(f"#series-{series_id}-y", y)
+    wait_settled(page)
