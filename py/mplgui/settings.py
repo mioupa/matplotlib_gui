@@ -859,15 +859,15 @@ def _parse_annotations(raw: Any, y2_used: bool) -> tuple[AnnotationSettings, ...
             values.update(
                 text=text,
                 coords=coords,
-                x=_position_text(a["x"], "X", f"{owner} X"),
-                y=_position_text(a["y"], "Y", f"{owner} Y"),
+                x=_position_text(a["x"], "X", f("X")),
+                y=_position_text(a["y"], "Y", f("Y")),
                 font_size=_number(a["fontSize"], "文字の大きさ", default=None, exclusive_min=0, owner=owner, field_name=f("文字の大きさ")),
             )
         else:
             if kind == "vline":
-                values["x"] = _position_text(a["x"], "X", f"{owner} X")
+                values["x"] = _position_text(a["x"], "X", f("X"))
             elif kind == "hline":
-                values["y"] = _position_text(a["y"], "Y", f"{owner} Y")
+                values["y"] = _position_text(a["y"], "Y", f("Y"))
             else:
                 values["start"] = _position_text(a["start"], "開始", f("開始"))
                 values["end"] = _position_text(a["end"], "終了", f("終了"))
