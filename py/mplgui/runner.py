@@ -87,6 +87,12 @@ def figure_to_data_uri(
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}", ext
 
 
+def _offset_text(axis) -> str:
+    """軸の端の ×10^n（オフセット）の文字列。目盛ラベルを作った後（get_ticklabels の後）の値。"""
+    get_offset = getattr(axis.get_major_formatter(), "get_offset", None)
+    return str(get_offset()) if get_offset is not None else ""
+
+
 def figure_summary(fig) -> list[dict]:
     """Figure の中身の要約（軸ごと）。JSON にできる値だけで、E2E と生成コードの一致確認に使う。"""
     out = []
@@ -107,6 +113,17 @@ def figure_summary(fig) -> list[dict]:
                 "legend": [t.get_text() for t in legend.get_texts()] if legend is not None else [],
                 "xticklabels": [t.get_text() for t in ax.get_xticklabels()],
                 "xconverter": type(ax.xaxis.get_converter()).__name__ if ax.xaxis.get_converter() is not None else None,
+                "yticklabels": [t.get_text() for t in ax.get_yticklabels()],
+                "xinverted": bool(ax.xaxis_inverted()),
+                "yinverted": bool(ax.yaxis_inverted()),
+                "spines": {"top": bool(ax.spines["top"].get_visible()), "right": bool(ax.spines["right"].get_visible())},
+                "xmajor": type(ax.xaxis.get_major_locator()).__name__,
+                "ymajor": type(ax.yaxis.get_major_locator()).__name__,
+                "xminor": type(ax.xaxis.get_minor_locator()).__name__,
+                "yminor": type(ax.yaxis.get_minor_locator()).__name__,
+                "xformatter": type(ax.xaxis.get_major_formatter()).__name__,
+                "yformatter": type(ax.yaxis.get_major_formatter()).__name__,
+                "yoffset": _offset_text(ax.yaxis),
             }
         )
     return out

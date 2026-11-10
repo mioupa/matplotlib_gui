@@ -6,13 +6,14 @@ js / pyodide には依存しない。列指定は "__idx__N"（列番号）形�
 """
 from __future__ import annotations
 
+import math
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import pandas as pd
 
 from .errors import UserError
-from .settings import Settings
+from .settings import AxisSettings, Settings
 
 MAX_EXAMPLES = 3
 NO_DRAWABLE_DATA = "描画可能なデータがありません。"
@@ -190,6 +191,36 @@ class PlanSource:
 
 
 @dataclass(frozen=True)
+class AxisPlan:
+    """1つの軸に、設定のどれが効くか（dataprep が決める。codegen は文字列にするだけ）。
+
+    設定の値は軸の種類で使えないことがある（画面で隠す項目）。使えない項目は、ここで既定値（効かない値）にする。"""
+
+    kind: str = "number"  # number / log / datetime / category
+    major_step: float | None = None  # 実際に使う値（datetime / category は整数）。None = 自動
+    major_step_unit: str = "day"  # 日時の軸だけ
+    minor: str = "auto"  # auto / on / off（category は常に auto）
+    minor_divisions: int | None = None  # 副目盛が on の、対数軸でない軸だけ
+    tick_format: str = "auto"  # number / log だけ（それ以外は auto）
+    tick_decimals: int = 1
+    inverted: bool = False
+    date_min: str = ""  # 日時の X だけ（正規化済み）
+    date_max: str = ""
+
+    @property
+    def customized(self) -> bool:
+        """既定（自動）と違う目盛の設定があるか。"""
+        return self != AxisPlan(kind=self.kind)
+
+
+@dataclass(frozen=True)
+class AxesPlan:
+    x: AxisPlan = field(default_factory=AxisPlan)
+    y: AxisPlan = field(default_factory=AxisPlan)
+    y2: AxisPlan | None = None  # 第2Y軸を作るときだけ
+
+
+@dataclass(frozen=True)
 class PlotPlan:
     skip_rows: int
     plot_type: str
@@ -206,6 +237,7 @@ class PlotPlan:
     bar_date_format: str | None = None  # bar で X が日時のときの strftime の書式
     sources: tuple[PlanSource, ...] = ()  # 描画に使うデータ元だけ（load.files の順）
     multi_source: bool = False  # load.files が2つ以上（生成コードで DATA_FILE_N / dfN と書く）
+    axes: AxesPlan = field(default_factory=AxesPlan)  # 軸ごとの目盛の設定（効くものだけ）
 
     @property
     def plotted(self) -> tuple[SeriesPlan, ...]:
@@ -291,11 +323,151 @@ def plan_plot(data, settings: Settings) -> PlotPlan:
     return replace(plan, series=series, sources=sources, multi_source=multi)
 
 
+# ---------------------------------------------------------------- axes (ticks)
+
+MAX_MAJOR_TICKS = 100  # 主目盛の間隔を指定したときの、目盛の本数の上限
+_UNIT_SECONDS = {
+    "year": 365.25 * 86400,
+    "month": 30.44 * 86400,
+    "day": 86400.0,
+    "hour": 3600.0,
+    "minute": 60.0,
+    "second": 1.0,
+}
+
+
+class _Extents:
+    """軸ごとに、描くものの範囲（最小, 最大）を集める（主目盛の本数の見積もり用）。
+
+    X が日時のときの X は、1970 年からの秒数。エラーバーの端なども、ここに add すれば範囲に入る。"""
+
+    def __init__(self) -> None:
+        self._ranges: dict[str, list[tuple[float, float]]] = {"x": [], "y": [], "y2": []}
+
+    def add(self, axis: str, lo, hi) -> None:
+        lo, hi = float(lo), float(hi)
+        if math.isfinite(lo) and math.isfinite(hi):
+            self._ranges[axis].append((lo, hi))
+
+    def add_values(self, axis: str, values: pd.Series) -> None:
+        values = values.dropna()
+        if len(values):
+            self.add(axis, values.min(), values.max())
+
+    def bounds(self, axis: str) -> tuple[float, float] | None:
+        r = self._ranges[axis]
+        if not r:
+            return None
+        return min(lo for lo, _ in r), max(hi for _, hi in r)
+
+
+def _seconds(values: pd.Series) -> pd.Series:
+    """日時の列 → 1970 年からの秒数。"""
+    return (values - pd.Timestamp(0)).dt.total_seconds()
+
+
+def _timestamp_seconds(text: str) -> float:
+    return (pd.Timestamp(text) - pd.Timestamp(0)).total_seconds()
+
+
+def _estimate_ticks(bounds, lo_limit, hi_limit, step: float) -> int:
+    """主目盛の本数の見積もり。範囲は、指定が両方あればそれ、無ければデータの範囲（片方だけ指定ならそれと組み合わせ）に 10% を足す。"""
+    if lo_limit is not None and hi_limit is not None:
+        span = hi_limit - lo_limit
+    else:
+        if bounds is None:
+            return 0
+        lo, hi = bounds
+        if lo_limit is not None:
+            lo = lo_limit
+        if hi_limit is not None:
+            hi = hi_limit
+        span = abs(hi - lo) * 1.1
+    return math.floor(span / step + 1e-9) + 1
+
+
+def _too_many_ticks(label: str, count: int) -> UserError:
+    field_name = f"{label}軸の主目盛の間隔"
+    return UserError(
+        f"{field_name}が小さすぎます（目盛が約{count}本になります。{MAX_MAJOR_TICKS}本まで）。間隔を大きくするか、空欄（自動）にしてください。",
+        field=field_name,
+    )
+
+
+def _plan_axis(
+    axis: AxisSettings, kind: str, label: str, ext: _Extents, which: str, *, categories: int = 0, include_zero: bool = False
+) -> AxisPlan:
+    """設定の目盛の項目のうち、この軸の種類で効くものを決める。使えない組み合わせは UserError。"""
+    step_field = f"{label}軸の主目盛の間隔"
+    major_step = None
+    unit = "day"
+    lo_limit = hi_limit = None
+    if axis.major_step is not None and kind != "log":
+        step = axis.major_step
+        bounds = ext.bounds(which)
+        if kind in {"category", "datetime"}:
+            if not float(step).is_integer():
+                if kind == "category":
+                    raise UserError(
+                        f"{label} が文字列の列のときは、{label}軸の主目盛の間隔は整数（何個おきに目盛を付けるか）で指定してください。",
+                        field=step_field,
+                    )
+                raise UserError(
+                    f"{label} が日時の列のときは、{label}軸の主目盛の間隔は整数（単位の何個おきに目盛を付けるか）で指定してください。",
+                    field=step_field,
+                )
+            step = int(step)
+        if kind == "category":
+            count = math.ceil(categories / step)
+        elif kind == "datetime":
+            unit = axis.major_step_unit
+            lo_limit = _timestamp_seconds(axis.date_min) if axis.date_min else None
+            hi_limit = _timestamp_seconds(axis.date_max) if axis.date_max else None
+            count = _estimate_ticks(bounds, lo_limit, hi_limit, step * _UNIT_SECONDS[unit])
+        else:
+            if include_zero and bounds is not None:
+                bounds = (min(bounds[0], 0.0), max(bounds[1], 0.0))
+            count = _estimate_ticks(bounds, axis.min, axis.max, step)
+        if count > MAX_MAJOR_TICKS:
+            raise _too_many_ticks(label, count)
+        major_step = step
+    minor = "auto" if kind == "category" else axis.minor_ticks
+    divisions = axis.minor_divisions if minor == "on" and kind in {"number", "datetime"} else None
+    formatted = kind in {"number", "log"} and axis.tick_format != "auto"
+    return AxisPlan(
+        kind=kind,
+        major_step=major_step,
+        major_step_unit=unit if kind == "datetime" and major_step is not None else "day",
+        minor=minor,
+        minor_divisions=divisions,
+        tick_format=axis.tick_format if formatted else "auto",
+        tick_decimals=axis.tick_decimals if formatted else 1,
+        inverted=axis.inverted,
+        date_min=axis.date_min if kind == "datetime" else "",
+        date_max=axis.date_max if kind == "datetime" else "",
+    )
+
+
+def _plan_axes(settings: Settings, x_kind: str, uses_secondary: bool, ext: _Extents, categories: int) -> AxesPlan:
+    axes = settings.axes
+    bar = settings.plot.type == "bar"
+
+    def num_kind(axis: AxisSettings) -> str:
+        return "log" if axis.scale == "log" else "number"
+
+    return AxesPlan(
+        x=_plan_axis(axes.x, x_kind, "X", ext, "x", categories=categories),
+        y=_plan_axis(axes.y, num_kind(axes.y), "Y", ext, "y", include_zero=bar),
+        y2=_plan_axis(axes.y2, num_kind(axes.y2), "第2Y", ext, "y2", include_zero=bar) if uses_secondary else None,
+    )
+
+
 def _plan_xy(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str]) -> PlotPlan:
     plot_type = settings.plot.type
     plans: list[SeriesPlan] = []
     warnings: list[dict] = []
     category_values: set = set()
+    ext = _Extents()
     for n, (df, series, y_request) in enumerate(zip(dfs, settings.series, y_requests), start=1):
         x_index = resolve_column_index(df, series.x) if series.x else None
         x_label = str(df.columns[x_index]) if x_index is not None else "index"
@@ -337,6 +509,13 @@ def _plan_xy(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str])
                 datetime_x=datetime_x,
             )
         )
+        if has_points:
+            ok = y_numeric.notna() & pd.notna(x_series)
+            ext.add_values("y2" if series.secondary_axis else "y", y_numeric[ok])
+            if datetime_x:
+                ext.add_values("x", _seconds(x_series[ok]))
+            elif not plans[-1].categorical_x:
+                ext.add_values("x", x_series[ok])
         if has_points and x_index is not None and plans[-1].categorical_x:
             shown = x_series[y_numeric.notna() & x_series.notna()]
             category_values.update(shown.tolist())
@@ -347,10 +526,18 @@ def _plan_xy(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str])
     _check_datetime_x(settings, plans)
     x_labels = [p.x_label for p in plans]
     common_x = x_labels[0] if len(set(x_labels)) == 1 else "x"
+    plotted = [p for p in plans if p.has_points]
+    if any(p.datetime_x for p in plotted):
+        x_kind = "datetime"
+    elif any(p.categorical_x for p in plotted):
+        x_kind = "category"
+    else:
+        x_kind = "log" if settings.axes.x.scale == "log" else "number"
     return _finish(
         settings, plans, warnings, common_x, None,
         datetime_x=any(p.datetime_x and p.has_points for p in plans),
         thin_categorical_x=len(category_values) > MAX_CATEGORY_TICKS,
+        axes_args=(x_kind, ext, len(category_values)),
     )
 
 
@@ -425,7 +612,26 @@ def _plan_bar(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> Pl
     bar_date_format = None
     if datetime_x:
         bar_date_format = settings.axes.x.date_format or auto_bar_date_format(x)
-    return _finish(settings, plans, warnings, x_label, bar_x_index, datetime_x=datetime_x, bar_date_format=bar_date_format)
+    # 棒の位置（複数系列）か、文字列・日時の X はカテゴリの軸。数値の X・X なしの1系列は数値の軸
+    ext = _Extents()
+    if len(plans) == 1:
+        ok = frame["y_0"].notna() & frame["x"].notna()  # 描く棒の行
+    else:
+        ok = frame[y_keys].notna().any(axis=1)
+    for k in y_keys:
+        ext.add_values("y2" if plans[int(k[2:])].secondary else "y", frame[k][ok])
+    x_text = datetime_x or not pd.api.types.is_numeric_dtype(x.dtype)
+    if len(plans) > 1 or x_text:
+        x_kind = "category"
+        categories = len(frame) if len(plans) > 1 else int(frame["x"][ok].nunique())
+    else:
+        x_kind = "log" if settings.axes.x.scale == "log" else "number"
+        categories = 0
+        ext.add_values("x", frame["x"][ok])
+    return _finish(
+        settings, plans, warnings, x_label, bar_x_index, datetime_x=datetime_x, bar_date_format=bar_date_format,
+        axes_args=(x_kind, ext, categories),
+    )
 
 
 def _finish(
@@ -438,10 +644,12 @@ def _finish(
     datetime_x: bool = False,
     thin_categorical_x: bool = False,
     bar_date_format: str | None = None,
+    axes_args: tuple[str, _Extents, int] | None = None,
 ) -> PlotPlan:
     primary = [p.data_label for p in plans if not p.secondary]
     secondary = [p.data_label for p in plans if p.secondary]
     uses_secondary = any(p.secondary and p.has_points for p in plans)
+    x_kind, ext, categories = axes_args or ("number", _Extents(), 0)
     return PlotPlan(
         skip_rows=settings.plot.skip_rows,
         plot_type=settings.plot.type,
@@ -456,4 +664,5 @@ def _finish(
         datetime_x=datetime_x,
         thin_categorical_x=thin_categorical_x,
         bar_date_format=bar_date_format,
+        axes=_plan_axes(settings, x_kind, uses_secondary, ext, categories),
     )

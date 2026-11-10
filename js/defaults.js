@@ -1,7 +1,7 @@
 // 設定オブジェクトの既定値。純粋な ES module（DOM に触れない）。
 // py/mplgui/settings.py の default_settings() と同一でなければならない（tests/unit/test_defaults_parity.py が比較する）。
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 // UDカラーセット（系列の既定色の候補。この順で未使用の色を割り当てる）
 export const PALETTE = [
@@ -18,6 +18,12 @@ export const PALETTE = [
   "#FF8082",
 ];
 
+// エラーバー（片方向）の既定値。Y と X で別のオブジェクトにする（共有しない）
+const defaultErrorSpec = () => ({ mode: "none", symmetric: true, value: null, valueMinus: null, column: "", columnMinus: "" });
+
+// 軸ごとの目盛の既定値（X / Y / 第2Y 共通）
+const defaultTicks = () => ({ majorStep: null, minorTicks: "auto", minorDivisions: null, tickFormat: "auto", tickDecimals: 1, inverted: false });
+
 export const DEFAULT_SERIES = {
   id: "s1",
   x: "",
@@ -29,6 +35,7 @@ export const DEFAULT_SERIES = {
   label: "",
   secondaryAxis: false,
   source: "",
+  errorBars: { y: defaultErrorSpec(), x: defaultErrorSpec(), capSize: 3 },
 };
 
 export const DEFAULT_SETTINGS = {
@@ -55,11 +62,12 @@ export const DEFAULT_SETTINGS = {
     legend: { location: "best" },
     grid: { major: false, minor: false },
     margins: { left: null, right: null, bottom: null, top: null },
+    spines: { top: true, right: true },
   },
   axes: {
-    x: { label: "", scale: "linear", min: null, max: null, dateFormat: "" },
-    y: { label: "", scale: "linear", min: null, max: null },
-    y2: { label: "", scale: "linear", min: null, max: null },
+    x: { label: "", scale: "linear", min: null, max: null, dateFormat: "", ...defaultTicks(), majorStepUnit: "day", dateMin: "", dateMax: "" },
+    y: { label: "", scale: "linear", min: null, max: null, ...defaultTicks() },
+    y2: { label: "", scale: "linear", min: null, max: null, ...defaultTicks() },
   },
   series: [DEFAULT_SERIES],
   save: { filename: "", format: "png", transparent: false, dpi: 300, svgText: "path" },

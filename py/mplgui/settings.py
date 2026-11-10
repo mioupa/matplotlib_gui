@@ -1,4 +1,4 @@
-"""設定オブジェクト（JSON, camelCase, version=3）の既定値・検証・型付きデータクラス。
+"""設定オブジェクト（JSON, camelCase, version=4）の既定値・検証・型付きデータクラス。
 
 JS 側の js/defaults.js と default_settings() は同一でなければならない（単体テストで比較する）。
 このモジュールは js / pyodide / pyscript に依存しない。
@@ -9,14 +9,14 @@ import copy
 import math
 import re
 from datetime import datetime
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from matplotlib.colors import is_color_like
 
 from .errors import UserError
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 PLOT_TYPES = ("line", "scatter", "bar")
 LINE_STYLES = ("solid", "dashed", "dashdot", "dotted")
@@ -51,6 +51,24 @@ MAX_SKIP_LINES = 1_000_000
 MAX_FILES = 10
 MAX_DATE_FORMAT_LENGTH = 64
 _FILE_ID_RE = re.compile(r"d[0-9]{1,4}")
+DATE_UNITS = ("year", "month", "day", "hour", "minute", "second")
+MINOR_TICKS_CHOICES = ("auto", "on", "off")
+TICK_FORMATS = ("auto", "fixed", "sci", "pow10")
+ERROR_MODES = ("none", "fixed", "column")
+MAX_CAP_SIZE = 50
+_COLUMN_RE = re.compile(r"__idx__[0-9]+")
+_DATE_INPUT_RE = re.compile(r"(\d{4})([-/])(\d{1,2})\2(\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?")
+DATE_RANGE_LABEL = "X軸の範囲（日時）"
+
+_DEFAULT_ERROR_SPEC = {"mode": "none", "symmetric": True, "value": None, "valueMinus": None, "column": "", "columnMinus": ""}
+_DEFAULT_TICKS = {
+    "majorStep": None,
+    "minorTicks": "auto",
+    "minorDivisions": None,
+    "tickFormat": "auto",
+    "tickDecimals": 1,
+    "inverted": False,
+}
 
 _DEFAULT_SERIES = {
     "id": "s1",
@@ -63,6 +81,7 @@ _DEFAULT_SERIES = {
     "label": "",
     "secondaryAxis": False,
     "source": "",
+    "errorBars": {"y": copy.deepcopy(_DEFAULT_ERROR_SPEC), "x": copy.deepcopy(_DEFAULT_ERROR_SPEC), "capSize": 3},
 }
 
 
@@ -92,11 +111,15 @@ def default_settings() -> dict:
             "legend": {"location": "best"},
             "grid": {"major": False, "minor": False},
             "margins": {"left": None, "right": None, "bottom": None, "top": None},
+            "spines": {"top": True, "right": True},
         },
         "axes": {
-            "x": {"label": "", "scale": "linear", "min": None, "max": None, "dateFormat": ""},
-            "y": {"label": "", "scale": "linear", "min": None, "max": None},
-            "y2": {"label": "", "scale": "linear", "min": None, "max": None},
+            "x": {
+                "label": "", "scale": "linear", "min": None, "max": None, "dateFormat": "",
+                **copy.deepcopy(_DEFAULT_TICKS), "majorStepUnit": "day", "dateMin": "", "dateMax": "",
+            },
+            "y": {"label": "", "scale": "linear", "min": None, "max": None, **copy.deepcopy(_DEFAULT_TICKS)},
+            "y2": {"label": "", "scale": "linear", "min": None, "max": None, **copy.deepcopy(_DEFAULT_TICKS)},
         },
         "series": [copy.deepcopy(_DEFAULT_SERIES)],
         "save": {"filename": "", "format": "png", "transparent": False, "dpi": DEFAULT_DPI, "svgText": "path"},
@@ -132,6 +155,15 @@ class AxisSettings:
     min: float | None = None
     max: float | None = None
     date_format: str = ""  # X 軸だけ。"" = 自動
+    major_step: float | None = None  # None = 自動
+    major_step_unit: str = "day"  # X 軸だけ。日時の X のときの間隔の単位
+    minor_ticks: str = "auto"  # auto / on / off
+    minor_divisions: int | None = None  # None = 自動
+    tick_format: str = "auto"  # auto / fixed / sci / pow10
+    tick_decimals: int = 1
+    inverted: bool = False
+    date_min: str = ""  # X 軸だけ。日時の X の範囲（正規化済み。"" = 指定なし）
+    date_max: str = ""
 
 
 @dataclass(frozen=True)
@@ -174,6 +206,8 @@ class PlotSettings:
     grid_major: bool = False
     grid_minor: bool = False
     margins: MarginSettings = field(default_factory=MarginSettings)
+    spine_top: bool = True  # 上の枠線を表示する
+    spine_right: bool = True  # 右の枠線を表示する（第2Y軸があるときは無視）
 
 
 @dataclass(frozen=True)
@@ -181,6 +215,25 @@ class AxesSettings:
     x: AxisSettings = field(default_factory=AxisSettings)
     y: AxisSettings = field(default_factory=AxisSettings)
     y2: AxisSettings = field(default_factory=AxisSettings)
+
+
+@dataclass(frozen=True)
+class ErrorSpec:
+    """片方向（Y または X）のエラーバーの指定。value / column が「上（右）」、*_minus が「下（左）」。"""
+
+    mode: str = "none"  # none / fixed / column
+    symmetric: bool = True
+    value: float | None = None
+    value_minus: float | None = None
+    column: str = ""  # "__idx__N"
+    column_minus: str = ""
+
+
+@dataclass(frozen=True)
+class ErrorBarSettings:
+    y: ErrorSpec = field(default_factory=ErrorSpec)
+    x: ErrorSpec = field(default_factory=ErrorSpec)
+    cap_size: float = 3.0
 
 
 @dataclass(frozen=True)
@@ -195,6 +248,7 @@ class SeriesSettings:
     label: str = ""
     secondary_axis: bool = False
     source: str = ""  # データ元のファイル id（"" = load.files の先頭）
+    error_bars: ErrorBarSettings = field(default_factory=ErrorBarSettings)
 
     def effective_marker_size(self, plot_type: str) -> float:
         """自動(None)は line=0 / それ以外=24。scatter で 0 以下なら 24 に補正する。"""
@@ -330,9 +384,11 @@ def migrate_settings(raw: dict) -> dict:
     - 2 → 3: データ取り込みの項目（読み飛ばす行数・桁区切り・小数点・コメント記号・複数ファイル・
       系列のデータ元・X 軸の日時の書式）を追加する。日時の自動認識（load.parseDates）は、v2 までの
       出力を保つため false にする（v3 で新しく作る設定の既定値は true）。他の項目は既定値で補われる。
+    - 3 → 4: 目盛・枠線・日時の範囲・エラーバーの項目を追加する。version を 4 にするだけ
+      （新しい項目の既定値は、v3 までの出力を変えない値なので、既定値で補われる）。
     """
     version = raw.get("version", SCHEMA_VERSION)
-    if isinstance(version, bool) or version not in (1, 2, SCHEMA_VERSION):
+    if isinstance(version, bool) or version not in (1, 2, 3, SCHEMA_VERSION):
         raise UserError(f"設定のバージョン（{version}）に対応していません。ページを再読み込みしてください。", field="version")
     out = copy.deepcopy(raw)
     if version == 1:
@@ -342,8 +398,9 @@ def migrate_settings(raw: dict) -> dict:
         if "dpi" not in save:
             save["dpi"] = 120
         out["save"] = save
-    if version in (1, 2):
+    if version != SCHEMA_VERSION:
         out["version"] = SCHEMA_VERSION
+    if version in (1, 2):
         load = out.get("load")
         if not isinstance(load, dict):
             load = {}
@@ -424,13 +481,70 @@ def _parse_files(raw_files: Any) -> tuple[FileEntry, ...]:
     return tuple(out)
 
 
-def _parse_axis(raw: dict, key: str, name: str) -> AxisSettings:
+def _parse_axis(raw: dict, key: str, name: str, *, ticks: bool = True) -> AxisSettings:
+    """ticks が False のとき（使っていない第2Y軸）は、目盛の項目を検証せず既定値にする（隠れた不正な値で描画を止めないため）。"""
     axis = raw[key]
     lo = _number(axis["min"], f"{name}軸の最小値", default=None)
     hi = _number(axis["max"], f"{name}軸の最大値", default=None)
     scale = _choice(axis["scale"], f"{name}軸スケール", SCALES)
     date_format = _date_format(axis["dateFormat"]) if key == "x" else ""
-    return AxisSettings(label=_string(axis["label"], f"{name}軸ラベル").strip(), scale=scale, min=lo, max=hi, date_format=date_format)
+    base = AxisSettings(label=_string(axis["label"], f"{name}軸ラベル").strip(), scale=scale, min=lo, max=hi, date_format=date_format)
+    if not ticks:
+        return base
+    extra: dict[str, Any] = {
+        "major_step": _number(axis["majorStep"], f"{name}軸の主目盛の間隔", default=None, exclusive_min=0),
+        "minor_ticks": _choice(axis["minorTicks"], f"{name}軸の副目盛", MINOR_TICKS_CHOICES),
+        "minor_divisions": _int_range(axis["minorDivisions"], f"{name}軸の副目盛の分割数", 2, 10, default=None),
+        "tick_format": _choice(axis["tickFormat"], f"{name}軸の目盛の書式", TICK_FORMATS),
+        "tick_decimals": _int_range(axis["tickDecimals"], f"{name}軸の目盛の小数の桁数", 0, 10, default=1),
+        "inverted": _boolean(axis["inverted"], f"{name}軸を反転"),
+    }
+    if key == "x":
+        extra["major_step_unit"] = _choice(axis["majorStepUnit"], f"{name}軸の主目盛の単位", DATE_UNITS)
+        date_min = _date_range_value(axis["dateMin"], "最小値")
+        date_max = _date_range_value(axis["dateMax"], "最大値")
+        if date_min and date_max and _date_value(date_min) >= _date_value(date_max):
+            raise UserError(f"{DATE_RANGE_LABEL}は最小値 < 最大値で指定してください。", field=DATE_RANGE_LABEL)
+        extra["date_min"], extra["date_max"] = date_min, date_max
+    return replace(base, **extra)
+
+
+def _int_range(value: Any, label: str, lo: int, hi: int, *, default: int | None, owner: str = "") -> int | None:
+    """lo〜hi の整数（整数に見える数値・数値文字列も可）。空欄は default。"""
+    if _is_blank(value):
+        return default
+    num = _to_float(value)
+    if num is None or not num.is_integer() or not lo <= num <= hi:
+        raise UserError(f"{owner}「{label}」は{lo}〜{hi}の整数で入力してください。", field=label)
+    return int(num)
+
+
+_DATE_EXAMPLE = "2026-01-31 または 2026-01-31 12:00"
+
+
+def _date_range_value(value: Any, which: str) -> str:
+    """X 軸の日時の範囲（年が先頭の日付・日時）。正規化して返す（時刻なしは YYYY-MM-DD、あれば YYYY-MM-DD HH:MM:SS）。"""
+    if _is_blank(value):
+        return ""
+    bad = UserError(
+        f"「{DATE_RANGE_LABEL}」の{which}が正しくありません。年が先頭の日付か日時で入力してください（例: {_DATE_EXAMPLE}）。",
+        field=DATE_RANGE_LABEL,
+    )
+    if not isinstance(value, str):
+        raise bad
+    m = _DATE_INPUT_RE.fullmatch(value.strip())
+    if not m:
+        raise bad
+    y, _, mo, d, hh, mi, ss = m.groups()
+    try:
+        moment = datetime(int(y), int(mo), int(d), int(hh or 0), int(mi or 0), int(ss or 0))
+    except ValueError:
+        raise bad from None
+    return moment.strftime("%Y-%m-%d" if hh is None else "%Y-%m-%d %H:%M:%S")
+
+
+def _date_value(text: str) -> datetime:
+    return datetime.strptime(text, "%Y-%m-%d %H:%M:%S" if " " in text else "%Y-%m-%d")
 
 
 def _date_format(value: Any) -> str:
@@ -458,7 +572,50 @@ def _check_axis_range(axis: AxisSettings, name: str) -> None:
         raise UserError(f"{name}軸を対数にする場合、範囲は0より大きい値で指定してください。", field=f"{name}軸の範囲")
 
 
-def _parse_series(raw_series: Any) -> tuple[SeriesSettings, ...]:
+def _error_label(axis: str, symmetric: bool, what: str, side: int) -> str:
+    """エラーバーの項目名。axis は Y / X、what は 値 / 列、side は 0=上（右）/ 1=下（左）。"""
+    if symmetric:
+        return f"{axis}誤差の{what}"
+    pair = ("上", "下") if axis == "Y" else ("右", "左")
+    return f"{axis}誤差（{pair[side]}）の{what}"
+
+
+def _parse_error_spec(raw: dict, axis: str, owner: str) -> ErrorSpec:
+    mode = _choice(raw["mode"], f"{axis}誤差の方式", ERROR_MODES, owner=owner)
+    if mode == "none":
+        return ErrorSpec()
+    symmetric = _boolean(raw["symmetric"], f"{axis}誤差を上下で同じ値にする" if axis == "Y" else f"{axis}誤差を左右で同じ値にする", owner=owner)
+    sides = (0,) if symmetric else (0, 1)
+    if mode == "fixed":
+        values = []
+        for side, key in zip(sides, ("value", "valueMinus")):
+            label = _error_label(axis, symmetric, "値", side)
+            if _is_blank(raw[key]):
+                raise UserError(f"{owner}「{label}」を入力してください。", field=label)
+            values.append(_number(raw[key], label, minimum=0, owner=owner))
+        return ErrorSpec(mode=mode, symmetric=symmetric, value=values[0], value_minus=values[1] if not symmetric else None)
+    columns = []
+    for side, key in zip(sides, ("column", "columnMinus")):
+        label = _error_label(axis, symmetric, "列", side)
+        value = raw[key]
+        if not isinstance(value, str) or not value.strip():
+            raise UserError(f"{owner}「{label}」を選んでください。", field=label)
+        if not _COLUMN_RE.fullmatch(value.strip()):
+            raise UserError(f"{owner}「{label}」の指定が正しくありません。列を選び直してください。", field=label)
+        columns.append(value.strip())
+    return ErrorSpec(mode=mode, symmetric=symmetric, column=columns[0], column_minus=columns[1] if not symmetric else "")
+
+
+def _parse_error_bars(raw: dict, plot_type: str, owner: str) -> ErrorBarSettings:
+    cap = _number(raw["capSize"], "エラーバーの端の長さ", default=3.0, minimum=0, maximum=MAX_CAP_SIZE, owner=owner)
+    return ErrorBarSettings(
+        y=_parse_error_spec(raw["y"], "Y", owner),
+        x=ErrorSpec() if plot_type == "bar" else _parse_error_spec(raw["x"], "X", owner),  # 棒グラフでは X 方向を隠すので使わない
+        cap_size=cap,
+    )
+
+
+def _parse_series(raw_series: Any, plot_type: str = "line") -> tuple[SeriesSettings, ...]:
     if not isinstance(raw_series, list) or not raw_series:
         raise UserError("描画系列を1つ以上追加してください。", field="描画系列")
     out = []
@@ -488,6 +645,7 @@ def _parse_series(raw_series: Any) -> tuple[SeriesSettings, ...]:
                 label=_string(s["label"], "凡例名", owner=owner).strip(),
                 secondary_axis=_boolean(s["secondaryAxis"], "第2軸を使用", owner=owner),
                 source=_string(s["source"], "データ元", owner=owner),
+                error_bars=_parse_error_bars(s["errorBars"], plot_type, owner),
             )
         )
     return tuple(out)
@@ -519,6 +677,7 @@ def parse_settings(raw: dict | None) -> Settings:
     legend = p["legend"] if isinstance(p["legend"], dict) else {}
     grid = p["grid"] if isinstance(p["grid"], dict) else {}
     m = p["margins"] if isinstance(p["margins"], dict) else {}
+    spines = p["spines"] if isinstance(p["spines"], dict) else {}
     margin_labels = (("left", "余白 左(left)"), ("right", "余白 右(right)"), ("bottom", "余白 下(bottom)"), ("top", "余白 上(top)"))
     margin_values = {}
     for key, label in margin_labels:
@@ -545,15 +704,19 @@ def parse_settings(raw: dict | None) -> Settings:
         grid_major=_boolean(grid.get("major", False), "主目盛線を表示"),
         grid_minor=_boolean(grid.get("minor", False), "副目盛線を表示"),
         margins=margins,
+        spine_top=_boolean(spines.get("top", True), "上の枠線"),
+        spine_right=_boolean(spines.get("right", True), "右の枠線"),
     )
 
     ax = merged["axes"]
+    raw_series = raw.get("series", d["series"])
+    y2_used = isinstance(raw_series, list) and any(isinstance(s, dict) and s.get("secondaryAxis") is True for s in raw_series)
     axes = AxesSettings(
         x=_parse_axis(ax, "x", "X"),
         y=_parse_axis(ax, "y", "Y"),
-        y2=_parse_axis(ax, "y2", "第2Y"),
+        y2=_parse_axis(ax, "y2", "第2Y", ticks=y2_used),
     )
-    series = _parse_series(raw.get("series", d["series"]))
+    series = _parse_series(raw_series, plot.type)
     file_ids = {f.id for f in load.files}
     for i, s in enumerate(series):
         if s.source and s.source not in file_ids:

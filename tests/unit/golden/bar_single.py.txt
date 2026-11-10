@@ -1,0 +1,59 @@
+# matplotlib GUI が生成したスクリプト
+# 使い方: データファイル「categories.csv」と同じフォルダに置いて、python plot.py で実行します。
+# 必要なライブラリ: pandas, matplotlib, numpy
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+# 日本語フォント: 一覧の先頭から、見つかったものを使う。
+# どれも無い環境では DejaVu Sans になる（日本語は豆腐になるが、実行はできる）
+plt.rcParams["font.family"] = "sans-serif"
+plt.rcParams["font.sans-serif"] = ["Noto Sans JP", "Noto Sans CJK JP", "IPAexGothic", "Yu Gothic", "Hiragino Sans", "MS Gothic", "DejaVu Sans"]
+plt.rcParams["axes.unicode_minus"] = False
+FONT_SIZE = 15.0  # 文字の大きさ（pt）
+
+# ==== 1. データの読み込み ====
+# 形式: CSV（.csv）
+DATA_FILE = "categories.csv"
+df = pd.read_csv(
+    DATA_FILE,
+    encoding="utf-8",  # 文字コード（自動判定）
+    sep=",",  # 区切り文字
+    header=0,  # 先頭行をヘッダにする（None: ヘッダなし）
+    skiprows=0,  # ヘッダより前に読み飛ばす行数
+    thousands=None,  # 桁区切り（None: なし）
+    decimal=".",  # 小数点
+    comment=None,  # コメント記号（None: なし）。この記号から行末までを読まない
+    engine="python",
+)
+
+# ==== 2. 描画に使う行 ====
+# 先頭の行は除外しない（全ての行を使う）
+
+# ==== 3. 図と軸 ====
+fig, ax = plt.subplots(figsize=(8.0, 6.0), dpi=100)  # 幅 8.0 × 高さ 6.0 インチ
+
+# ==== 4. 系列 ====
+# 系列1: X = 品目 [0]、Y = 売上A [1]
+x = df.iloc[:, 0]
+y = pd.to_numeric(df.iloc[:, 1], errors="coerce")  # 数値にできない値は NaN にする
+ok = x.notna() & y.notna()  # X か Y が欠けている行は描かない
+ax.bar(x[ok], y[ok], color="#FF4B00", linewidth=2.0, linestyle="solid", label="売上A [1]")
+
+# ==== 5. 軸（ラベル・スケール・範囲・目盛） ====
+ax.set_xlabel("品目", fontsize=FONT_SIZE)
+ax.set_ylabel("売上A [1]", fontsize=FONT_SIZE)
+# 目盛は内向きにする
+ax.tick_params(which="both", direction="in", labelsize=FONT_SIZE - 1)
+
+# ==== 6. グリッドと凡例 ====
+# グリッドは表示しない
+ax.legend(loc="best", fontsize=FONT_SIZE - 1, edgecolor="black")
+
+# ==== 7. 余白 ====
+# 余白は自動で調整する
+fig.tight_layout()
+
+# ==== 8. 保存と表示 ====
+fig.savefig("plot.png", dpi=300)  # GUI の「保存」と同じ形式（png）と解像度（300 dpi）
+plt.show()

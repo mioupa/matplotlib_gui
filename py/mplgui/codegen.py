@@ -13,11 +13,11 @@ import math
 from dataclasses import dataclass
 from typing import Callable
 
-from .dataprep import PlotPlan, SeriesPlan
+from .dataprep import AxisPlan, PlotPlan, SeriesPlan
 from .fonts import LATIN_FONTS, SANS_SERIF_PRIORITY
 from .formats import FORMATS, build_filename, savefig_kwargs, savefig_rc
 from .loader import DatetimeColumn, SourceInfo
-from .settings import SeriesSettings, Settings
+from .settings import AxisSettings, SeriesSettings, Settings
 
 SCRIPT_NAME = "plot.py"
 
@@ -28,6 +28,10 @@ MARGIN_ERROR = "余白の設定を適用できませんでした。左 < 右、�
 
 def axis_error_message(label: str) -> str:
     return f"{label}軸のスケールまたは範囲を適用できませんでした。範囲の値を確認してください。"
+
+
+def tick_error_message(label: str) -> str:
+    return f"{label}軸の目盛を設定できませんでした。目盛の設定を確認してください。"
 
 
 # ---------------------------------------------------------------- literals and comments
@@ -153,7 +157,9 @@ def _label_size_expr(font_size: float) -> str:
 # ---------------------------------------------------------------- sections
 
 
-def _emit_header(b: _Builder, sources: list[SourceInfo], latin_font: str = "default", plan: PlotPlan | None = None) -> None:
+def _emit_header(
+    b: _Builder, sources: list[SourceInfo], latin_font: str = "default", plan: PlotPlan | None = None, settings: Settings | None = None
+) -> None:
     latin = LATIN_FONTS.get(latin_font)
     if len(sources) == 1:
         source = sources[0]
@@ -175,7 +181,7 @@ def _emit_header(b: _Builder, sources: list[SourceInfo], latin_font: str = "defa
     if plan is not None and _uses_date_axis(plan):
         b.add("import matplotlib.dates as mdates")
     b.add("import matplotlib.pyplot as plt")
-    if plan is not None and plan.thin_categorical_x:
+    if plan is not None and settings is not None and _uses_ticker(settings, plan):
         b.add("import matplotlib.ticker as ticker")
     if latin is not None:
         b.add("from matplotlib import font_manager")
@@ -471,26 +477,149 @@ def _axis_lines(var: str, which: str, scale: str, lo, hi) -> list[str]:
     return lines
 
 
-def _x_tick_lines(settings: Settings, plan: PlotPlan) -> list[str]:
-    """X 軸の目盛の書式（日時の軸、文字列の列の間引き）。line / scatter だけ。"""
-    if plan.plot_type not in {"line", "scatter"}:
-        return []
-    if _uses_date_axis(plan):
+_AXIS_NAMES = {"x": "X", "y": "Y", "y2": "第2Y"}
+_INVERT_NOTES = {"x": "右が小さい値", "y": "上が小さい値", "y2": "上が小さい値"}
+_DATE_LOCATORS = {
+    "year": ("YearLocator", "base", "年"),
+    "month": ("MonthLocator", "interval", "か月"),
+    "day": ("DayLocator", "interval", "日"),
+    "hour": ("HourLocator", "interval", "時間"),
+    "minute": ("MinuteLocator", "interval", "分"),
+    "second": ("SecondLocator", "interval", "秒"),
+}
+
+
+@dataclass(frozen=True)
+class _AxisBlock:
+    var: str  # Axes の変数名（ax / ax2）
+    which: str  # x / y（軸の向き）
+    name: str  # x / y / y2（設定上の軸）
+    label: str  # X / Y / 第2Y
+    axis: AxisSettings
+    plan: AxisPlan
+
+
+def _axis_blocks(settings: Settings, plan: PlotPlan) -> list[_AxisBlock]:
+    blocks = [
+        _AxisBlock("ax", "x", "x", "X", settings.axes.x, plan.axes.x),
+        _AxisBlock("ax", "y", "y", "Y", settings.axes.y, plan.axes.y),
+    ]
+    if plan.uses_secondary and plan.axes.y2 is not None:
+        blocks.append(_AxisBlock("ax2", "y", "y2", "第2Y", settings.axes.y2, plan.axes.y2))
+    return blocks
+
+
+def _per_axis_minor(plan: PlotPlan) -> bool:
+    """副目盛を軸ごとに書くか（どれかの軸が「自動」でないとき）。すべて「自動」なら、今までの書き方（ax.minorticks_on() など）。"""
+    return any(a is not None and a.minor != "auto" for a in (plan.axes.x, plan.axes.y, plan.axes.y2))
+
+
+def _uses_ticker(settings: Settings, plan: PlotPlan) -> bool:
+    return any("ticker." in line for blk in _axis_blocks(settings, plan) for line in _axis_tick_lines(blk, settings, plan))
+
+
+def _scale_lines(blk: _AxisBlock, plan: PlotPlan) -> list[str]:
+    """スケールと範囲。X が日時の列のときは、日時の範囲（pd.Timestamp）。"""
+    var, which, axis = blk.var, blk.which, blk.axis
+    if blk.plan.kind == "datetime":
+        limits = [
+            f"{k}=pd.Timestamp({literal(v)})" for k, v in (("left", blk.plan.date_min), ("right", blk.plan.date_max)) if v
+        ]
+        return [f"{var}.set_xlim({', '.join(limits)})"] if limits else []
+    return _axis_lines(var, which, axis.scale, axis.min, axis.max)
+
+
+def _major_lines(blk: _AxisBlock, settings: Settings, plan: PlotPlan) -> list[str]:
+    ap, axis_var = blk.plan, f"{blk.var}.{blk.which}axis"
+    label = blk.label
+    if ap.kind == "datetime":
         fmt = settings.axes.x.date_format
-        if fmt:
-            return [f"ax.xaxis.set_major_formatter(mdates.DateFormatter({literal(fmt)}))  # 日時の表示書式"]
+        if ap.major_step is None:
+            if fmt:
+                return [f"{axis_var}.set_major_formatter(mdates.DateFormatter({literal(fmt)}))  # 日時の表示書式"]
+            return [
+                "# X が日時の列: 範囲に合わせて目盛の間隔と表示を自動で決める",
+                "date_locator = mdates.AutoDateLocator()",
+                f"{axis_var}.set_major_locator(date_locator)",
+                f"{axis_var}.set_major_formatter(mdates.ConciseDateFormatter(date_locator))",
+            ]
+        func, kwarg, unit_name = _DATE_LOCATORS[ap.major_step_unit]
+        formatter = f"mdates.DateFormatter({literal(fmt)})" if fmt else "mdates.ConciseDateFormatter(date_locator)"
         return [
-            "# X が日時の列: 範囲に合わせて目盛の間隔と表示を自動で決める",
-            "date_locator = mdates.AutoDateLocator()",
-            "ax.xaxis.set_major_locator(date_locator)",
-            "ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(date_locator))",
+            f"date_locator = mdates.{func}({kwarg}={literal(ap.major_step)})  # {label}軸の主目盛: {ap.major_step}{unit_name}ごと",
+            f"{axis_var}.set_major_locator(date_locator)",
+            f"{axis_var}.set_major_formatter({formatter})",
         ]
-    if plan.thin_categorical_x:
-        return [
-            "# X が文字列の列: 目盛に X の値を出す（25個を超えるので間引く）",
-            "ax.xaxis.set_major_locator(ticker.MaxNLocator(nbins=25, integer=True))",
+    if ap.kind == "category":
+        if plan.plot_type == "bar" and len(plan.series) > 1:
+            return []  # 複数系列の棒は、棒の位置に目盛を付ける節（tick_step）で扱う
+        if ap.major_step is not None:
+            return [f"{axis_var}.set_major_locator(ticker.MultipleLocator({literal(ap.major_step)}))  # {label}軸の主目盛: {ap.major_step}個おきにラベルを出す"]
+        if plan.plot_type in {"line", "scatter"} and plan.thin_categorical_x:
+            return [
+                "# X が文字列の列: 目盛に X の値を出す（25個を超えるので間引く）",
+                f"{axis_var}.set_major_locator(ticker.MaxNLocator(nbins=25, integer=True))",
+            ]
+        return []
+    lines = []
+    if ap.major_step is not None:
+        lines.append(f"{axis_var}.set_major_locator(ticker.MultipleLocator({literal(ap.major_step)}))  # {label}軸の主目盛: {comment_text(literal(ap.major_step))} ごと")
+    fmt = ap.tick_format
+    if fmt == "auto":
+        return lines
+    d = ap.tick_decimals
+    formatter = f"{blk.name}_formatter"
+    if fmt == "fixed":
+        lines.append(f'{axis_var}.set_major_formatter(ticker.FormatStrFormatter({literal(f"%.{d}f")}))  # {label}軸の数字: 小数 {d} 桁')
+    elif fmt == "sci":
+        lines.append(f'{axis_var}.set_major_formatter(ticker.FormatStrFormatter({literal(f"%.{d}e")}))  # {label}軸の数字: 指数表記（小数 {d} 桁）')
+    elif ap.kind == "log":
+        lines.append(f"{axis_var}.set_major_formatter(ticker.LogFormatterSciNotation())  # {label}軸の数字: 10^n 表記")
+    else:
+        lines += [
+            f"{formatter} = ticker.ScalarFormatter(useMathText=True)  # {label}軸の数字: 10^n 表記（軸の端に ×10^n をまとめて書く）",
+            f"{formatter}.set_powerlimits((0, 0))",
+            f"{axis_var}.set_major_formatter({formatter})",
         ]
+    if ap.kind == "log":
+        lines.append(f"{axis_var}.set_minor_formatter(ticker.NullFormatter())  # 副目盛の数字は消す")
+    return lines
+
+
+def _minor_lines(blk: _AxisBlock, grid_minor: bool) -> list[str]:
+    ap, axis_var, label = blk.plan, f"{blk.var}.{blk.which}axis", blk.label
+    if ap.minor == "on":
+        if ap.minor_divisions is not None and ap.kind != "log":
+            n = ap.minor_divisions
+            return [f"{axis_var}.set_minor_locator(ticker.AutoMinorLocator({literal(n)}))  # {label}軸の副目盛: 主目盛の間を {n} 等分"]
+        return [f"{axis_var}.minorticks_on()  # {label}軸の副目盛を表示する"]
+    if ap.minor == "off":
+        return [f"{axis_var}.minorticks_off()  # {label}軸の副目盛は出さない"]
+    if grid_minor:
+        return [f"{axis_var}.minorticks_on()  # {label}軸の副目盛を表示する（副目盛線を表示するため）"]
+    if ap.kind == "log":
+        return [f"{axis_var}.minorticks_off()  # 対数軸の補助目盛は出さない"]
     return []
+
+
+def _axis_tick_lines(blk: _AxisBlock, settings: Settings, plan: PlotPlan) -> list[str]:
+    """1つの軸の目盛の行（主目盛 → 書式 → 副目盛（軸ごとに書くときだけ）→ 反転）。Axes の変数名と AxisPlan だけで決まる。"""
+    lines = _major_lines(blk, settings, plan)
+    if _per_axis_minor(plan):
+        lines += _minor_lines(blk, settings.plot.grid_minor)
+    if blk.plan.inverted:
+        lines.append(f"{blk.var}.invert_{blk.which}axis()  # {blk.label}軸を反転する（{_INVERT_NOTES[blk.name]}）")
+    return lines
+
+
+def _emit_spines(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
+    plot = settings.plot
+    if not plot.spine_top:
+        b.add('ax.spines["top"].set_visible(False)  # 上の枠線を消す')
+        if plan.uses_secondary:
+            b.add('ax2.spines["top"].set_visible(False)')
+    if not plot.spine_right and not plan.uses_secondary:  # 第2Y軸があるときの右の枠線は、第2Y軸の線なので消せない
+        b.add('ax.spines["right"].set_visible(False)  # 右の枠線を消す')
 
 
 def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
@@ -503,24 +632,30 @@ def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
     if plan.uses_secondary:
         b.add(f"ax2.set_ylabel({literal(axes.y2.label or plan.y2_label)}, fontsize=FONT_SIZE)")
 
-    for var, which, label, axis in (
-        ("ax", "x", "X", axes.x),
-        ("ax", "y", "Y", axes.y),
-        ("ax2", "y", "第2Y", axes.y2),
-    ):
-        if var == "ax2" and not plan.uses_secondary:
-            continue
-        lines = _axis_lines(var, which, axis.scale, axis.min, axis.max)
-        if var == "ax" and which == "x":
-            lines = _x_tick_lines(settings, plan) + lines
+    # 軸ごとに: スケール → 範囲 → 主目盛・書式 → 副目盛 → 反転（スケールを変えると目盛の設定が戻るので、この順）
+    for blk in _axis_blocks(settings, plan):
+        lines = _scale_lines(blk, plan)
         if lines:
-            with b.step(axis_error_message(label), f"{label}軸の範囲"):
+            with b.step(axis_error_message(blk.label), f"{blk.label}軸の範囲"):
                 b.add(*lines)
+        ticks = _axis_tick_lines(blk, settings, plan)
+        if ticks:
+            with b.step(tick_error_message(blk.label), f"{blk.label}軸の目盛"):
+                b.add(*ticks)
 
     if plan.plot_type == "bar" and len(plan.series) > 1:
+        step = plan.axes.x.major_step
+        if step is not None:
+            b.add(
+                f"# 棒の位置に X の値を目盛として付ける（X軸の主目盛の間隔: {step}個おき）",
+                f"tick_step = {literal(step)}",
+            )
+        else:
+            b.add(
+                "# 棒の位置に X の値を目盛として付ける（25個を超えるときは間引く）",
+                "tick_step = max(1, len(positions) // 25)",
+            )
         b.add(
-            "# 棒の位置に X の値を目盛として付ける（25個を超えるときは間引く）",
-            "tick_step = max(1, len(positions) // 25)",
             "ax.set_xticks(positions[::tick_step])",
             'ax.set_xticklabels(x_labels[::tick_step], rotation=45, ha="right")',
         )
@@ -530,17 +665,18 @@ def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
     if plan.uses_secondary:
         b.add(f'ax2.tick_params(which="both", direction="in", labelsize={size})')
 
-    if not plot.grid_minor:
+    if not plot.grid_minor and not _per_axis_minor(plan):
         if axes.x.scale == "log" or axes.y.scale == "log":
             b.add("ax.minorticks_off()  # 対数軸の補助目盛は出さない")
         if plan.uses_secondary and axes.y2.scale == "log":
             b.add("ax2.minorticks_off()")
+    _emit_spines(b, settings, plan)
 
 
 def _emit_grid_and_legend(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
     b.section("6. グリッドと凡例")
     plot = settings.plot
-    if plot.grid_minor:
+    if plot.grid_minor and not _per_axis_minor(plan):  # 軸ごとの副目盛の指定があるときは、5. 軸で書いた（minorticks_on() は軸ごとの指定を上書きする）
         b.add("ax.minorticks_on()")
         if plan.uses_secondary:
             b.add("ax2.minorticks_on()")
@@ -631,7 +767,7 @@ def generate_script(settings: Settings, source, plan: PlotPlan) -> GeneratedScri
         source = {src.id: source for src in plan.sources}
     infos = [source[src.id] for src in plan.sources]
     b = _Builder()
-    _emit_header(b, infos, settings.plot.latin_font, plan)
+    _emit_header(b, infos, settings.plot.latin_font, plan, settings)
     b.add(f"FONT_SIZE = {literal(settings.plot.font_size)}  # 文字の大きさ（pt）")
     _emit_load(b, plan, infos)
     _emit_skip_rows(b, plan)
