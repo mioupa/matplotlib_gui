@@ -591,7 +591,7 @@ def _date_format(value: Any) -> str:
     return value
 
 
-def _check_axis_range(axis: AxisSettings, name: str) -> None:
+def check_axis_range(axis: AxisSettings, name: str) -> None:
     if axis.min is not None and axis.max is not None and axis.min >= axis.max:
         raise UserError(f"{name}軸の範囲は最小値 < 最大値で指定してください。", field=f"{name}軸の範囲")
     if axis.scale == "log" and ((axis.min is not None and axis.min <= 0) or (axis.max is not None and axis.max <= 0)):
@@ -747,10 +747,10 @@ def parse_settings(raw: dict | None) -> Settings:
     for i, s in enumerate(series):
         if s.source and s.source not in file_ids:
             raise UserError(f"系列{i + 1}のデータ元が見つかりません。データ元を選び直してください。", field=f"系列{i + 1}のデータ元")
-    _check_axis_range(axes.x, "X")
-    _check_axis_range(axes.y, "Y")
+    # X の数値の範囲は、X が日時の列のときは使わない（隠れている）ので、dataprep が軸の種類を見て検査する
+    check_axis_range(axes.y, "Y")
     if any(s.secondary_axis for s in series):
-        _check_axis_range(axes.y2, "第2Y")
+        check_axis_range(axes.y2, "第2Y")
 
     save = _parse_save(merged["save"])
     return Settings(version=SCHEMA_VERSION, load=load, plot=plot, axes=axes, series=series, save=save)

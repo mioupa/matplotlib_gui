@@ -110,7 +110,6 @@ def _expect_error(mutator, *needles):
         (lambda r: r["plot"]["margins"].update(bottom=0.9, top=0.1), ("bottom < top",)),
         (lambda r: r["axes"]["x"].__setitem__("min", "q"), ("X軸の最小値",)),
         (lambda r: r["axes"]["y"].__setitem__("max", "q"), ("Y軸の最大値",)),
-        (lambda r: r["axes"]["x"].update(min=5, max=1), ("X軸の範囲",)),
         (lambda r: r["axes"]["y"].update(scale="log", min=0), ("Y軸", "対数")),
         (lambda r: r["axes"]["x"].__setitem__("scale", "sqrt"), ("X軸スケール",)),
         (lambda r: r["series"][0].__setitem__("lineWidth", -1), ("系列1の", "「線幅」", "0より大きい")),

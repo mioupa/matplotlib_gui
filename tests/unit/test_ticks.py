@@ -711,3 +711,24 @@ def test_literal_is_the_only_way_values_reach_the_tick_lines():
     for bad in (float("nan"), float("inf"), [1], (1,), {"a": 1}, object()):
         with pytest.raises((TypeError, ValueError)):
             codegen.literal(bad)
+
+
+# ---------------------------------------------------------------- X numeric range check moved to dataprep (hidden values are unused)
+def test_numeric_x_range_checked_in_dataprep_only_when_x_is_not_datetime():
+    for bad in (axis("x", min=5, max=1), axis("x", scale="log", min=0)):
+        with pytest.raises(UserError) as e:
+            plan_of(numeric_frame(), bad, [S(1, x="__idx__0")])
+        assert e.value.field == "X軸の範囲"
+    with pytest.raises(UserError) as e:
+        plan_of(numeric_frame(), axis("x", min=5, max=1), [S(1, x="__idx__0")])
+    assert "最小値 < 最大値" in e.value.message
+    # 日時の X では数値の範囲は隠れていて使わない（描画を止めない）
+    a = plan_of(date_frame(), axis("x", min=5, max=1), [S(1, x="__idx__0")]).axes.x
+    assert a.kind == "datetime"
+    # settings 単体では X の数値の範囲を検査しない（Y は従来どおり）
+    raw = default_settings()
+    raw["axes"]["x"].update(min=5, max=1)
+    parse_settings(raw)
+    raw["axes"]["y"].update(min=5, max=1)
+    with pytest.raises(UserError):
+        parse_settings(raw)

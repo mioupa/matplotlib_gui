@@ -60,6 +60,55 @@ const xOptions = (columns) => [{ value: "", label: "(index)" }, ...columns];
 const yOptions = (columns) => [{ value: "", label: "(自動)" }, ...columns];
 const sourceOptions = () => loadedFiles().map((f, i) => ({ value: f.id, label: `データ${i + 1}: ${f.name}` }));
 
+// エラーバーの折りたたみの開閉（系列 id ごと。セッション中だけ覚え、カードを作り直しても保つ）
+// 覚えていない系列は、エラーバーを使っていれば開いて作る
+const openErrorBars = new Map();
+const errorBarsOpen = (series) => (openErrorBars.has(series.id) ? openErrorBars.get(series.id) : usesErrorBars(series));
+const usesErrorBars = (series) => !!series.errorBars && ["y", "x"].some((d) => series.errorBars[d].mode !== "none");
+
+const errorBlockHtml = (series, dir) => {
+  const id = (name) => `series-${series.id}-${dir}err-${name}`;
+  const title = dir === "y" ? "Y方向" : "X方向";
+  const sameLabel = dir === "y" ? "上下で同じ値" : "左右で同じ値";
+  return `
+    <div class="err-block err-${dir}" data-err-dir="${dir}">
+      <div class="group">
+        <label for="${id("mode")}">${title}</label>
+        <select id="${id("mode")}" data-err="${dir}.mode">
+          <option value="none">なし</option>
+          <option value="fixed">固定値</option>
+          <option value="column">列で指定</option>
+        </select>
+      </div>
+      <div class="group err-symmetric-wrap">
+        <label class="inline check-label">
+          <input id="${id("symmetric")}" type="checkbox" data-err="${dir}.symmetric" />
+          <span>${sameLabel}</span>
+        </label>
+      </div>
+      <div class="row group err-fixed-wrap">
+        <div>
+          <label for="${id("value")}" class="err-value-label"></label>
+          <input id="${id("value")}" type="number" min="0" step="any" data-err="${dir}.value" />
+        </div>
+        <div class="err-minus-wrap">
+          <label for="${id("value-minus")}">${dir === "y" ? "下（−）" : "左（−）"}</label>
+          <input id="${id("value-minus")}" type="number" min="0" step="any" data-err="${dir}.valueMinus" />
+        </div>
+      </div>
+      <div class="row group err-column-wrap">
+        <div>
+          <label for="${id("column")}" class="err-column-label"></label>
+          <select id="${id("column")}" data-err="${dir}.column"></select>
+        </div>
+        <div class="err-minus-wrap">
+          <label for="${id("column-minus")}">${dir === "y" ? "下（−）" : "左（−）"}</label>
+          <select id="${id("column-minus")}" data-err="${dir}.columnMinus"></select>
+        </div>
+      </div>
+    </div>`;
+};
+
 const cardHtml = (series, plotType) => {
   const id = (name) => `series-${series.id}-${name}`;
   return `
@@ -127,7 +176,68 @@ const cardHtml = (series, plotType) => {
         <span>第2軸を使用</span>
       </label>
     </div>
+    <details class="series-errorbars" id="${id("errorbars")}" ${errorBarsOpen(series) ? "open" : ""}>
+      <summary class="series-errorbars-summary">エラーバー</summary>
+      <div class="series-errorbars-body">
+        ${errorBlockHtml(series, "y")}
+        <div class="err-x-wrap">${errorBlockHtml(series, "x")}</div>
+        <div class="group err-capsize-wrap">
+          <label for="${id("err-capsize")}">端の長さ（pt）</label>
+          <input id="${id("err-capsize")}" type="number" min="0" max="50" step="0.5" data-err="capSize" />
+        </div>
+      </div>
+    </details>
   `;
+};
+
+const errorColumnOptions = (columns) => [{ value: "", label: "（列を選択）" }, ...columns];
+
+// エラーバーの入力欄に設定の値を入れる（カードを作るとき）
+const fillErrorControls = (item, series, columns) => {
+  const eb = series.errorBars;
+  const set = (sel, value) => {
+    const el = item.querySelector(sel);
+    if (el.type === "checkbox") el.checked = !!value;
+    else el.value = value === null || value === undefined ? "" : String(value);
+  };
+  for (const dir of ["y", "x"]) {
+    const spec = eb[dir];
+    const get = (key) => item.querySelector(`[data-err="${dir}.${key}"]`);
+    fillSelect(get("column"), errorColumnOptions(columns), spec.column);
+    fillSelect(get("columnMinus"), errorColumnOptions(columns), spec.columnMinus);
+    get("mode").value = spec.mode;
+    get("symmetric").checked = !!spec.symmetric;
+    get("value").value = spec.value === null ? "" : String(spec.value);
+    get("valueMinus").value = spec.valueMinus === null ? "" : String(spec.valueMinus);
+  }
+  set('[data-err="capSize"]', eb.capSize);
+};
+
+// エラーバーの欄の表示（カードを作り直さない。入力中の欄のフォーカスを保つ）
+const syncErrorVisibility = (item, series, usePerSeriesX) => {
+  if (!series || !series.errorBars) return;
+  const eb = series.errorBars;
+  for (const dir of ["y", "x"]) {
+    const spec = eb[dir];
+    const block = item.querySelector(`.err-block[data-err-dir="${dir}"]`);
+    if (!block) continue;
+    const on = spec.mode !== "none";
+    const sym = spec.symmetric;
+    const plus = dir === "y" ? "上（+）" : "右（+）";
+    block.querySelector(".err-symmetric-wrap").hidden = !on;
+    const fixed = block.querySelector(".err-fixed-wrap");
+    const column = block.querySelector(".err-column-wrap");
+    fixed.hidden = spec.mode !== "fixed";
+    column.hidden = spec.mode !== "column";
+    fixed.querySelector(".err-minus-wrap").hidden = sym;
+    column.querySelector(".err-minus-wrap").hidden = sym;
+    fixed.querySelector(".err-value-label").textContent = sym ? "値" : plus;
+    column.querySelector(".err-column-label").textContent = sym ? "列" : plus;
+  }
+  const xWrap = item.querySelector(".err-x-wrap");
+  if (xWrap) xWrap.hidden = !usePerSeriesX;
+  const cap = item.querySelector(".err-capsize-wrap");
+  if (cap) cap.hidden = !usesErrorBars(series);
 };
 
 const buildCard = (series, plotType) => {
@@ -141,6 +251,11 @@ const buildCard = (series, plotType) => {
   fillSelect(item.querySelector(".series-source"), sourceOptions(), sourceIdOf(series));
   item.querySelector(".series-source-wrap").hidden = !hasManySources();
   item.querySelector(".series-line-style").value = series.lineStyle;
+  fillErrorControls(item, series, columns);
+  const details = item.querySelector(".series-errorbars");
+  details.addEventListener("toggle", () => {
+    openErrorBars.set(series.id, details.open);
+  });
   bindSeriesColorControls(item, (color) => updateSeries(series.id, { color }));
   item.querySelector(".remove-series").addEventListener("click", () => removeSeries(series.id));
   return item;
@@ -155,6 +270,9 @@ export const syncVisibility = () => {
     group.style.display = usePerSeriesX ? "block" : "none";
   }
   for (const wrap of document.querySelectorAll("#seriesList .series-source-wrap")) wrap.hidden = !hasManySources();
+  for (const item of document.querySelectorAll("#seriesList .series-item")) {
+    syncErrorVisibility(item, settings.series.find((x) => x.id === item.dataset.seriesId), usePerSeriesX);
+  }
   const dateGroup = document.getElementById("xDateFormatGroup");
   if (dateGroup) dateGroup.hidden = !usesDatetimeX();
   syncAxisTicks(xAxisKind());
@@ -266,10 +384,26 @@ export const reconcileColumns = () => {
     const patch = {};
     if (s.x && !valid.has(s.x)) patch.x = "";
     if (s.y && !valid.has(s.y)) patch.y = "";
+    // 誤差の列も、もう無い列なら解除する（方式は残し、Python が列を選ぶよう案内する）
+    if (s.errorBars) {
+      let next = null;
+      for (const dir of ["y", "x"]) {
+        for (const key of ["column", "columnMinus"]) {
+          const v = s.errorBars[dir][key];
+          if (v && !valid.has(v)) {
+            next = next || cloneErrorBars(s.errorBars);
+            next[dir][key] = "";
+          }
+        }
+      }
+      if (next) patch.errorBars = next;
+    }
     if (Object.keys(patch).length) updateSeries(s.id, patch, "reconcile");
   }
   refreshSources();
 };
+
+const cloneErrorBars = (eb) => JSON.parse(JSON.stringify(eb));
 
 const FIELD_BY_CLASS = [
   ["series-x", "x", "text"],
@@ -287,8 +421,25 @@ const onSourceChange = (seriesId, source) => {
   const current = series.find((s) => s.id === seriesId);
   if (!current || sourceIdOf(current) === source) return;
   if (series[0] && series[0].id === seriesId && plot.xColumn) setPath("plot.xColumn", "");
-  updateSeries(seriesId, { source, x: "", y: "" });
+  const errorBars = cloneErrorBars(current.errorBars);
+  for (const dir of ["y", "x"]) Object.assign(errorBars[dir], { column: "", columnMinus: "" });
+  updateSeries(seriesId, { source, x: "", y: "", errorBars });
   refreshSources();
+};
+
+// エラーバーの欄の変更: 現在の errorBars を複製して1項目を書き換える
+const onErrorInput = (seriesId, target) => {
+  const current = getSettings().series.find((s) => s.id === seriesId);
+  if (!current) return;
+  const next = cloneErrorBars(current.errorBars);
+  const [first, key] = target.dataset.err.split(".");
+  if (first === "capSize") {
+    next.capSize = readNumber(target);
+  } else {
+    const kind = target.type === "checkbox" ? "checkbox" : target.type === "number" ? "number" : "text";
+    next[first][key] = kind === "checkbox" ? target.checked : kind === "number" ? readNumber(target) : target.value;
+  }
+  updateSeries(seriesId, { errorBars: next });
 };
 
 const onSeriesInput = (event) => {
@@ -298,6 +449,10 @@ const onSeriesInput = (event) => {
   if (!item) return;
   if (target.classList.contains("series-source")) {
     onSourceChange(item.dataset.seriesId, target.value);
+    return;
+  }
+  if (target.dataset.err) {
+    onErrorInput(item.dataset.seriesId, target);
     return;
   }
   const entry = FIELD_BY_CLASS.find(([cls]) => target.classList.contains(cls));

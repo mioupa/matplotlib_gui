@@ -15,7 +15,7 @@ import pandas as pd
 from .errors import UserError
 from .loader import is_blank_cell as _is_blank_cell
 from .loader import looks_numeric as _looks_numeric
-from .settings import AxisSettings, ErrorSpec, Settings, validate_date_range
+from .settings import AxisSettings, ErrorSpec, Settings, check_axis_range, validate_date_range
 
 MAX_EXAMPLES = 3
 NO_DRAWABLE_DATA = "描画可能なデータがありません。"
@@ -484,6 +484,8 @@ def _plan_axis(
     date_min = date_max = ""
     if kind == "datetime":
         date_min, date_max = validate_date_range(axis)  # 日時の X のときだけ検証する（隠れているときは使わない）
+    elif which == "x":
+        check_axis_range(axis, label)  # 数値の範囲は、X が日時でないときだけ検査する（日時のときは隠れていて使わない）
     major_step = None
     unit = "day"
     lo_limit = hi_limit = None

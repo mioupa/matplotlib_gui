@@ -146,6 +146,25 @@ def main():
     (OUT / "non_numeric.csv").write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
 
     make_datetime_fixtures(fixed)
+    make_errorbar_fixture()
+
+
+def make_errorbar_fixture():
+    """エラーバー（G1）。x / y / y2 / sd（空欄・数値にできない値・負の値を含む）/ sd_low / sd_high / xsd。"""
+    lines = ["x,y,y2,sd,sd_low,sd_high,xsd"]
+    for i in range(12):
+        sd = str(round(0.1 + 0.02 * i, 3))
+        if i == 3:
+            sd = ""
+        elif i == 6:
+            sd = "bad"
+        elif i == 9:
+            sd = "-0.2"
+        lines.append(
+            f"{i},{round(10 + 2 * i + math.sin(i), 3)},{round(5 + 0.5 * i, 3)},{sd},"
+            f"{round(0.1 + 0.01 * i, 3)},{round(0.3 + 0.02 * i, 3)},{round(0.05 + 0.01 * i, 3)}"
+        )
+    (OUT / "errorbars.csv").write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
 
 
 def make_datetime_fixtures(fixed):

@@ -467,3 +467,42 @@ def code_value(page) -> str:
 def is_hidden_by_id(page, element_id) -> bool:
     """hidden 属性・display:none のどちらでも、画面に出ていない。"""
     return page.evaluate("(id) => { const e = document.getElementById(id); return !e || e.getClientRects().length === 0; }", element_id)
+
+
+# --- エラーバー（Phase 5a, G1） ---
+def eb_id(series_id, direction, name):
+    """エラーバーの入力欄の id。direction は y / x、name は mode / symmetric / value / value-minus / column / column-minus。"""
+    return f"#series-{series_id}-{direction}err-{name}"
+
+
+def set_errorbars(
+    page, series_id, direction, *, mode=None, symmetric=None, value=None, value_minus=None, column=None, column_minus=None
+):
+    """系列のエラーバーの入力欄を順に変える（待たない。呼び出し側が wait_settled などで待つ）。
+    折りたたみが閉じていれば開く（開く操作は設定を変えない）。"""
+    page.evaluate("(id) => { document.getElementById(`series-${id}-errorbars`).open = true; }", series_id)
+    if mode is not None:
+        page.select_option(eb_id(series_id, direction, "mode"), mode)
+    if symmetric is not None:
+        page.set_checked(eb_id(series_id, direction, "symmetric"), bool(symmetric))
+    if value is not None:
+        page.fill(eb_id(series_id, direction, "value"), str(value))
+    if value_minus is not None:
+        page.fill(eb_id(series_id, direction, "value-minus"), str(value_minus))
+    if column is not None:
+        page.select_option(eb_id(series_id, direction, "column"), column)
+    if column_minus is not None:
+        page.select_option(eb_id(series_id, direction, "column-minus"), column_minus)
+
+
+def error_bar_count(page, axis_index=0) -> int:
+    """表示中の図の、エラーバーの数（data-summary の errorbars）。"""
+    return image_summary(page)[axis_index]["errorbars"]
+
+
+def series_errorbars(page, series_id) -> dict:
+    """画面の状態（state）にある系列の errorBars。"""
+    return page.evaluate(
+        "(id) => import(new URL('js/state.js', document.baseURI)).then((m) => m.getSettings().series.find((s) => s.id === id).errorBars)",
+        series_id,
+    )

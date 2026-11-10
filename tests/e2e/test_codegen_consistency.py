@@ -19,6 +19,7 @@ from helpers import (
     open_code_tab,
     open_tick_group,
     paste_text,
+    set_errorbars,
     wait_data_ready,
     wait_app_ready,
     wait_code_contains,
@@ -162,6 +163,43 @@ def _configure_text_x_step(page):
     page.fill("#xMajorStep", "10")
 
 
+def _configure_errbars_line(page):
+    page.select_option("#series-s1-x", "__idx__0")
+    page.select_option("#series-s1-y", "__idx__1")
+    set_errorbars(page, "s1", "y", mode="column", column="__idx__3")
+    set_errorbars(page, "s1", "x", mode="fixed", value="0.2")
+
+
+def _configure_errbars_scatter(page):
+    page.select_option("#plotType", "scatter")
+    page.select_option("#series-s1-x", "__idx__0")
+    page.select_option("#series-s1-y", "__idx__1")
+    set_errorbars(page, "s1", "y", mode="column", symmetric=False, column="__idx__4", column_minus="__idx__5")
+
+
+def _configure_errbars_bar(page):
+    page.select_option("#plotType", "bar")
+    page.select_option("#xColumn", "__idx__0")
+    page.select_option("#series-s1-y", "__idx__1")
+    set_errorbars(page, "s1", "y", mode="fixed", value="2.5")
+
+
+def _configure_errbars_bar_multi(page):
+    page.select_option("#plotType", "bar")
+    page.select_option("#xColumn", "__idx__0")
+    page.select_option("#series-s1-y", "__idx__1")
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s2-y", "__idx__2")
+    set_errorbars(page, "s1", "y", mode="fixed", value="2.5")
+    set_errorbars(page, "s2", "y", mode="fixed", symmetric=False, value="3", value_minus="1")
+
+
+def _configure_errbars_two_files(page):
+    page.select_option("#series-s1-y", "__idx__1")
+    add_series_with_source(page, "d2", "__idx__1")
+    set_errorbars(page, "s2", "y", mode="column", column="__idx__3")
+
+
 # 読込の設定を変えた場合: 生成スクリプトの読込部が、GUI の読み方と同じ図を作る
 PRE_STEPS = {"preamble_csv": _pre_preamble, "european_csv": _pre_european}
 
@@ -190,6 +228,11 @@ CASES = {
     "ticks_pow10": ("growth.csv", _configure_ticks_pow10),
     "datetime_day_step_range": ("datetime.csv", _configure_datetime_month_range),
     "text_x_step": ("datetime.csv", _configure_text_x_step),
+    "errbars_line": ("errorbars.csv", _configure_errbars_line),
+    "errbars_scatter": ("errorbars.csv", _configure_errbars_scatter),
+    "errbars_bar": ("categories.csv", _configure_errbars_bar),
+    "errbars_bar_multi": ("categories.csv", _configure_errbars_bar_multi),
+    "errbars_two_files": (("utf8.csv", "errorbars.csv"), _configure_errbars_two_files),
     "scatter_paper1": ("utf8.csv", _configure_scatter_paper1),
     "scatter_arimo_paper2_pdf": ("utf8.csv", _configure_scatter_arimo_paper2_pdf),
 }
@@ -257,6 +300,14 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
 
     assert len(local) == len(browser)
     assert len(browser) == (2 if case == "line" else 1)
+    if case.startswith("errbars_"):
+        assert browser[0]["errorbars"] > 0
+        assert l_ax_summary(local, "errorbars") == l_ax_summary(browser, "errorbars")
+        text = script.read_text(encoding="utf-8")
+        is_bar = case in ("errbars_bar", "errbars_bar_multi")
+        assert ("draw_error_bars(" in text) != is_bar  # 折れ線・散布図はヘルパー、棒グラフは ax.bar の yerr
+        if is_bar:
+            assert "yerr=" in text
     for b_ax, l_ax in zip(browser, local):
         for key in EXACT_KEYS:
             assert l_ax[key] == b_ax[key], key
@@ -307,6 +358,10 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
         assert local[0]["xticklabels"] == browser[0]["xticklabels"]
         assert "品目A" in browser[0]["xticklabels"][0]
         assert browser[0]["patches"] == 12  # 2 系列 × 6 カテゴリ
+    if case == "errbars_two_files":
+        assert "df2.iloc[:, 3]" in script.read_text(encoding="utf-8")
+    if case in ("errbars_bar", "errbars_bar_multi"):
+        assert local[0]["xticklabels"] == browser[0]["xticklabels"]
     if case == "line":
         assert browser[0]["yscale"] == "log" and browser[0]["lines"] == 1 and browser[1]["lines"] == 1
         assert browser[0]["legend"] == ["指数 [1]", "線形 [2]"]
