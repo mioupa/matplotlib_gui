@@ -36,7 +36,32 @@ export const DEFAULT_SERIES = {
   secondaryAxis: false,
   source: "",
   errorBars: { y: defaultErrorSpec(), x: defaultErrorSpec(), capSize: 3 },
+  marker: "auto",
+  alpha: 1,
+  fill: { lower: "", upper: "", alpha: 0.25 },
 };
+
+// 注釈（annotations[]）1つの既定値。id は追加するときに a1, a2, ... を振る（削除しても再利用しない）
+export const DEFAULT_ANNOTATION = {
+  id: "a1",
+  kind: "hline",
+  text: "",
+  x: "",
+  y: "",
+  start: "",
+  end: "",
+  coords: "data",
+  axis: "y",
+  color: "#000000",
+  lineStyle: "dashed",
+  lineWidth: 1,
+  alpha: null,
+  fontSize: null,
+  label: "",
+};
+
+// 近似曲線（fits[]）1つの既定値。id は f1, f2, ...。series は追加するときに系列1の id にする
+export const DEFAULT_FIT = { id: "f1", series: "s1", model: "linear", degree: 2, show: "legend", color: "", lineStyle: "dashed" };
 
 export const DEFAULT_SETTINGS = {
   version: SCHEMA_VERSION,
@@ -70,5 +95,7 @@ export const DEFAULT_SETTINGS = {
     y2: { label: "", scale: "linear", min: null, max: null, ...defaultTicks() },
   },
   series: [DEFAULT_SERIES],
+  annotations: [],
+  fits: [],
   save: { filename: "", format: "png", transparent: false, dpi: 300, svgText: "path" },
 };

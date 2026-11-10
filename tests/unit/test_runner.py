@@ -471,3 +471,18 @@ def test_raster_pixels_truncates_like_agg():
 
     assert raster_pixels(8, 6, 300) == (2400, 1800)
     assert raster_pixels(3.3333, 2, 100) == (333, 200)  # 切り捨て（Agg は int(width)）
+
+
+def test_figure_summary_has_5b_keys_with_neutral_defaults():
+    from mplgui.runner import figure_summary
+
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1], label="a")
+    try:
+        summary = figure_summary(fig)[0]
+    finally:
+        plt.close(fig)
+    assert summary["bands"] == 0 and summary["fitlines"] == 0 and summary["fittexts"] == 0
+    assert summary["annotations"] == {"texts": 0, "hlines": 0, "vlines": 0, "hspans": 0, "vspans": 0}
+    assert summary["markers"] == ["None"] and summary["alphas"] == [None]
+    assert summary["lines"] == 1 and summary["errorbars"] == 0

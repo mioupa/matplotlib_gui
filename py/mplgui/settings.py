@@ -57,6 +57,15 @@ TICK_FORMATS = ("auto", "fixed", "sci", "pow10")
 ERROR_MODES = ("none", "fixed", "column")
 MAX_CAP_SIZE = 50
 _COLUMN_RE = re.compile(r"__idx__[0-9]+")
+MARKERS = ("auto", "none", "o", "s", "^", "v", "D", "x", "+", "*")
+ANNOTATION_KINDS = ("text", "hline", "vline", "hspan", "vspan")
+ANNOTATION_COORDS = ("data", "axes")
+ANNOTATION_AXES = ("y", "y2")
+FIT_MODELS = ("linear", "poly")
+FIT_SHOWS = ("legend", "text", "none")
+MAX_ANNOTATIONS = 50
+MAX_FITS = 20
+MAX_ANNOTATION_TEXT = 200
 _DATE_INPUT_RE = re.compile(r"(\d{4})([-/])(\d{1,2})\2(\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?")
 DATE_RANGE_LABEL = "X軸の範囲（日時）"
 
@@ -70,6 +79,26 @@ _DEFAULT_TICKS = {
     "inverted": False,
 }
 
+_DEFAULT_FILL = {"lower": "", "upper": "", "alpha": 0.25}
+_DEFAULT_ANNOTATION = {
+    "id": "a1",
+    "kind": "hline",
+    "text": "",
+    "x": "",
+    "y": "",
+    "start": "",
+    "end": "",
+    "coords": "data",
+    "axis": "y",
+    "color": "#000000",
+    "lineStyle": "dashed",
+    "lineWidth": 1,
+    "alpha": None,
+    "fontSize": None,
+    "label": "",
+}
+_DEFAULT_FIT = {"id": "f1", "series": "s1", "model": "linear", "degree": 2, "show": "legend", "color": "", "lineStyle": "dashed"}
+
 _DEFAULT_SERIES = {
     "id": "s1",
     "x": "",
@@ -82,7 +111,20 @@ _DEFAULT_SERIES = {
     "secondaryAxis": False,
     "source": "",
     "errorBars": {"y": copy.deepcopy(_DEFAULT_ERROR_SPEC), "x": copy.deepcopy(_DEFAULT_ERROR_SPEC), "capSize": 3},
+    "marker": "auto",
+    "alpha": 1,
+    "fill": copy.deepcopy(_DEFAULT_FILL),
 }
+
+
+def default_annotation() -> dict:
+    """注釈1つの既定値（js/defaults.js の DEFAULT_ANNOTATION と同一）。"""
+    return copy.deepcopy(_DEFAULT_ANNOTATION)
+
+
+def default_fit() -> dict:
+    """近似曲線1つの既定値（js/defaults.js の DEFAULT_FIT と同一）。"""
+    return copy.deepcopy(_DEFAULT_FIT)
 
 
 def default_settings() -> dict:
@@ -122,6 +164,8 @@ def default_settings() -> dict:
             "y2": {"label": "", "scale": "linear", "min": None, "max": None, **copy.deepcopy(_DEFAULT_TICKS)},
         },
         "series": [copy.deepcopy(_DEFAULT_SERIES)],
+        "annotations": [],
+        "fits": [],
         "save": {"filename": "", "format": "png", "transparent": False, "dpi": DEFAULT_DPI, "svgText": "path"},
     }
 
@@ -237,6 +281,19 @@ class ErrorBarSettings:
 
 
 @dataclass(frozen=True)
+class FillSettings:
+    """塗りつぶし帯（fill_between）。lower / upper は "__idx__N"。両方空なら帯なし。"""
+
+    lower: str = ""
+    upper: str = ""
+    alpha: float = 0.25
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.lower and self.upper)
+
+
+@dataclass(frozen=True)
 class SeriesSettings:
     id: str = "s1"
     x: str = ""
@@ -249,6 +306,9 @@ class SeriesSettings:
     secondary_axis: bool = False
     source: str = ""  # データ元のファイル id（"" = load.files の先頭）
     error_bars: ErrorBarSettings = field(default_factory=ErrorBarSettings)
+    marker: str = "auto"  # auto / none / o / s / ^ / v / D / x / + / *（棒グラフでは使わない）
+    alpha: float = 1.0  # 不透明度（1 = 透けない）
+    fill: FillSettings = field(default_factory=FillSettings)  # 棒グラフでは使わない
 
     def effective_marker_size(self, plot_type: str) -> float:
         """自動(None)は line=0 / それ以外=24。scatter で 0 以下なら 24 に補正する。"""
@@ -258,6 +318,38 @@ class SeriesSettings:
         if plot_type == "scatter" and size <= 0:
             return DEFAULT_SCATTER_MARKER_SIZE
         return float(size)
+
+
+@dataclass(frozen=True)
+class AnnotationSettings:
+    """注釈1つ。位置（x / y / start / end）は入力欄の文字のまま持つ（軸の種類で解釈するのは dataprep）。種類で使わない項目は既定値。"""
+
+    id: str = "a1"
+    kind: str = "hline"  # text / hline / vline / hspan / vspan
+    text: str = ""
+    x: str = ""
+    y: str = ""
+    start: str = ""
+    end: str = ""
+    coords: str = "data"  # text だけ: data / axes
+    axis: str = "y"  # y / y2（Y を使う種類で、第2Y軸を使うときだけ）
+    color: str = "#000000"
+    line_style: str = "dashed"
+    line_width: float = 1.0
+    alpha: float | None = None  # None = 自動（帯 0.2、それ以外 1）
+    font_size: float | None = None  # None = 図のフォントサイズ
+    label: str = ""
+
+
+@dataclass(frozen=True)
+class FitSettings:
+    id: str = "f1"
+    series: str = "s1"  # 系列の id
+    model: str = "linear"
+    degree: int = 1  # linear は 1、poly は 2〜6
+    show: str = "legend"  # legend / text / none
+    color: str = ""  # "" = 系列の色
+    line_style: str = "dashed"
 
 
 @dataclass(frozen=True)
@@ -277,6 +369,8 @@ class Settings:
     axes: AxesSettings = field(default_factory=AxesSettings)
     series: tuple[SeriesSettings, ...] = ()
     save: SaveSettings = field(default_factory=SaveSettings)
+    annotations: tuple[AnnotationSettings, ...] = ()
+    fits: tuple[FitSettings, ...] = ()
 
     @property
     def uses_secondary_axis(self) -> bool:
@@ -307,20 +401,22 @@ def _to_float(value: Any) -> float | None:
 
 
 def _number(value: Any, label: str, *, default: float | None = None, minimum: float | None = None,
-            exclusive_min: float | None = None, maximum: float | None = None, owner: str = "") -> float | None:
+            exclusive_min: float | None = None, maximum: float | None = None, owner: str = "",
+            field_name: str | None = None) -> float | None:
     """数値項目を検証する。空(None/空文字)は default を返す（None なら None）。"""
     name = f"{owner}「{label}」"
+    field_name = field_name or label
     if _is_blank(value):
         return default
     num = _to_float(value)
     if num is None:
-        raise UserError(f"{name}は数値で入力してください。", field=label)
+        raise UserError(f"{name}は数値で入力してください。", field=field_name)
     if exclusive_min is not None and num <= exclusive_min:
-        raise UserError(f"{name}は{_fmt(exclusive_min)}より大きい数値で入力してください。", field=label)
+        raise UserError(f"{name}は{_fmt(exclusive_min)}より大きい数値で入力してください。", field=field_name)
     if minimum is not None and num < minimum:
-        raise UserError(f"{name}は{_fmt(minimum)}以上の数値で入力してください。", field=label)
+        raise UserError(f"{name}は{_fmt(minimum)}以上の数値で入力してください。", field=field_name)
     if maximum is not None and num > maximum:
-        raise UserError(f"{name}は{_fmt(maximum)}以下の数値で入力してください。", field=label)
+        raise UserError(f"{name}は{_fmt(maximum)}以下の数値で入力してください。", field=field_name)
     return num
 
 
@@ -353,9 +449,9 @@ def _boolean(value: Any, label: str, *, owner: str = "") -> bool:
     raise UserError(f"{owner}「{label}」の値が不正です。", field=label)
 
 
-def _choice(value: Any, label: str, choices: tuple[str, ...], *, owner: str = "") -> str:
+def _choice(value: Any, label: str, choices: tuple[str, ...], *, owner: str = "", field_name: str | None = None) -> str:
     if not isinstance(value, str) or value not in choices:
-        raise UserError(f"{owner}「{label}」の値が不正です。", field=label)
+        raise UserError(f"{owner}「{label}」の値が不正です。", field=field_name or label)
     return value
 
 
@@ -641,6 +737,29 @@ def _parse_error_bars(raw: dict, plot_type: str, owner: str) -> ErrorBarSettings
     )
 
 
+def _parse_fill(raw: dict, owner: str) -> FillSettings:
+    field_name = f"{owner}塗りつぶし帯"
+    columns = []
+    for key, what in (("lower", "下端"), ("upper", "上端")):
+        value = raw[key]
+        if value is None:
+            value = ""
+        if not isinstance(value, str):
+            raise UserError(f"{owner}「塗りつぶし帯の{what}」の指定が正しくありません。列を選び直してください。", field=field_name)
+        value = value.strip()
+        if value and not _COLUMN_RE.fullmatch(value):
+            raise UserError(f"{owner}「塗りつぶし帯の{what}」の指定が正しくありません。列を選び直してください。", field=field_name)
+        columns.append(value)
+    lower, upper = columns
+    if not lower and not upper:
+        return FillSettings()  # 帯なし。不透明度は使わないので検証しない
+    if not lower or not upper:
+        missing = "下端" if not lower else "上端"
+        raise UserError(f"{owner}「塗りつぶし帯」は、下端と上端の両方の列を選んでください（{missing}が未選択です）。", field=field_name)
+    alpha = _number(raw["alpha"], "塗りつぶし帯の不透明度", default=0.25, minimum=0, maximum=1, owner=owner, field_name=field_name)
+    return FillSettings(lower=lower, upper=upper, alpha=alpha)
+
+
 def _parse_series(raw_series: Any, plot_type: str = "line") -> tuple[SeriesSettings, ...]:
     if not isinstance(raw_series, list) or not raw_series:
         raise UserError("描画系列を1つ以上追加してください。", field="描画系列")
@@ -659,6 +778,15 @@ def _parse_series(raw_series: Any, plot_type: str = "line") -> tuple[SeriesSetti
             raise UserError(f"{owner}「色」が不正です。", field="色")
         line_width = _number(s["lineWidth"], "線幅", default=2.0, exclusive_min=0, owner=owner)
         marker = _number(s["markerSize"], "点サイズ", default=None, minimum=0, owner=owner)
+        marker_shape = "auto"
+        fill = FillSettings()
+        if plot_type != "bar":  # 棒グラフでは点の形と塗りつぶし帯を隠すので、検証せず使わない
+            marker_shape = _choice(s["marker"], "点の形", MARKERS, owner=owner, field_name=f"{owner}点の形")
+            if plot_type == "scatter" and marker_shape == "none":
+                raise UserError(
+                    f"{owner}「点の形」を「なし」にすると、散布図の点が見えなくなります。点の形を選んでください。", field=f"{owner}点の形"
+                )
+            fill = _parse_fill(s["fill"], owner)
         out.append(
             SeriesSettings(
                 id=sid,
@@ -672,6 +800,126 @@ def _parse_series(raw_series: Any, plot_type: str = "line") -> tuple[SeriesSetti
                 secondary_axis=_boolean(s["secondaryAxis"], "第2軸を使用", owner=owner),
                 source=_string(s["source"], "データ元", owner=owner),
                 error_bars=_parse_error_bars(s["errorBars"], plot_type, owner),
+                marker=marker_shape,
+                alpha=_number(s["alpha"], "不透明度", default=1.0, minimum=0, maximum=1, owner=owner, field_name=f"{owner}不透明度"),
+                fill=fill,
+            )
+        )
+    return tuple(out)
+
+
+def _position_text(value: Any, label: str, field_name: str) -> str:
+    """位置の入力（x / y / start / end）。文字列で持つ（数値は文字列にする）。解釈は dataprep。"""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        raise UserError(f"「{label}」の値が不正です。", field=field_name)
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            raise UserError(f"「{label}」の値が不正です。", field=field_name)
+        return repr(value)
+    if isinstance(value, str):
+        return value.strip()
+    raise UserError(f"「{label}」の値が不正です。", field=field_name)
+
+
+def _parse_annotations(raw: Any, y2_used: bool) -> tuple[AnnotationSettings, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise UserError("「注釈」の値が不正です。", field="注釈")
+    if len(raw) > MAX_ANNOTATIONS:
+        raise UserError(f"注釈は{MAX_ANNOTATIONS}個までです。", field="注釈")
+    out = []
+    used_ids: set[str] = set()
+    for i, given in enumerate(raw):
+        n = i + 1
+        owner = f"注釈{n}の"
+
+        def f(label: str) -> str:
+            return f"{owner}{label}"
+
+        a = _merge(_DEFAULT_ANNOTATION, given)
+        aid = a["id"] if isinstance(a["id"], str) and a["id"] and a["id"] not in used_ids else f"a{n}"
+        while aid in used_ids:
+            aid += "_"
+        used_ids.add(aid)
+        kind = _choice(a["kind"], "種類", ANNOTATION_KINDS, owner=owner, field_name=f("種類"))
+        color = _string(a["color"], "色", owner=owner).strip() or _DEFAULT_ANNOTATION["color"]
+        if not is_color_like(color):
+            raise UserError(f"{owner}「色」が不正です。", field=f("色"))
+        alpha = _number(a["alpha"], "不透明度", default=None, minimum=0, maximum=1, owner=owner, field_name=f("不透明度"))
+        values: dict[str, Any] = {"id": aid, "kind": kind, "color": color, "alpha": alpha}
+        # 種類で使わない項目は検証せず、既定値にする（隠れた不正な値で描画を止めないため。§2.2）
+        if kind == "text":
+            text = _string(a["text"], "文字", owner=owner)
+            if len(text) > MAX_ANNOTATION_TEXT:
+                raise UserError(f"{owner}「文字」は{MAX_ANNOTATION_TEXT}文字以内で入力してください。", field=f("文字"))
+            coords = _choice(a["coords"], "座標", ANNOTATION_COORDS, owner=owner, field_name=f("座標"))
+            values.update(
+                text=text,
+                coords=coords,
+                x=_position_text(a["x"], "X", f"{owner} X"),
+                y=_position_text(a["y"], "Y", f"{owner} Y"),
+                font_size=_number(a["fontSize"], "文字の大きさ", default=None, exclusive_min=0, owner=owner, field_name=f("文字の大きさ")),
+            )
+        else:
+            if kind == "vline":
+                values["x"] = _position_text(a["x"], "X", f"{owner} X")
+            elif kind == "hline":
+                values["y"] = _position_text(a["y"], "Y", f"{owner} Y")
+            else:
+                values["start"] = _position_text(a["start"], "開始", f("開始"))
+                values["end"] = _position_text(a["end"], "終了", f("終了"))
+            values["label"] = _string(a["label"], "凡例名", owner=owner).strip()
+            if kind in {"hline", "vline"}:
+                values["line_style"] = _choice(a["lineStyle"], "線種", LINE_STYLES, owner=owner, field_name=f("線種"))
+                values["line_width"] = _number(
+                    a["lineWidth"], "線幅", default=1.0, exclusive_min=0, owner=owner, field_name=f("線幅")
+                )
+        uses_y = kind in {"hline", "hspan"} or (kind == "text" and values.get("coords") == "data")
+        if uses_y and y2_used:
+            values["axis"] = _choice(a["axis"], "軸", ANNOTATION_AXES, owner=owner, field_name=f("軸"))
+        out.append(AnnotationSettings(**values))
+    return tuple(out)
+
+
+def _parse_fits(raw: Any, series_ids: set[str]) -> tuple[FitSettings, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise UserError("「近似曲線」の値が不正です。", field="近似曲線")
+    if len(raw) > MAX_FITS:
+        raise UserError(f"近似曲線は{MAX_FITS}本までです。", field="近似曲線")
+    out = []
+    used_ids: set[str] = set()
+    for i, given in enumerate(raw):
+        n = i + 1
+        owner = f"近似曲線{n}の"
+        f = _merge(_DEFAULT_FIT, given)
+        fid = f["id"] if isinstance(f["id"], str) and f["id"] and f["id"] not in used_ids else f"f{n}"
+        while fid in used_ids:
+            fid += "_"
+        used_ids.add(fid)
+        series = f["series"]
+        if not isinstance(series, str) or series not in series_ids:
+            raise UserError(f"{owner}系列が見つかりません。近似する系列を選び直してください。", field=f"{owner}系列")
+        model = _choice(f["model"], "モデル", FIT_MODELS, owner=owner, field_name=f"{owner}モデル")
+        degree = 1
+        if model == "poly":
+            degree = _int_range(f["degree"], f"{owner}次数", 2, 6, default=2)
+        color = _string(f["color"], "色", owner=owner).strip()
+        if color and not is_color_like(color):
+            raise UserError(f"{owner}「色」が不正です。", field=f"{owner}色")
+        out.append(
+            FitSettings(
+                id=fid,
+                series=series,
+                model=model,
+                degree=degree,
+                show=_choice(f["show"], "式の表示先", FIT_SHOWS, owner=owner, field_name=f"{owner}式の表示先"),
+                color=color,
+                line_style=_choice(f["lineStyle"], "線種", LINE_STYLES, owner=owner, field_name=f"{owner}線種"),
             )
         )
     return tuple(out)
@@ -752,8 +1000,12 @@ def parse_settings(raw: dict | None) -> Settings:
     if any(s.secondary_axis for s in series):
         check_axis_range(axes.y2, "第2Y")
 
+    annotations = _parse_annotations(raw.get("annotations"), any(s.secondary_axis for s in series))
+    # 棒グラフでは近似曲線を使わない（隠れているので検証しない）
+    fits = () if plot.type == "bar" else _parse_fits(raw.get("fits"), {s.id for s in series})
+
     save = _parse_save(merged["save"])
-    return Settings(version=SCHEMA_VERSION, load=load, plot=plot, axes=axes, series=series, save=save)
+    return Settings(version=SCHEMA_VERSION, load=load, plot=plot, axes=axes, series=series, save=save, annotations=annotations, fits=fits)
 
 
 def _figure_length(value: Any, label: str, default: float, unit: str) -> float:
