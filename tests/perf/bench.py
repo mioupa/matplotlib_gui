@@ -19,7 +19,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "tests" / "e2e"))
 from helpers import (  # noqa: E402
     add_series_with_source, enter_edit_mode, image_generation, load_fixture, paste_text, plot_src,
-    set_save_dpi, wait_app_ready, wait_copy_state, wait_data_ready, wait_latin_state,
+    open_tick_group, set_axis_option, set_errorbars, set_save_dpi, wait_app_ready, wait_copy_state, wait_data_ready, wait_latin_state,
     wait_plot_changed,
 )
 from server import start_server  # noqa: E402
@@ -444,6 +444,63 @@ def bench_two_files(browser, url, reps, path1, path2):
     return first, change
 
 
+# --- Phase 5a: エラーバー・目盛の設定変更 ---
+def make_errorbar_csv(path, rows=10_000):
+    """X + Y 5列 + 誤差 5列（正の値）= 11 列。"""
+    import math
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["x"] + [f"y{k + 1}" for k in range(5)] + [f"e{k + 1}" for k in range(5)])
+        for i in range(rows):
+            x = i * 0.01
+            w.writerow(
+                [round(x, 4)]
+                + [round(math.sin(x * (k + 1)) + 0.1 * k, 5) for k in range(5)]
+                + [round(0.05 + 0.02 * abs(math.cos(x * (k + 1))), 5) for k in range(5)]
+            )
+
+
+def bench_errorbar_change(browser, url, reps, eb_path):
+    """5 系列（Y = 列1-5）すべてに Y 誤差（列モード・対称、誤差列 6-10）を設定し、画像に errorbars が 5 になるまで待ってから、
+    既存の「設定変更」と同じ方法（タイトルの input → 新しい画像。デバウンス込み）で測る。"""
+    out = []
+    ctx = _warm_context(browser, url, eb_path)
+    for i in range(reps):
+        page = _prepared_page(ctx, url, eb_path)
+        ids = page.evaluate("[...document.querySelectorAll('#seriesList .series-item')].map(e => e.querySelector('.series-y').id.match(/^series-(.+)-y$/)[1])")
+        assert len(ids) == 5, ids
+        for k, sid in enumerate(ids):
+            set_errorbars(page, sid, "y", mode="column", column=f"__idx__{k + 6}")
+        page.wait_for_function(
+            """() => { const d = document.querySelector('#plotArea img'); if (!d || !d.dataset.summary) return false;
+              try { return JSON.parse(d.dataset.summary)[0].errorbars >= 5; } catch (e) { return false; } }""",
+            timeout=TIMEOUT)
+        page.wait_for_timeout(3000)
+        out.append(page.evaluate(CHANGE_JS, ["#title", f"bench title {i}"]))
+        page.close()
+    ctx.close()
+    return out
+
+
+def bench_ticks_change(browser, url, reps, csv_path):
+    """目盛の設定: Y 主目盛の間隔 0.2（約 10 本）、Y 副目盛 表示・分割 5、Y 目盛の書式 小数 2 桁、X 反転、上・右の枠線なし。"""
+    out = []
+    ctx = _warm_context(browser, url, csv_path)
+    for i in range(reps):
+        page = _prepared_page(ctx, url, csv_path)
+        open_tick_group(page, "x")
+        open_tick_group(page, "y")
+        for sel, val in (("#yMajorStep", "0.2"), ("#yMinorTicks", "on"), ("#yMinorDivisions", "5"),
+                         ("#yTickFormat", "fixed"), ("#yTickDecimals", "2"), ("#xInverted", True),
+                         ("#spineTop", False), ("#spineRight", False)):
+            set_axis_option(page, sel, val)
+        page.wait_for_timeout(3000)
+        out.append(page.evaluate(CHANGE_JS, ["#title", f"bench title {i}"]))
+        page.close()
+    ctx.close()
+    return out
+
+
 def fmt(name, xs):
     s = stats(xs)
     return f"{name:<44} median {s['median']:9.0f}  min {s['min']:9.0f}  max {s['max']:9.0f}  (ms, n={s['n']})"
@@ -454,7 +511,7 @@ def main():
     ap.add_argument("--reps", type=int, default=5)
     ap.add_argument("--headed", action="store_true")
     ap.add_argument("--json")
-    ap.add_argument("--only", choices=["old", "new"], help="old: Phase 3 までの項目だけ / new: Phase 4 の項目だけ")
+    ap.add_argument("--only", choices=["old", "new", "p5a"], help="old: Phase 3 までの項目だけ / new: Phase 4 の項目だけ / p5a: Phase 5a の項目だけ（省略時は全部）")
     a = ap.parse_args()
     serve = Path(os.environ.get("E2E_SERVE_DIR") or REPO)
     srv, url = start_server(serve)
@@ -467,13 +524,15 @@ def main():
     make_xlsx(xlsx_path)
     dt_path = tmp / "bench_datetime_10000x6.csv"
     make_datetime_csv(dt_path)
+    eb_path = tmp / "bench_errorbars_10000x11.csv"
+    make_errorbar_csv(eb_path)
     big_tsv = make_tsv()
     small_tsv = make_tsv(rows=30, ys=2)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not a.headed)
         print("chromium", browser.version, "headed" if a.headed else "headless", "platform", platform.platform())
         res = {}
-        if a.only != "new":
+        if a.only in (None, "old"):
             cold, warm = bench_startup(browser, url, a.reps)
             first, change, save, edit_run = bench_render(browser, url, a.reps, csv_path)
             xlsx = bench_xlsx(browser, url, a.reps, REPO / "tests" / "fixtures" / "multi_sheet.xlsx")
@@ -498,7 +557,7 @@ def main():
                 "japanese_font_cold_navigate_to_font_ready_ms": jp_total,
                 "japanese_font_cold_after_app_ready_ms": jp_after_ready,
             })
-        if a.only != "old":
+        if a.only in (None, "new"):
             paste = bench_paste(browser, url, a.reps, big_tsv, small_tsv)
             xlsx_first, sheet_switch = bench_sheet_switch(browser, url, a.reps, xlsx_path)
             dt_first, dt_change = bench_datetime(browser, url, a.reps, dt_path)
@@ -514,6 +573,16 @@ def main():
                 "two_files_first_plot_ms": two_first,
                 "two_files_change_to_plot_ms": two_change,
                 "two_files_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in two_change],
+            })
+        if a.only in (None, "p5a"):
+            eb_change = bench_errorbar_change(browser, url, a.reps, eb_path)
+            tk_change = bench_ticks_change(browser, url, a.reps, csv_path)
+            res.update({
+                # Phase 5a で追加（デバウンス込みと、250 ms を除いた値）
+                "errorbar_change_to_plot_ms": eb_change,
+                "errorbar_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in eb_change],
+                "ticks_change_to_plot_ms": tk_change,
+                "ticks_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in tk_change],
             })
         browser.close()
     for k, v in res.items():
