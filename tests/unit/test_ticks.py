@@ -183,13 +183,24 @@ def test_date_range_is_ignored_unless_x_is_datetime():
     assert a.date_min == ""
 
 
-def test_numeric_range_with_datetime_x_is_still_an_error():
-    for key in ("min", "max"):
-        with pytest.raises(UserError) as e:
-            plan_of(date_frame(), axis("x", **{key: 3}), [S(1, x="__idx__0")])
-        assert e.value.field == "X軸の範囲"
+def test_numeric_range_is_ignored_with_datetime_x():
+    """X が日時のとき、数値の範囲の入力欄は隠れているので使わない（エラーにしない）。対数軸は今までどおりエラー。"""
+    plan = plan_of(date_frame(), axis("x", min=3, max=300), [S(1, x="__idx__0")])
+    assert plan.axes.x.kind == "datetime"
     with pytest.raises(UserError):
         plan_of(date_frame(), axis("x", scale="log"), [S(1, x="__idx__0")])
+
+
+def test_invalid_date_range_errors_only_with_datetime_x():
+    bad = axis("x", dateMin="abc")
+    with pytest.raises(UserError) as e:
+        plan_of(date_frame(), bad, [S(1, x="__idx__0")])
+    assert e.value.field == "X軸の範囲（日時）"
+    a = plan_of(numeric_frame(), bad, [S(1, x="__idx__0")]).axes.x  # 隠れているので描画を止めない
+    assert a.date_min == "" and a.kind == "number"
+    with pytest.raises(UserError) as e:
+        plan_of(date_frame(), axis("x", dateMin="2026-01-10", dateMax="2026-01-02"), [S(1, x="__idx__0")])
+    assert "最小値 < 最大値" in e.value.message
 
 
 # ---------------------------------------------------------------- too many ticks
@@ -672,11 +683,9 @@ HOSTILE_DATES = ['2026-01-01"); import os; os.system("x"); ("', "2026-01-01\nimp
 
 
 @pytest.mark.parametrize("hostile", HOSTILE_DATES)
-def test_hostile_date_range_is_rejected_by_settings(hostile):
-    raw = default_settings()
-    raw["axes"]["x"]["dateMin"] = hostile
+def test_hostile_date_range_is_rejected_by_dataprep_for_datetime_x(hostile):
     with pytest.raises(UserError) as e:
-        parse_settings(raw)
+        plan_of(date_frame(), axis("x", dateMin=hostile), [S(1, x="__idx__0")])
     assert e.value.field == "X軸の範囲（日時）"
 
 

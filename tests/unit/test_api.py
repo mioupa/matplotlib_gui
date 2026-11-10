@@ -34,7 +34,7 @@ def load(name="utf8.csv", settings=None):
 def test_load_file_response_shape():
     r = load()
     assert r["ok"] is True and r["encoding"] == "utf-8" and r["warnings"] == []
-    assert r["columns"][0] == {"value": "__idx__0", "label": "時間 [0]", "kind": "number"}
+    assert r["columns"][0] == {"value": "__idx__0", "label": "時間 [0]", "kind": "number", "numericLike": True}
     assert r["preview"]["totalRows"] == 30
 
 
@@ -652,3 +652,18 @@ def test_script_json_errors():
     assert r["ok"] is False and "保存 DPI" in r["error"]["message"] and r["error"]["field"] == "保存 DPI"
     r = json.loads(api.script_json("{broken"))
     assert r["ok"] is False and r["error"]["message"]
+
+
+def test_load_file_reports_numeric_like_columns():
+    """numericLike: 数値の列、または空欄以外の半数以上が数値に読める文字列の列（dataprep と同じ規則を共有する）。"""
+    import pandas as pd
+
+    from mplgui import dataprep, loader
+
+    data = "num,mostly,label\n1,1,a\n2,2,b\n3,x,c\n4,4,d\n".encode()
+    r = json.loads(api.load_file_json("n.csv", data, json.dumps(default_settings())))
+    assert [c["numericLike"] for c in r["columns"]] == [True, True, False]
+    assert [c["kind"] for c in r["columns"]] == ["number", "text", "text"]
+    assert dataprep._looks_numeric is loader.looks_numeric
+    assert loader.looks_numeric(pd.Series(["1", "x", ""])) is True
+    assert loader.looks_numeric(pd.Series(["", " "])) is False

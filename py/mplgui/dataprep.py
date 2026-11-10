@@ -13,23 +13,14 @@ from dataclasses import dataclass, field, replace
 import pandas as pd
 
 from .errors import UserError
-from .settings import AxisSettings, Settings
+from .loader import is_blank_cell as _is_blank_cell
+from .loader import looks_numeric as _looks_numeric
+from .settings import AxisSettings, Settings, validate_date_range
 
 MAX_EXAMPLES = 3
 NO_DRAWABLE_DATA = "描画可能なデータがありません。"
 
 # ---------------------------------------------------------------- dropped (non-numeric) values (A7)
-
-
-def _is_blank_cell(value) -> bool:
-    if value is None:
-        return True
-    try:
-        if pd.isna(value):
-            return True
-    except (TypeError, ValueError):
-        pass
-    return isinstance(value, str) and value.strip() == ""
 
 
 def coerce_numeric(raw: pd.Series) -> tuple[pd.Series, int, list[str]]:
@@ -85,17 +76,6 @@ def _no_data_message(warnings: list[dict]) -> str:
     if warnings:
         return base + "数値に変換できない値は除外されます。" + warnings[0]["message"]
     return base
-
-
-def _looks_numeric(raw: pd.Series) -> bool:
-    """文字列を含む列でも、空欄以外の半数以上が数値に変換できるなら数値列として扱う。"""
-    if pd.api.types.is_numeric_dtype(raw.dtype):
-        return True
-    non_blank = [v for v in raw.tolist() if not _is_blank_cell(v)]
-    if not non_blank:
-        return False
-    ok = pd.to_numeric(pd.Series(non_blank, dtype=object), errors="coerce").notna().sum()
-    return ok * 2 >= len(non_blank)
 
 
 # ---------------------------------------------------------------- columns
@@ -399,6 +379,9 @@ def _plan_axis(
 ) -> AxisPlan:
     """設定の目盛の項目のうち、この軸の種類で効くものを決める。使えない組み合わせは UserError。"""
     step_field = f"{label}軸の主目盛の間隔"
+    date_min = date_max = ""
+    if kind == "datetime":
+        date_min, date_max = validate_date_range(axis)  # 日時の X のときだけ検証する（隠れているときは使わない）
     major_step = None
     unit = "day"
     lo_limit = hi_limit = None
@@ -421,8 +404,8 @@ def _plan_axis(
             count = math.ceil(categories / step)
         elif kind == "datetime":
             unit = axis.major_step_unit
-            lo_limit = _timestamp_seconds(axis.date_min) if axis.date_min else None
-            hi_limit = _timestamp_seconds(axis.date_max) if axis.date_max else None
+            lo_limit = _timestamp_seconds(date_min) if date_min else None
+            hi_limit = _timestamp_seconds(date_max) if date_max else None
             count = _estimate_ticks(bounds, lo_limit, hi_limit, step * _UNIT_SECONDS[unit])
         else:
             if include_zero and bounds is not None:
@@ -443,8 +426,8 @@ def _plan_axis(
         tick_format=axis.tick_format if formatted else "auto",
         tick_decimals=axis.tick_decimals if formatted else 1,
         inverted=axis.inverted,
-        date_min=axis.date_min if kind == "datetime" else "",
-        date_max=axis.date_max if kind == "datetime" else "",
+        date_min=date_min,
+        date_max=date_max,
     )
 
 
@@ -551,8 +534,6 @@ def _check_datetime_x(settings: Settings, plans: list[SeriesPlan]) -> None:
     axis = settings.axes.x
     if axis.scale == "log":
         raise UserError("X が日時の列のときは、X軸を対数にできません。", field="X軸スケール")
-    if axis.min is not None or axis.max is not None:
-        raise UserError("X が日時の列のときは、X軸の最小値・最大値は指定できません。空欄にしてください。", field="X軸の範囲")
 
 
 def _plan_bar(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> PlotPlan:

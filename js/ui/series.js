@@ -1,6 +1,7 @@
 // 系列カード（追加・削除・列セレクト・種別/第2軸に応じた表示切替）。カードは state の系列リストから描く。
 import { addSeries, getSettings, hasSecondaryAxis, removeSeries, updateSeries, setPath } from "../state.js";
 import { bindSeriesColorControls } from "./colorPicker.js";
+import { syncAxisTicks } from "./axisTicks.js";
 import { readNumber } from "./forms.js";
 
 // データ元（ファイル id）ごとの列の選択肢: [{value: "__idx__0", label: "時間 [0]", kind: "number"}]（読込のたびに更新。kind: datetime / number / text）
@@ -18,6 +19,24 @@ export const usesDatetimeX = () => {
   const { plot, series } = getSettings();
   if (plot.type === "bar") return series.length > 0 && isDatetimeColumn(columnsOf(series[0]), plot.xColumn);
   return series.some((s) => isDatetimeColumn(columnsOf(s), s.x));
+};
+
+// X 軸の種類（Python の dataprep と同じ規則。number / log / datetime / category）
+//  bar: 系列が複数、または X 列が数値でない（日時を含む）ならカテゴリ。X 列なし・数値なら数値
+//  line / scatter: どれかの系列の X が日時なら日時、数値でない文字列の列（numericLike でない）ならカテゴリ。X 列なし（行番号）は数値
+export const xAxisKind = () => {
+  const { plot, series, axes } = getSettings();
+  const numeric = axes.x.scale === "log" ? "log" : "number";
+  const find = (columns, value) => (value ? columns.find((c) => c.value === value) : undefined);
+  if (plot.type === "bar") {
+    if (series.length > 1) return "category";
+    const col = series[0] ? find(columnsOf(series[0]), plot.xColumn) : undefined;
+    return col && col.kind !== "number" ? "category" : numeric;
+  }
+  const cols = series.map((s) => find(columnsOf(s), s.x));
+  if (cols.some((c) => c && c.kind === "datetime")) return "datetime";
+  if (cols.some((c) => c && c.kind === "text" && c.numericLike === false)) return "category";
+  return numeric;
 };
 
 const esc = (text) =>
@@ -138,6 +157,7 @@ export const syncVisibility = () => {
   for (const wrap of document.querySelectorAll("#seriesList .series-source-wrap")) wrap.hidden = !hasManySources();
   const dateGroup = document.getElementById("xDateFormatGroup");
   if (dateGroup) dateGroup.hidden = !usesDatetimeX();
+  syncAxisTicks(xAxisKind());
   const hasY2 = hasSecondaryAxis();
   for (const id of ["y2LabelGroup", "y2AxisSettingsGroup"]) {
     const el = document.getElementById(id);
@@ -215,6 +235,7 @@ const refreshXColumnSelect = () => {
 // ファイルの追加・削除などで、データ元の選択肢と各系列の列の選択肢を描き直す
 export const refreshSources = () => {
   refreshXColumnSelect();
+  syncAxisTicks(xAxisKind());
   // データ元と列の選択肢が変わっていなければ、カードは描き直さない（入力中の欄や開いている選択肢を保つ）
   if (renderedStructure === structureOf() && cardsMatchSettings()) return;
   renderSeriesList();

@@ -491,21 +491,30 @@ def _parse_axis(raw: dict, key: str, name: str, *, ticks: bool = True) -> AxisSe
     base = AxisSettings(label=_string(axis["label"], f"{name}軸ラベル").strip(), scale=scale, min=lo, max=hi, date_format=date_format)
     if not ticks:
         return base
+    # 隠れている項目（対数軸の主目盛の間隔、副目盛が「表示」でないときの分割数、書式が小数・指数でないときの桁数）は
+    # 使わないので検証せず、既定値にする（隠れた不正な値で描画を止めないため。§2.2）
+    major_step = _number(axis["majorStep"], f"{name}軸の主目盛の間隔", default=None, exclusive_min=0) if scale == "linear" else None
+    minor_ticks = _choice(axis["minorTicks"], f"{name}軸の副目盛", MINOR_TICKS_CHOICES)
+    tick_format = _choice(axis["tickFormat"], f"{name}軸の目盛の書式", TICK_FORMATS)
     extra: dict[str, Any] = {
-        "major_step": _number(axis["majorStep"], f"{name}軸の主目盛の間隔", default=None, exclusive_min=0),
-        "minor_ticks": _choice(axis["minorTicks"], f"{name}軸の副目盛", MINOR_TICKS_CHOICES),
-        "minor_divisions": _int_range(axis["minorDivisions"], f"{name}軸の副目盛の分割数", 2, 10, default=None),
-        "tick_format": _choice(axis["tickFormat"], f"{name}軸の目盛の書式", TICK_FORMATS),
-        "tick_decimals": _int_range(axis["tickDecimals"], f"{name}軸の目盛の小数の桁数", 0, 10, default=1),
+        "major_step": major_step,
+        "minor_ticks": minor_ticks,
+        "minor_divisions": (
+            _int_range(axis["minorDivisions"], f"{name}軸の副目盛の分割数", 2, 10, default=None) if minor_ticks == "on" else None
+        ),
+        "tick_format": tick_format,
+        "tick_decimals": (
+            _int_range(axis["tickDecimals"], f"{name}軸の目盛の小数の桁数", 0, 10, default=1)
+            if tick_format in {"fixed", "sci"}
+            else 1
+        ),
         "inverted": _boolean(axis["inverted"], f"{name}軸を反転"),
     }
     if key == "x":
         extra["major_step_unit"] = _choice(axis["majorStepUnit"], f"{name}軸の主目盛の単位", DATE_UNITS)
-        date_min = _date_range_value(axis["dateMin"], "最小値")
-        date_max = _date_range_value(axis["dateMax"], "最大値")
-        if date_min and date_max and _date_value(date_min) >= _date_value(date_max):
-            raise UserError(f"{DATE_RANGE_LABEL}は最小値 < 最大値で指定してください。", field=DATE_RANGE_LABEL)
-        extra["date_min"], extra["date_max"] = date_min, date_max
+        # 日時の範囲は X が日時の列のときだけ使う（隠れているときは描画を止めない）。検証は dataprep（validate_date_range）
+        extra["date_min"] = _lenient_date_range(axis["dateMin"])
+        extra["date_max"] = _lenient_date_range(axis["dateMax"])
     return replace(base, **extra)
 
 
@@ -541,6 +550,23 @@ def _date_range_value(value: Any, which: str) -> str:
     except ValueError:
         raise bad from None
     return moment.strftime("%Y-%m-%d" if hh is None else "%Y-%m-%d %H:%M:%S")
+
+
+def _lenient_date_range(value: Any) -> str:
+    """正しければ正規化した値、そうでなければ前後の空白を除いた元の文字列（検証は X が日時のときだけ）。"""
+    try:
+        return _date_range_value(value, "")
+    except UserError:
+        return value.strip() if isinstance(value, str) else str(value)
+
+
+def validate_date_range(axis: AxisSettings) -> tuple[str, str]:
+    """X が日時の列のときの X 軸の範囲（日時）の検証。(最小, 最大)（正規化済み。指定なしは ""）を返す。"""
+    date_min = _date_range_value(axis.date_min, "最小値")
+    date_max = _date_range_value(axis.date_max, "最大値")
+    if date_min and date_max and _date_value(date_min) >= _date_value(date_max):
+        raise UserError(f"{DATE_RANGE_LABEL}は最小値 < 最大値で指定してください。", field=DATE_RANGE_LABEL)
+    return date_min, date_max
 
 
 def _date_value(text: str) -> datetime:

@@ -11,6 +11,7 @@ from mplgui.settings import (
     migrate_settings,
     parse_save_settings,
     parse_settings,
+    validate_date_range,
 )
 
 pytestmark = pytest.mark.unit
@@ -568,6 +569,8 @@ def test_tick_fields_validation(axis, name):
         def m(raw, key=key, value=value):
             sec(raw)
             raw["axes"][axis][key] = value
+            # 入力欄が出ている状態にする（隠れた項目は検証しない）
+            raw["axes"][axis].update({"minorDivisions": {"minorTicks": "on"}, "tickDecimals": {"tickFormat": "fixed"}}.get(key, {}))
 
         e = _err4(m)
         assert e.field == field_name and field_name in e.message, (key, value)
@@ -591,6 +594,27 @@ def test_major_step_unit():
     assert _err4(lambda r: r["axes"]["x"].update(majorStepUnit="week")).field == "X軸の主目盛の単位"
     for unit in ("year", "month", "day", "hour", "minute", "second"):
         assert parse_settings(_with4(lambda r, u=unit: r["axes"]["x"].update(majorStepUnit=u))).axes.x.major_step_unit == unit
+
+
+def test_hidden_tick_fields_are_not_validated():
+    """隠れている項目（副目盛が表示でないときの分割数、書式が小数・指数でないときの桁数、対数軸の間隔）は検証せず既定値にする。"""
+
+    def m(raw):
+        raw["axes"]["y"].update(scale="log", majorStep=-1, minorTicks="auto", minorDivisions=99, tickFormat="pow10", tickDecimals=99)
+
+    s = parse_settings(_with4(m))
+    y = s.axes.y
+    assert y.major_step is None and y.minor_divisions is None and y.tick_decimals == 1
+    # 表示されるようにすれば検証される
+    for key, value, extra in (
+        ("minorDivisions", 99, {"minorTicks": "on"}),
+        ("tickDecimals", 99, {"tickFormat": "sci"}),
+        ("majorStep", -1, {"scale": "linear"}),
+    ):
+        e = _err4(lambda r, k=key, v=value, x=extra: r["axes"]["y"].update({k: v, **x}))
+        assert e.field.startswith("Y軸")
+    kept = parse_settings(_with4(lambda r: r["axes"]["y"].update(minorTicks="on", minorDivisions="3", tickFormat="sci", tickDecimals=2)))
+    assert kept.axes.y.minor_divisions == 3 and kept.axes.y.tick_decimals == 2
 
 
 def test_y2_tick_fields_are_ignored_without_a_secondary_axis():
@@ -626,15 +650,24 @@ def test_date_range_is_normalized(text, expected):
 
 @pytest.mark.parametrize("text", ["31-01-2026", "2026-13-01", "2026-02-30", "2026-01-31 25:00", "2026-01-31 12", "2026-01/31", "abc", "2026", "2026-01-31 12:00:60", 20260131])
 def test_date_range_rejects_bad_forms(text):
-    e = _err4(lambda r: r["axes"]["x"].update(dateMax=text))
+    # settings は描画を止めない（X が日時でなければ使わない）。検証は X が日時のとき（validate_date_range）
+    s = parse_settings(_with4(lambda r: r["axes"]["x"].update(dateMax=text)))
+    assert s.axes.x.date_max == (text.strip() if isinstance(text, str) else str(text))
+    with pytest.raises(UserError) as info:
+        validate_date_range(s.axes.x)
+    e = info.value
     assert e.field == "X軸の範囲（日時）" and "2026-01-31 または 2026-01-31 12:00" in e.message
 
 
 def test_date_range_min_must_be_before_max():
     ok = parse_settings(_with4(lambda r: r["axes"]["x"].update(dateMin="2026-01-01", dateMax="2026-01-01 00:00:01")))
     assert ok.axes.x.date_min < ok.axes.x.date_max
+    assert validate_date_range(ok.axes.x) == ("2026-01-01", "2026-01-01 00:00:01")
     for lo, hi in (("2026-01-02", "2026-01-01"), ("2026-01-01", "2026/01/01"), ("2026-01-01 00:00", "2026-01-01")):
-        e = _err4(lambda r, lo=lo, hi=hi: r["axes"]["x"].update(dateMin=lo, dateMax=hi))
+        s = parse_settings(_with4(lambda r, lo=lo, hi=hi: r["axes"]["x"].update(dateMin=lo, dateMax=hi)))
+        with pytest.raises(UserError) as info:
+            validate_date_range(s.axes.x)
+        e = info.value
         assert e.field == "X軸の範囲（日時）" and "最小値 < 最大値" in e.message
 
 

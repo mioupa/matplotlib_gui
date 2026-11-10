@@ -426,3 +426,44 @@ def remove_file(page, file_id):
         page.click(f"#file-{file_id}-remove")
     else:
         page.evaluate("(id) => import(new URL('js/bridge.js', document.baseURI)).then((m) => m.removeFile(id))", file_id)
+
+
+# --- 目盛・枠線・日時の範囲（Phase 5a） ---
+def open_tick_group(page, axis):
+    """軸の目盛の折りたたみ（#xTickGroup / #yTickGroup / #y2TickGroup）を開く（開く操作は設定を変えない）。"""
+    page.evaluate("(id) => { document.getElementById(id).open = true; }", f"{axis}TickGroup")
+
+
+def set_axis_option(page, selector, value, *, wait=True):
+    """目盛などの入力欄を変える。wait=True なら、再描画（画像の世代が進む）まで待つ。値の種類は要素から決める。"""
+
+    def act():
+        kind = page.evaluate(
+            "(s) => { const e = document.querySelector(s); return e.type === 'checkbox' ? 'checkbox' : e.tagName.toLowerCase(); }",
+            selector,
+        )
+        if kind == "checkbox":
+            page.set_checked(selector, bool(value))
+        elif kind == "select":
+            page.select_option(selector, value)
+        else:
+            page.fill(selector, str(value))
+
+    if wait:
+        act_and_wait_render(page, act)
+    else:
+        act()
+
+
+def wait_error_status(page, timeout=60_000):
+    page.wait_for_function("document.getElementById('status').dataset.kind === 'error'", timeout=timeout)
+
+
+def code_value(page) -> str:
+    """コードタブの内容（タブを開かずに読む）。"""
+    return page.evaluate("document.getElementById('customPyCode').value")
+
+
+def is_hidden_by_id(page, element_id) -> bool:
+    """hidden 属性・display:none のどちらでも、画面に出ていない。"""
+    return page.evaluate("(id) => { const e = document.getElementById(id); return !e || e.getClientRects().length === 0; }", element_id)
