@@ -15,7 +15,7 @@ import pandas as pd
 from .errors import UserError
 from .loader import is_blank_cell as _is_blank_cell
 from .loader import looks_numeric as _looks_numeric
-from .settings import AxisSettings, Settings, validate_date_range
+from .settings import AxisSettings, ErrorSpec, Settings, validate_date_range
 
 MAX_EXAMPLES = 3
 NO_DRAWABLE_DATA = "描画可能なデータがありません。"
@@ -142,6 +142,21 @@ def slice_skip_rows(df_full: pd.DataFrame, skip_rows: int, label: str = "") -> p
 
 
 @dataclass(frozen=True)
+class ErrorPlan:
+    """片方向のエラーバー。列は系列のデータ元の列番号（誤差の列は「大きさ」で、0 以上）。"""
+
+    direction: str  # "y" / "x"
+    mode: str  # "fixed" / "column"
+    symmetric: bool
+    value: float | None = None  # fixed: 上（右）の値。対称なら下（左）にも使う
+    value_minus: float | None = None  # fixed かつ非対称: 下（左）の値
+    index: int | None = None  # column: 上（右）の列番号。対称なら下（左）にも使う
+    index_minus: int | None = None  # column かつ非対称: 下（左）の列番号
+    label: str = ""  # コメント用の列の表示（「名前 [番号]」）
+    label_minus: str = ""
+
+
+@dataclass(frozen=True)
 class SeriesPlan:
     number: int  # 1 始まり
     y_index: int
@@ -158,6 +173,9 @@ class SeriesPlan:
     datetime_x: bool = False  # X が日時の列（読み込み時に日時に変換済み）
     data_id: str = ""  # データ元のファイル id
     data_var: str = "df"  # 生成コードでこの系列が使う DataFrame の変数名（複数ファイルのときは df1, df2, ...）
+    y_err: ErrorPlan | None = None  # Y 方向のエラーバー（指定が無ければ None）
+    x_err: ErrorPlan | None = None  # X 方向のエラーバー（line / scatter のみ）
+    cap_size: float = 3.0  # エラーバーの端の線の長さ
 
 
 @dataclass(frozen=True)
@@ -245,6 +263,90 @@ def auto_bar_date_format(x: pd.Series) -> str:
 def _label_for(df: pd.DataFrame, idx: int) -> tuple[str, str]:
     name = str(df.columns[idx])
     return name, f"{name} [{idx}]"
+
+
+# ---------------------------------------------------------------- error bars (G1)
+
+X_ERR_DATETIME = "系列{n}: X が日時の列のときは、X方向のエラーバーは付けられません。"
+X_ERR_CATEGORY = "系列{n}: X が文字列の列のときは、X方向のエラーバーは付けられません。"
+
+
+def _error_values(
+    df: pd.DataFrame, idx: int, mask: pd.Series, n: int, what: str, load, warnings: list[dict]
+) -> pd.Series:
+    """誤差の列を数値にする（数値にできない値・負の値は NaN。空欄も NaN で、警告しない）。
+
+    警告の件数と例は、実際に描く行（mask）だけで数える。"""
+    raw = df.iloc[:, idx]
+    mask = mask.reindex(df.index, fill_value=False)
+    name = str(df.columns[idx])
+    numeric, _, _ = coerce_numeric(raw)
+    _, count, examples = coerce_numeric(raw[mask])
+    where = f"系列{n}: {what}の列「{name}」[{idx}]"
+    if count:
+        ex = ", ".join(f'"{e}"' for e in examples)
+        message = f"{where} に数値にできない値が{count}件あったため、その点のエラーバーは描きません（例: {ex}）。{load_hint(examples, load)}"
+        warnings.append({"series": n, "message": message})
+    negative = (numeric < 0) & mask
+    neg_count = int(negative.sum())
+    if neg_count:
+        shown: list[str] = []
+        for v in numeric[negative].tolist():
+            text = f"{v:g}"
+            if text not in shown:
+                shown.append(text)
+            if len(shown) >= MAX_EXAMPLES:
+                break
+        ex = ", ".join(f'"{e}"' for e in shown)
+        warnings.append(
+            {"series": n, "message": f"{where} に負の値が{neg_count}件あったため、その点のエラーバーは描きません（例: {ex}）。"}
+        )
+    return numeric.where(numeric >= 0)
+
+
+def _error_column(df: pd.DataFrame, requested: str, n: int, direction: str) -> int:
+    idx = parse_column_index(requested)
+    label = f"系列{n}の{direction.upper()}誤差の列"
+    if idx is None:
+        raise UserError(f"系列{n}の{direction.upper()}誤差の列の指定が正しくありません。列を選び直してください。", field=label)
+    if idx >= len(df.columns):
+        raise UserError(_column_out_of_range(idx, len(df.columns)), field=label)
+    return idx
+
+
+def _plan_error(
+    df: pd.DataFrame, spec: ErrorSpec, direction: str, n: int, mask: pd.Series, load, warnings: list[dict]
+) -> tuple[ErrorPlan | None, object, object]:
+    """誤差の指定 → (ErrorPlan, 上（右）の誤差, 下（左）の誤差)。誤差は数値（fixed）か、df と同じ並びの Series（column）。"""
+    if spec.mode == "none":
+        return None, None, None
+    what = f"{direction.upper()}誤差"
+    if spec.mode == "fixed":
+        minus = spec.value if spec.symmetric else spec.value_minus
+        plan = ErrorPlan(direction, "fixed", spec.symmetric, value=spec.value, value_minus=None if spec.symmetric else spec.value_minus)
+        return plan, spec.value, minus
+    idx = _error_column(df, spec.column, n, direction)
+    label = _label_for(df, idx)[1]
+    suffix = "" if spec.symmetric else "（上）" if direction == "y" else "（右）"
+    plus = _error_values(df, idx, mask, n, what + suffix, load, warnings)
+    if spec.symmetric:
+        return ErrorPlan(direction, "column", True, index=idx, label=label), plus, plus
+    idx_minus = _error_column(df, spec.column_minus, n, direction)
+    minus_suffix = "（下）" if direction == "y" else "（左）"
+    minus = _error_values(df, idx_minus, mask, n, what + minus_suffix, load, warnings)
+    plan = ErrorPlan(direction, "column", False, index=idx, index_minus=idx_minus, label=label, label_minus=_label_for(df, idx_minus)[1])
+    return plan, plus, minus
+
+
+def _take(value, mask: pd.Series):
+    """誤差（数値か Series）の、描く行だけ。"""
+    return value.loc[mask.index[mask]] if isinstance(value, pd.Series) else value
+
+
+def _add_error_extent(ext: "_Extents", axis: str, base: pd.Series, plus, minus) -> None:
+    """エラーバーの両端（base - 下、base + 上）を、軸の範囲に加える（欠けた誤差の点は加えない）。"""
+    ext.add_values(axis, base - minus)
+    ext.add_values(axis, base + plus)
 
 
 NOT_LOADED_MESSAGE = "データ{n}（{name}）を読み込めていません。読込設定やファイルを確認してください。"
@@ -494,11 +596,25 @@ def _plan_xy(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str])
         )
         if has_points:
             ok = y_numeric.notna() & pd.notna(x_series)
-            ext.add_values("y2" if series.secondary_axis else "y", y_numeric[ok])
+            y_axis = "y2" if series.secondary_axis else "y"
+            ext.add_values(y_axis, y_numeric[ok])
             if datetime_x:
                 ext.add_values("x", _seconds(x_series[ok]))
             elif not plans[-1].categorical_x:
                 ext.add_values("x", x_series[ok])
+            bars = series.error_bars
+            y_err, y_plus, y_minus = _plan_error(df, bars.y, "y", n, ok, settings.load, warnings)
+            if bars.x.mode != "none":
+                if datetime_x:
+                    raise UserError(X_ERR_DATETIME.format(n=n), field=f"系列{n}のX誤差の方式")
+                if plans[-1].categorical_x:
+                    raise UserError(X_ERR_CATEGORY.format(n=n), field=f"系列{n}のX誤差の方式")
+            x_err, x_plus, x_minus = _plan_error(df, bars.x, "x", n, ok, settings.load, warnings)
+            if y_err is not None:
+                _add_error_extent(ext, y_axis, y_numeric[ok], _take(y_plus, ok), _take(y_minus, ok))
+            if x_err is not None:
+                _add_error_extent(ext, "x", x_series[ok], _take(x_plus, ok), _take(x_minus, ok))
+            plans[-1] = replace(plans[-1], y_err=y_err, x_err=x_err, cap_size=bars.cap_size)
         if has_points and x_index is not None and plans[-1].categorical_x:
             shown = x_series[y_numeric.notna() & x_series.notna()]
             category_values.update(shown.tolist())
@@ -601,6 +717,15 @@ def _plan_bar(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> Pl
         ok = frame[y_keys].notna().any(axis=1)
     for k in y_keys:
         ext.add_values("y2" if plans[int(k[2:])].secondary else "y", frame[k][ok])
+    for i, series in enumerate(settings.series):
+        spec = series.error_bars.y
+        if spec.mode == "none":
+            continue
+        k = f"y_{i}"
+        rows = ok & frame[k].notna()  # 棒を描く行（欠けた行は棒も誤差も描かない）
+        y_err, plus, minus = _plan_error(df, spec, "y", i + 1, rows, settings.load, warnings)
+        _add_error_extent(ext, "y2" if plans[i].secondary else "y", frame[k][rows], _take(plus, rows), _take(minus, rows))
+        plans[i] = replace(plans[i], y_err=y_err, cap_size=series.error_bars.cap_size)
     x_text = datetime_x or not pd.api.types.is_numeric_dtype(x.dtype)
     if len(plans) > 1 or x_text:
         x_kind = "category"

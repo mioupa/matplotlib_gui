@@ -13,7 +13,7 @@ import math
 from dataclasses import dataclass
 from typing import Callable
 
-from .dataprep import AxisPlan, PlotPlan, SeriesPlan
+from .dataprep import AxisPlan, ErrorPlan, PlotPlan, SeriesPlan
 from .fonts import LATIN_FONTS, SANS_SERIF_PRIORITY
 from .formats import FORMATS, build_filename, savefig_kwargs, savefig_rc
 from .loader import DatetimeColumn, SourceInfo
@@ -363,6 +363,113 @@ def _style_args(s: SeriesSettings) -> str:
     return f"color={literal(s.color)}, linewidth={literal(s.line_width)}, linestyle={literal(s.line_style)}"
 
 
+# ---- error bars (G1) ----
+
+ERROR_BAR_FUNCTION = (
+    'def draw_error_bars(ax, x, y, low, high, *, direction="y", color="black", linewidth=1.0, capsize=3.0, zorder=2):',
+    '    """ax.errorbar(x, y, yerr=…, fmt="none", capsize=…) と同じ見た目のエラーバーを描く（点が多くても速く描ける）。',
+    "",
+    "    ax.errorbar は点ごとに別の線を作るので、点が多いと遅い。そこで、各点の線（low → high）を NaN で区切った1本の線にまとめ、",
+    "    両端の短い線（capsize）は点の記号で描く。direction=\"y\" は縦線（low・high は Y の下端・上端）、",
+    "    direction=\"x\" は横線（low・high は X の左端・右端）。low・high のどちらかが NaN の点は描かない。",
+    '    """',
+    "    low = np.asarray(low, dtype=float)",
+    "    high = np.asarray(high, dtype=float)",
+    "    ends = np.column_stack([low, high, np.full(len(low), np.nan)]).ravel()  # 下端, 上端, 区切り（NaN）, …",
+    '    style = dict(color=color, zorder=zorder, label="_errorbar")  # _ で始まるラベルは凡例に出ない',
+    '    if direction == "y":',
+    "        ax.plot(np.repeat(np.asarray(x), 3), ends, linewidth=linewidth, **style)",
+    "    else:",
+    "        ax.plot(ends, np.repeat(np.asarray(y), 3), linewidth=linewidth, **style)",
+    "    if capsize > 0:",
+    '        marker = "_" if direction == "y" else "|"',
+    "        for end in (low, high):",
+    '            px, py = (x, end) if direction == "y" else (end, y)',
+    '            ax.plot(px, py, linestyle="none", marker=marker, markersize=2 * capsize, markeredgewidth=linewidth, **style)',
+)
+
+
+def _uses_error_function(plan: PlotPlan) -> bool:
+    return plan.plot_type in {"line", "scatter"} and any(p.has_points and (p.y_err or p.x_err) for p in plan.series)
+
+
+def _error_names(err: ErrorPlan, owner: str = "") -> tuple[str, str]:
+    """誤差の変数名（上（右）, 下（左））。対称なら同じ名前。owner は棒グラフ（複数系列）の "y1" など。"""
+    base = f"{owner}_err" if owner else f"{err.direction}_err"
+    return (base, base) if err.symmetric else (f"{base}_plus", f"{base}_minus")
+
+
+def _emit_error_columns(b: _Builder, p: SeriesPlan, err: ErrorPlan, owner: str = "") -> None:
+    """列の誤差を、数値にして、負の値を NaN にする（fixed のときは何も書かない）。"""
+    if err.mode != "column":
+        return
+    plus, minus = _error_names(err, owner)
+    side = "Y" if err.direction == "y" else "X"
+    pairs = [(plus, err.index, err.label, "")]
+    if not err.symmetric:
+        pairs = [
+            (plus, err.index, err.label, "（上）" if err.direction == "y" else "（右）"),
+            (minus, err.index_minus, err.label_minus, "（下）" if err.direction == "y" else "（左）"),
+        ]
+    for name, index, label, note in pairs:
+        b.add(
+            f'{name} = pd.to_numeric({p.data_var}.iloc[:, {index}], errors="coerce")'
+            f"  # {side} の誤差{note}: {comment_text(label)}（数値にできない値は NaN）",
+            f"{name} = {name}.where({name} >= 0)  # 負の値は NaN にする（その点のエラーバーは描かない）",
+        )
+
+
+def _error_step(p: SeriesPlan, err: ErrorPlan) -> tuple[str, str]:
+    side = err.direction.upper()
+    return f"系列{p.number}のエラーバーを描けませんでした。誤差の列・値を確認してください。", f"系列{p.number}の{side}誤差"
+
+
+def _emit_line_error_bars(b: _Builder, s: SeriesSettings, p: SeriesPlan, *, zorder: int | None = None) -> None:
+    """line / scatter の系列本体の直前に、エラーバー（Y・X 方向）を描く。"""
+    for err in (p.y_err, p.x_err):
+        if err is None:
+            continue
+        message, field_name = _error_step(p, err)
+        with b.step(message, field_name):
+            _emit_error_columns(b, p, err)
+            plus, minus = _error_names(err)
+            base = "y[ok]" if err.direction == "y" else "x[ok]"
+            if err.mode == "fixed":
+                minus_value = err.value if err.symmetric else err.value_minus
+                low, high = f"{base} - {literal(minus_value)}", f"{base} + {literal(err.value)}"
+            else:
+                low, high = f"{base} - {minus}[ok]", f"{base} + {plus}[ok]"
+            extra = f", zorder={zorder}" if zorder is not None else ""
+            b.add(
+                f'draw_error_bars({_target(p)}, x[ok], y[ok], {low}, {high}, direction="{err.direction}", '
+                f"color={literal(s.color)}, linewidth={literal(s.line_width)}, capsize={literal(p.cap_size)}{extra})"
+            )
+
+
+def _bar_yerr_expr(err: ErrorPlan, owner: str = "") -> str:
+    """ax.bar の yerr 引数の式（owner が空なら1系列の棒グラフ、"y1" などなら bar_data の列）。"""
+    if err.mode == "fixed":
+        if err.symmetric:
+            return literal(err.value)
+        return f"[[{literal(err.value_minus)}], [{literal(err.value)}]]"
+    plus, minus = _error_names(err, owner)
+    if owner:
+        plus, minus = f'bar_data["{plus}"]', f'bar_data["{minus}"]'
+    else:
+        plus, minus = f"{plus}[ok]", f"{minus}[ok]"
+    return plus if err.symmetric else f"[{minus}, {plus}]"
+
+
+def _bar_error_args(s: SeriesSettings, p: SeriesPlan, owner: str = "") -> str:
+    if p.y_err is None:
+        return ""
+    width = literal(s.line_width)
+    return (
+        f", yerr={_bar_yerr_expr(p.y_err, owner)}, capsize={literal(p.cap_size)}, ecolor=\"black\", "
+        f'error_kw={{"elinewidth": {width}, "capthick": {width}}}'
+    )
+
+
 def _emit_line_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
     ax2 = _Axes2State()
     for i, (s, p) in enumerate(zip(settings.series, plan.series)):
@@ -377,6 +484,7 @@ def _emit_line_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
             _emit_x_data(b, p)
             _emit_y_data(b, p)
             _emit_ok_mask(b)
+            _emit_line_error_bars(b, s, p)
             marker = ""
             if p.marker_size > 0:
                 b.add("# 点の大きさ: 面積（scatter の s と同じ単位）の平方根を markersize（直径）にする")
@@ -398,6 +506,7 @@ def _emit_scatter_series(b: _Builder, settings: Settings, plan: PlotPlan) -> Non
             _emit_x_data(b, p)
             _emit_y_data(b, p)
             _emit_ok_mask(b)
+            _emit_line_error_bars(b, s, p, zorder=1)  # 点を上に描くため、エラーバーは zorder=1
             b.add(
                 f"{_target(p)}.scatter(x[ok], y[ok], color={literal(s.color)}, s={literal(p.marker_size)}, "
                 f"label={literal(p.legend_label)})"
@@ -427,20 +536,34 @@ def _emit_bar_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
             _emit_bar_x(b, plan)
             _emit_y_data(b, p)
             _emit_ok_mask(b)
-            b.add(f"{_target(p)}.bar(x[ok], y[ok], {_style_args(s)}, label={literal(p.legend_label)})")
+            if p.y_err is not None:
+                with b.step(*_error_step(p, p.y_err)):
+                    _emit_error_columns(b, p, p.y_err)
+            b.add(f"{_target(p)}.bar(x[ok], y[ok], {_style_args(s)}, label={literal(p.legend_label)}{_bar_error_args(s, p)})")
         return
 
     n = len(plan.series)
     b.add("# 複数の系列を、X の値ごとに横に並べた棒グラフにする（X は共通）")
     with b.step(GENERIC_ERROR_MESSAGE):
         _emit_bar_x(b, plan)
+        for p in plan.series:
+            if p.y_err is not None:
+                with b.step(*_error_step(p, p.y_err)):
+                    _emit_error_columns(b, p, p.y_err, f"y{p.number}")
         b.add("bar_data = pd.DataFrame({")
         b.add('    "x": x,')
         for p in plan.series:
             b.add(f'    "y{p.number}": pd.to_numeric({p.data_var}.iloc[:, {p.y_index}], errors="coerce"),  # {_column_comment(p, "y")}')
+            if p.y_err is not None and p.y_err.mode == "column":
+                for name in dict.fromkeys(_error_names(p.y_err, f"y{p.number}")):
+                    b.add(f'    "{name}": {name},')
         b.add("})")
         keys = ", ".join(literal(f"y{p.number}") for p in plan.series)
         b.add(f'bar_data = bar_data.dropna(subset=[{keys}], how="all")  # 全ての系列が欠けている行は描かない')
+        for p in plan.series:
+            if p.y_err is not None and p.y_err.mode == "column":
+                for name in dict.fromkeys(_error_names(p.y_err, f"y{p.number}")):
+                    b.add(f'bar_data["{name}"] = bar_data["{name}"].where(bar_data["y{p.number}"].notna())  # 棒を描かない行のエラーバーも描かない')
         b.add("x_labels = [str(v) for v in bar_data[\"x\"]]")
         b.add("positions = np.arange(len(x_labels))")
         b.add(f"width = 0.8 / {n}  # 棒1本の幅")
@@ -451,7 +574,7 @@ def _emit_bar_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
             b.add(f"offset = -0.4 + (width / 2.0) + ({i} * width)")
             b.add(
                 f'{_target(p)}.bar(positions + offset, bar_data["y{p.number}"].fillna(0.0), width=width, '
-                f"{_style_args(s)}, label={literal(p.legend_label)})"
+                f"{_style_args(s)}, label={literal(p.legend_label)}{_bar_error_args(s, p, f'y{p.number}')})"
             )
 
 
@@ -769,6 +892,9 @@ def generate_script(settings: Settings, source, plan: PlotPlan) -> GeneratedScri
     b = _Builder()
     _emit_header(b, infos, settings.plot.latin_font, plan, settings)
     b.add(f"FONT_SIZE = {literal(settings.plot.font_size)}  # 文字の大きさ（pt）")
+    if _uses_error_function(plan):
+        b.blank()
+        b.add(*ERROR_BAR_FUNCTION)
     _emit_load(b, plan, infos)
     _emit_skip_rows(b, plan)
     _emit_figure(b, settings)

@@ -124,6 +124,8 @@ def figure_summary(fig) -> list[dict]:
                 "xformatter": type(ax.xaxis.get_major_formatter()).__name__,
                 "yformatter": type(ax.yaxis.get_major_formatter()).__name__,
                 "yoffset": _offset_text(ax.yaxis),
+                "errorbars": sum(1 for line in ax.lines if line.get_label() == "_errorbar")
+                + sum(1 for c in ax.containers if type(c).__name__ == "ErrorbarContainer"),
             }
         )
     return out
