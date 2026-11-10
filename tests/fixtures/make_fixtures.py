@@ -147,6 +147,7 @@ def main():
 
     make_datetime_fixtures(fixed)
     make_errorbar_fixture()
+    make_band_fixture()
 
 
 def make_errorbar_fixture():
@@ -165,6 +166,17 @@ def make_errorbar_fixture():
             f"{round(0.1 + 0.01 * i, 3)},{round(0.3 + 0.02 * i, 3)},{round(0.05 + 0.01 * i, 3)}"
         )
     (OUT / "errorbars.csv").write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+
+
+def make_band_fixture():
+    """塗りつぶし帯・近似曲線・注釈（5b）。x / mean（ほぼ直線）/ lo / hi（帯の下端・上端。7行目の lo は `bad`）/ day（日付）/ other（別の系列用）。"""
+    lines = ["x,mean,lo,hi,day,other"]
+    for i in range(12):
+        mean = round(2.0 + 1.5 * i + 0.4 * math.sin(i), 3)
+        lo = "bad" if i == 6 else str(round(mean - 1.0, 3))
+        day = (datetime(2026, 1, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+        lines.append(f"{i},{mean},{lo},{round(mean + 1.2, 3)},{day},{round(100 - 3 * i, 2)}")
+    (OUT / "band.csv").write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
 
 
 def make_datetime_fixtures(fixed):

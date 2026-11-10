@@ -506,3 +506,72 @@ def series_errorbars(page, series_id) -> dict:
         "(id) => import(new URL('js/state.js', document.baseURI)).then((m) => m.getSettings().series.find((s) => s.id === id).errorBars)",
         series_id,
     )
+
+
+# --- 系列のスタイル・注釈・近似曲線（Phase 5b） ---
+def series_ids(page) -> list[str]:
+    """画面の系列カードの順（id）。"""
+    return page.eval_on_selector_all("#seriesList .series-item", "els => els.map(e => e.dataset.seriesId)")
+
+
+def series_state(page, series_id) -> dict:
+    """画面の状態（state）にある系列の設定。"""
+    return page.evaluate(
+        "(id) => import(new URL('js/state.js', document.baseURI)).then((m) => m.getSettings().series.find((s) => s.id === id))",
+        series_id,
+    )
+
+
+def state_list(page, key) -> list[dict]:
+    """state の annotations / fits。"""
+    return page.evaluate("(k) => import(new URL('js/state.js', document.baseURI)).then((m) => m.getSettings()[k])", key)
+
+
+def set_fill(page, series_id, *, lower=None, upper=None, alpha=None):
+    """塗りつぶし帯の入力欄を変える（折りたたみが閉じていれば開く。待たない）。"""
+    page.evaluate("(id) => { document.getElementById(`series-${id}-fill`).open = true; }", series_id)
+    if lower is not None:
+        page.select_option(f"#series-{series_id}-fill-lower", lower)
+    if upper is not None:
+        page.select_option(f"#series-{series_id}-fill-upper", upper)
+    if alpha is not None:
+        page.fill(f"#series-{series_id}-fill-alpha", str(alpha))
+
+
+def set_card_field(page, selector, value):
+    """カード内の入力欄を、種類に応じて変える（select は選択、checkbox は切替、それ以外は入力）。待たない。"""
+    kind = page.evaluate(
+        "(s) => { const e = document.querySelector(s); return e.type === 'checkbox' ? 'checkbox' : e.tagName.toLowerCase(); }", selector
+    )
+    if kind == "checkbox":
+        page.set_checked(selector, bool(value))
+    elif kind == "select":
+        page.select_option(selector, value)
+    else:
+        page.fill(selector, str(value))
+
+
+def add_annotation(page, kind="hline", **fields) -> str:
+    """「+ 注釈を追加」を押し、種類と入力欄（text / coords / x / y / start / end / axis / line-style / line-width / alpha / font-size / label）を設定して id を返す。待たない。"""
+    before = {a["id"] for a in state_list(page, "annotations")}
+    page.click("#addAnnotationBtn")
+    new = [a["id"] for a in state_list(page, "annotations") if a["id"] not in before][0]
+    page.select_option(f"#annotation-{new}-kind", kind)
+    for name, value in fields.items():
+        set_card_field(page, f"#annotation-{new}-{name.replace('_', '-')}", value)
+    return new
+
+
+def set_annotation(page, ann_id, **fields):
+    for name, value in fields.items():
+        set_card_field(page, f"#annotation-{ann_id}-{name.replace('_', '-')}", value)
+
+
+def add_fit(page, **fields) -> str:
+    """「+ 近似曲線を追加」を押し、入力欄（series / model / degree / show / color / line-style）を設定して id を返す。待たない。"""
+    before = {f["id"] for f in state_list(page, "fits")}
+    page.click("#addFitBtn")
+    new = [f["id"] for f in state_list(page, "fits") if f["id"] not in before][0]
+    for name, value in fields.items():
+        set_card_field(page, f"#fit-{new}-{name.replace('_', '-')}", value)
+    return new

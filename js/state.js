@@ -1,6 +1,6 @@
 // 設定オブジェクト（単一の正）。画面の入力はすべてここへ書き込み、描画・読込はここから JSON を作る。
 // DOM には触れない。変更は subscribe で購読する。
-import { DEFAULT_SERIES, DEFAULT_SETTINGS } from "./defaults.js";
+import { DEFAULT_ANNOTATION, DEFAULT_FIT, DEFAULT_SERIES, DEFAULT_SETTINGS } from "./defaults.js";
 import { getPalette, paletteColor } from "./palettes.js";
 import { newSeriesDefaults } from "./presets.js";
 
@@ -9,6 +9,8 @@ const clone = (value) => JSON.parse(JSON.stringify(value));
 let settings = clone(DEFAULT_SETTINGS);
 let lastPreset = null; // 最後に適用したスタイルプリセット（このセッションの間だけ。設定オブジェクトには入れない）
 let seriesCounter = 1; // 系列 id は連番で払い出し、削除しても再利用しない
+let annotationCounter = 0; // 注釈 id（a1, a2, ...）。削除しても再利用しない
+let fitCounter = 0; // 近似曲線 id（f1, f2, ...）。削除しても再利用しない
 const listeners = new Set();
 
 export const getSettings = () => settings;
@@ -98,12 +100,97 @@ export const addSeries = (overrides = {}) => {
   return series;
 };
 
+// 系列を削除する。その系列の近似曲線も消す（消した近似曲線の数を返す。系列が1つだけなら削除せず -1）
 export const removeSeries = (id) => {
-  if (settings.series.length <= 1) return;
+  if (settings.series.length <= 1) return -1;
   const idx = settings.series.findIndex((s) => s.id === id);
-  if (idx < 0) return;
+  if (idx < 0) return -1;
   settings.series.splice(idx, 1);
+  const before = settings.fits.length;
+  settings.fits = settings.fits.filter((f) => f.series !== id);
+  const removedFits = before - settings.fits.length;
   notify({ kind: "series-list", origin: "user" });
+  if (removedFits > 0) notify({ kind: "fit-list", origin: "user" });
+  return removedFits;
+};
+
+// 系列を delta（-1 で前、+1 で後ろ）だけ動かす。端では何もしない
+export const moveSeries = (id, delta) => {
+  const idx = settings.series.findIndex((s) => s.id === id);
+  const to = idx + delta;
+  if (idx < 0 || to < 0 || to >= settings.series.length) return;
+  const [item] = settings.series.splice(idx, 1);
+  settings.series.splice(to, 0, item);
+  notify({ kind: "series-list", origin: "user" });
+};
+
+// 系列の複製: すべての設定を写し、id は新しく、色は現在のパレットの未使用の色にして、元の系列の直後に入れる（近似曲線は写さない）
+export const duplicateSeries = (id) => {
+  const idx = settings.series.findIndex((s) => s.id === id);
+  if (idx < 0) return null;
+  seriesCounter += 1;
+  const copy = { ...clone(settings.series[idx]), id: `s${seriesCounter}`, color: nextSeriesColor() };
+  settings.series.splice(idx + 1, 0, copy);
+  notify({ kind: "series-list", origin: "user" });
+  return copy;
+};
+
+// ---- 注釈・近似曲線 ----
+export const addAnnotation = () => {
+  annotationCounter += 1;
+  const item = { ...clone(DEFAULT_ANNOTATION), id: `a${annotationCounter}` };
+  settings.annotations.push(item);
+  notify({ kind: "annotation-list", origin: "user" });
+  return item;
+};
+
+export const updateAnnotation = (id, patch, origin = "user") => {
+  const item = settings.annotations.find((a) => a.id === id);
+  if (!item) return;
+  let changed = false;
+  for (const [key, value] of Object.entries(patch)) {
+    if (item[key] !== value) {
+      item[key] = value;
+      changed = true;
+    }
+  }
+  if (changed) notify({ kind: "annotation-field", id, fields: Object.keys(patch), origin });
+};
+
+export const removeAnnotation = (id) => {
+  const idx = settings.annotations.findIndex((a) => a.id === id);
+  if (idx < 0) return;
+  settings.annotations.splice(idx, 1);
+  notify({ kind: "annotation-list", origin: "user" });
+};
+
+export const addFit = () => {
+  fitCounter += 1;
+  const first = settings.series[0];
+  const item = { ...clone(DEFAULT_FIT), id: `f${fitCounter}`, series: first ? first.id : DEFAULT_FIT.series };
+  settings.fits.push(item);
+  notify({ kind: "fit-list", origin: "user" });
+  return item;
+};
+
+export const updateFit = (id, patch, origin = "user") => {
+  const item = settings.fits.find((f) => f.id === id);
+  if (!item) return;
+  let changed = false;
+  for (const [key, value] of Object.entries(patch)) {
+    if (item[key] !== value) {
+      item[key] = value;
+      changed = true;
+    }
+  }
+  if (changed) notify({ kind: "fit-field", id, fields: Object.keys(patch), origin });
+};
+
+export const removeFit = (id) => {
+  const idx = settings.fits.findIndex((f) => f.id === id);
+  if (idx < 0) return;
+  settings.fits.splice(idx, 1);
+  notify({ kind: "fit-list", origin: "user" });
 };
 
 export const hasSecondaryAxis = () => settings.series.some((s) => s.secondaryAxis);

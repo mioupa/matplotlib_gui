@@ -11,7 +11,9 @@ import { bindLoadSection } from "./ui/loadSection.js";
 import { bindSaveSection } from "./ui/saveSection.js";
 import { bindDateFormat } from "./ui/dateFormat.js";
 import { bindClipboard } from "./ui/clipboard.js";
-import { bindSeriesEvents, refreshSources, renderSeriesList, syncMarkerSizeDisplay, syncVisibility } from "./ui/series.js";
+import { addVisibilityHook, bindSeriesEvents, refreshSources, renderSeriesList, syncMarkerSizeDisplay, syncVisibility } from "./ui/series.js";
+import { bindAnnotations, renderAnnotationList, syncAnnotations } from "./ui/annotations.js";
+import { bindFits, renderFitList, syncFits } from "./ui/fits.js";
 import { bindStyleSection } from "./ui/styleSection.js";
 import { initPanelSections } from "./ui/panelSections.js";
 import { bindTabs } from "./ui/tabs.js";
@@ -36,6 +38,10 @@ initPanelSections();
 bindTabs();
 bindForms();
 bindSeriesEvents();
+addVisibilityHook(syncAnnotations);
+addVisibilityHook(syncFits);
+bindAnnotations();
+bindFits();
 bindSaveFormatEvents();
 bindLoadSection();
 bindDropPaste();
@@ -50,6 +56,10 @@ bindStyleSection();
 subscribe((_settings, change) => {
   if (change.kind === "series-list") {
     renderSeriesList();
+  } else if (change.kind === "annotation-list") {
+    renderAnnotationList();
+  } else if (change.kind === "fit-list") {
+    renderFitList();
   } else if (change.kind === "path" && change.path === "plot.palette") {
     renderSeriesList(); // 色の選択肢と各系列の色を、新しいパレットで描き直す
   } else {

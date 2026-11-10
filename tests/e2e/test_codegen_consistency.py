@@ -13,6 +13,8 @@ import pytest
 
 from helpers import (
     add_files,
+    add_annotation,
+    add_fit,
     add_series_with_source,
     image_summary,
     load_fixture,
@@ -20,6 +22,7 @@ from helpers import (
     open_tick_group,
     paste_text,
     set_errorbars,
+    set_fill,
     wait_data_ready,
     wait_app_ready,
     wait_code_contains,
@@ -200,6 +203,75 @@ def _configure_errbars_two_files(page):
     set_errorbars(page, "s2", "y", mode="column", column="__idx__3")
 
 
+# band.csv の列: 0 x, 1 mean, 2 lo, 3 hi, 4 day, 5 other
+def _band_base(page, x="__idx__0"):
+    page.select_option("#series-s1-x", x)
+    page.select_option("#series-s1-y", "__idx__1")
+
+
+def _configure_style_line_band(page):
+    _band_base(page)
+    page.select_option("#series-s1-marker", "s")
+    page.fill("#series-s1-alpha", "0.8")
+    set_fill(page, "s1", lower="__idx__2", upper="__idx__3", alpha=0.3)
+
+
+def _configure_band_datetime_scatter(page):
+    page.select_option("#plotType", "scatter")
+    _band_base(page, "__idx__4")
+    set_fill(page, "s1", lower="__idx__2", upper="__idx__3")
+
+
+def _configure_annotations_numeric(page):
+    _band_base(page)
+    add_annotation(page, "hline", y="10", label="基準値", line_width="1.5")
+    add_annotation(page, "vline", x="5", line_style="solid")
+    add_annotation(page, "vspan", start="2", end="4", label="区間")
+    add_annotation(page, "hspan", start="5", end="8", alpha="0.1")
+    add_annotation(page, "text", text="ピーク $\\alpha$", x="3", y="8", font_size="14")
+    add_annotation(page, "text", text="左上", coords="axes", x="0.05", y="0.95")
+
+
+def _configure_annotations_datetime(page):
+    _band_base(page, "__idx__4")
+    add_annotation(page, "vline", x="2026-01-05 12:00", label="イベント")
+    add_annotation(page, "vspan", start="2026-01-02", end="2026-01-04")
+    add_annotation(page, "text", text="注目", x="2026-01-08", y="12")
+
+
+def _configure_annotations_y2(page):
+    _band_base(page)
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s2-x", "__idx__0")
+    page.select_option("#series-s2-y", "__idx__5")
+    page.check("#series-s2-use-y2")
+    add_annotation(page, "hline", y="50", axis="y2", label="右の基準")
+    add_annotation(page, "hspan", start="60", end="80", axis="y2")
+    add_annotation(page, "hline", y="10")
+
+
+def _configure_fit_linear_legend(page):
+    _band_base(page)
+    page.fill("#series-s1-legend-name", "温度")
+    add_fit(page)
+
+
+def _configure_fit_poly_text(page):
+    _band_base(page)
+    add_fit(page, model="poly", degree="3", show="text", line_style="solid")
+    add_fit(page, model="linear", show="text")
+
+
+def _configure_fit_y2(page):
+    _band_base(page)
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s2-x", "__idx__0")
+    page.select_option("#series-s2-y", "__idx__5")
+    page.check("#series-s2-use-y2")
+    add_fit(page, series="s2")
+    add_fit(page, series="s1", show="none")
+
+
 # 読込の設定を変えた場合: 生成スクリプトの読込部が、GUI の読み方と同じ図を作る
 PRE_STEPS = {"preamble_csv": _pre_preamble, "european_csv": _pre_european}
 
@@ -233,6 +305,14 @@ CASES = {
     "errbars_bar": ("categories.csv", _configure_errbars_bar),
     "errbars_bar_multi": ("categories.csv", _configure_errbars_bar_multi),
     "errbars_two_files": (("utf8.csv", "errorbars.csv"), _configure_errbars_two_files),
+    "style_line_band": ("band.csv", _configure_style_line_band),
+    "band_datetime_scatter": ("band.csv", _configure_band_datetime_scatter),
+    "annotations_numeric": ("band.csv", _configure_annotations_numeric),
+    "annotations_datetime": ("band.csv", _configure_annotations_datetime),
+    "annotations_y2": ("band.csv", _configure_annotations_y2),
+    "fit_linear_legend": ("band.csv", _configure_fit_linear_legend),
+    "fit_poly_text": ("band.csv", _configure_fit_poly_text),
+    "fit_y2": ("band.csv", _configure_fit_y2),
     "scatter_paper1": ("utf8.csv", _configure_scatter_paper1),
     "scatter_arimo_paper2_pdf": ("utf8.csv", _configure_scatter_arimo_paper2_pdf),
 }
@@ -256,7 +336,10 @@ def l_ax_summary(summary, key):
     return summary[0][key]
 
 
-EXACT_KEYS = ("title", "xlabel", "ylabel", "xscale", "yscale", "lines", "collections", "patches", "legend")
+EXACT_KEYS = (
+    "title", "xlabel", "ylabel", "xscale", "yscale", "lines", "collections", "patches", "legend",
+    "bands", "markers", "alphas", "annotations", "fitlines", "fittexts",  # Phase 5b
+)
 
 
 @pytest.mark.parametrize("case", list(CASES))
@@ -299,7 +382,7 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
     local, stderr = _run_in_cpython(script, tmp_path)
 
     assert len(local) == len(browser)
-    assert len(browser) == (2 if case == "line" else 1)
+    assert len(browser) == (2 if case in ("line", "annotations_y2", "fit_y2") else 1)
     if case.startswith("errbars_"):
         assert browser[0]["errorbars"] > 0
         assert l_ax_summary(local, "errorbars") == l_ax_summary(browser, "errorbars")
@@ -362,6 +445,26 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
         assert "df2.iloc[:, 3]" in script.read_text(encoding="utf-8")
     if case in ("errbars_bar", "errbars_bar_multi"):
         assert local[0]["xticklabels"] == browser[0]["xticklabels"]
+    if case == "style_line_band":
+        assert browser[0]["bands"] == 1 and browser[0]["markers"] == ["s"] and browser[0]["alphas"] == [0.8]
+    if case == "band_datetime_scatter":
+        assert browser[0]["bands"] == 1 and local[0]["xticklabels"] == browser[0]["xticklabels"]
+    if case == "annotations_numeric":
+        assert browser[0]["annotations"] == {"texts": 2, "hlines": 1, "vlines": 1, "hspans": 1, "vspans": 1}
+        assert "基準値" in browser[0]["legend"] and "区間" in browser[0]["legend"]
+    if case == "annotations_datetime":
+        assert browser[0]["annotations"] == {"texts": 1, "hlines": 0, "vlines": 1, "hspans": 0, "vspans": 1}
+        assert "pd.Timestamp(" in script.read_text(encoding="utf-8")
+    if case == "annotations_y2":
+        assert browser[1]["annotations"]["hlines"] == 1 and browser[1]["annotations"]["hspans"] == 1
+        assert browser[0]["annotations"]["hlines"] == 1
+    if case == "fit_linear_legend":
+        assert browser[0]["fitlines"] == 1 and any(t.startswith("温度の近似") for t in browser[0]["legend"])
+        assert "poly_text(" in script.read_text(encoding="utf-8")
+    if case == "fit_poly_text":
+        assert browser[0]["fitlines"] == 2 and browser[0]["fittexts"] == 2
+    if case == "fit_y2":
+        assert browser[1]["fitlines"] == 1 and browser[0]["fitlines"] == 1
     if case == "line":
         assert browser[0]["yscale"] == "log" and browser[0]["lines"] == 1 and browser[1]["lines"] == 1
         assert browser[0]["legend"] == ["指数 [1]", "線形 [2]"]

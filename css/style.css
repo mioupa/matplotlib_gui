@@ -1121,7 +1121,8 @@ button.series-color-chip.active {
 }
 
 /* 系列カードの「エラーバー」の折りたたみ（目盛の折りたたみと同じ控えめな見た目） */
-.series-errorbars {
+.series-errorbars,
+.series-fill {
   margin: 8px 0 0;
   border-left: 2px solid var(--line-soft);
   padding-left: 8px;
@@ -1151,7 +1152,8 @@ button.series-color-chip.active {
   transform: rotate(-45deg);
   transition: transform 0.12s ease;
 }
-.series-errorbars[open] > .series-errorbars-summary::before {
+.series-errorbars[open] > .series-errorbars-summary::before,
+.series-fill[open] > .series-errorbars-summary::before {
   transform: rotate(45deg);
 }
 .series-errorbars-summary:hover {
@@ -1185,4 +1187,49 @@ button.series-color-chip.active {
   .err-block .row {
     grid-template-columns: 1fr;
   }
+}
+
+/* 系列カードの操作ボタン（↑ ↓ 複製 削除）と、注釈・近似曲線のカード */
+.series-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.series-item-actions button.small-btn {
+  padding: 5px 8px;
+}
+.series-item-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.series-fill[hidden],
+.series-marker-wrap[hidden],
+.ann-field[hidden],
+.ann-help[hidden],
+.fit-degree-wrap[hidden],
+.fit-color-picker-wrap[hidden],
+#fitList[hidden],
+#addFitBtn[hidden],
+#fitBarNote[hidden] {
+  display: none;
+}
+.annotation-item .row > div,
+.fit-item .row > div {
+  min-width: 0;
+}
+.annotation-item input,
+.annotation-item select,
+.fit-item input,
+.fit-item select {
+  min-width: 0;
+  max-width: 100%;
+}
+.fit-color-picker-wrap {
+  margin-top: 6px;
+}
+#addAnnotationBtn:disabled,
+#addFitBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
