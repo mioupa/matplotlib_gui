@@ -367,6 +367,8 @@ def looks_numeric(raw: pd.Series) -> bool:
     """文字列を含む列でも、空欄以外の半数以上が数値に変換できるなら数値列として扱う（dataprep と共有する規則）。"""
     if pd.api.types.is_numeric_dtype(raw.dtype):
         return True
+    if pd.api.types.is_datetime64_any_dtype(raw.dtype):
+        return False  # 日時の列は数値として読まない（10,000 個の値を1つずつ調べない）
     non_blank = [v for v in raw.tolist() if not is_blank_cell(v)]
     if not non_blank:
         return False

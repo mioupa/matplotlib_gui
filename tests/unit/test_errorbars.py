@@ -328,20 +328,20 @@ def test_line_column_symmetric_geometry_and_text(tmp_path):
         xs, lo, hi = stems(ax)
         df = frame()
         assert np.allclose(xs, df["t"]) and np.allclose(lo, df["v"] - 0.5) and np.allclose(hi, df["v"] + 0.5)
-        caps = [ln for ln in bars_of(ax) if ln.get_marker() == "_"]
-        assert len(caps) == 2 and all(c.get_markersize() == 6.0 for c in caps)
+        (line,) = bars_of(ax)  # 線1本。両端の短い線はその端点の記号
+        assert line.get_marker() == "_" and line.get_markersize() == 6.0
         assert ax.get_ylim()[0] < 9.5 and ax.get_ylim()[1] > 24.5  # エラーバーの端も範囲に入る
         assert len(ax.get_legend().get_texts()) == 1  # 系列だけ。エラーバーは凡例に出ない
 
     summary = b.check(geom)
-    assert summary[0]["errorbars"] == 3
+    assert summary[0]["errorbars"] == 1
 
 
 def test_cap_size_zero_has_no_caps(tmp_path):
     b = build(tmp_path, series=[series(eb=EB(y=ES("fixed", value=1), cap=0))])
-    b.check(lambda fig: [None for ln in bars_of(fig.axes[0]) if ln.get_marker() == "_"] == [] or pytest.fail())
     with b.full() as run:
-        assert len(bars_of(run.fig.axes[0])) == 1  # 縦線だけ
+        (line,) = bars_of(run.fig.axes[0])  # 縦線だけ
+        assert line.get_marker() == "None"
 
 
 def test_geometry_matches_axes_errorbar(tmp_path):
@@ -350,8 +350,8 @@ def test_geometry_matches_axes_errorbar(tmp_path):
     with b.full() as run:
         ax = run.fig.axes[0]
         xs, lo, hi = stems(ax)
-        caps = [ln for ln in bars_of(ax) if ln.get_marker() == "_"]
-        assert all(c.get_markersize() == 8.0 and c.get_markeredgewidth() == 3 for c in caps)
+        (cap,) = bars_of(ax)
+        assert cap.get_marker() == "_" and cap.get_markersize() == 8.0 and cap.get_markeredgewidth() == 3
         ref_fig = run.fig.__class__()
         ref = ref_fig.subplots()
         ref.errorbar(df["t"], df["v"], yerr=0.5, fmt="none", capsize=4, capthick=3, elinewidth=3, color="#0072B2")
@@ -419,11 +419,11 @@ def test_scatter_zorder_and_x_errors(tmp_path):
         ax = fig.axes[0]
         assert all(ln.get_zorder() == 1 for ln in bars_of(ax))
         assert ax.collections[0].get_zorder() == 1
-        assert len(bars_of(ax)) == 6  # Y・X それぞれ線 + 両端
-        stem_x = [ln for ln in bars_of(ax) if len(ln.get_xdata()) == 3 * N and ln.get_marker() == "None"]
-        xs = np.asarray(stem_x[1].get_xdata(), dtype=float).reshape(-1, 3)
+        assert len(bars_of(ax)) == 2  # Y・X それぞれ線1本（両端は記号）
+        stem_x = [ln for ln in bars_of(ax) if ln.get_marker() == "|"]
+        assert [ln.get_marker() for ln in bars_of(ax)] == ["_", "|"]
+        xs = np.asarray(stem_x[0].get_xdata(), dtype=float).reshape(-1, 3)
         assert np.allclose(xs[:, 0], frame()["t"] - 0.25) and np.allclose(xs[:, 1], frame()["t"] + 0.25)
-        assert [ln for ln in bars_of(ax) if ln.get_marker() == "|"]
 
     b.check(geom)
 
@@ -434,11 +434,11 @@ def test_series_on_secondary_axis_draws_on_ax2(tmp_path):
 
     def geom(fig):
         ax, ax2 = fig.axes
-        assert not bars_of(ax) and len(bars_of(ax2)) == 3
+        assert not bars_of(ax) and len(bars_of(ax2)) == 1
         assert ax2.get_ylim()[1] > 100 + N - 1 + 2
 
     summary = b.check(geom)
-    assert [s["errorbars"] for s in summary] == [0, 3]
+    assert [s["errorbars"] for s in summary] == [0, 1]
 
 
 def test_datetime_x_with_y_errors(tmp_path):
@@ -610,3 +610,20 @@ def test_helper_text_is_numpy_matplotlib_only_and_literal_values():
 def test_fixed_value_literal_forms(tmp_path):
     b = build(tmp_path, series=[series(eb=EB(y=ES("fixed", value="0.5")))])
     assert "y[ok] - 0.5, y[ok] + 0.5" in b.script.text
+
+
+def test_caps_are_markers_at_finite_ends_only():
+    """両端の短い線は、有限な端点にだけ付く（NaN の区切りには付かない）。片側だけ有限でも付く。"""
+    from matplotlib.figure import Figure
+
+    ns = {}
+    exec("import numpy as np\n" + "\n".join(ERROR_BAR_FUNCTION), ns)
+    ax = Figure().subplots()
+    x = np.array([0.0, 1.0, 2.0])
+    ns["draw_error_bars"](ax, x, x, [0.0, np.nan, 1.0], [1.0, 2.0, np.nan], capsize=3)
+    ns["draw_error_bars"](ax, x, x, [0.0, 1.0, 2.0], [1.0, 2.0, 3.0], direction="x", capsize=0)
+    line_y, line_x = bars_of(ax)
+    assert line_y.get_marker() == "_" and line_x.get_marker() == "None"
+    ends = np.asarray(line_y.get_ydata(), dtype=float)
+    drawn = np.flatnonzero(np.isfinite(ends))  # 記号は有限な頂点にだけ描かれる
+    assert list(drawn) == [0, 1, 4, 6] and not np.isfinite(ends[2::3]).any()

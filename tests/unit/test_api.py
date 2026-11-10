@@ -667,3 +667,5 @@ def test_load_file_reports_numeric_like_columns():
     assert dataprep._looks_numeric is loader.looks_numeric
     assert loader.looks_numeric(pd.Series(["1", "x", ""])) is True
     assert loader.looks_numeric(pd.Series(["", " "])) is False
+    dates = pd.Series(pd.date_range("2024-01-01", periods=5))
+    assert loader.looks_numeric(dates) is False and loader.looks_numeric(dates.dt.tz_localize("UTC")) is False
