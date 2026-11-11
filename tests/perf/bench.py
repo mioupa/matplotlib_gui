@@ -19,7 +19,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "tests" / "e2e"))
 from helpers import (  # noqa: E402
     add_series_with_source, enter_edit_mode, image_generation, load_fixture, paste_text, plot_src,
-    open_tick_group, set_axis_option, set_errorbars, set_save_dpi, wait_app_ready, wait_copy_state, wait_data_ready, wait_latin_state,
+    add_annotation, add_fit, set_fill, open_tick_group, set_axis_option, set_errorbars, set_save_dpi, wait_app_ready, wait_copy_state, wait_data_ready, wait_latin_state,
     wait_plot_changed,
 )
 from server import start_server  # noqa: E402
@@ -501,6 +501,46 @@ def bench_ticks_change(browser, url, reps, csv_path):
     return out
 
 
+# --- Phase 5b: 塗りつぶし帯・近似曲線・注釈 ---
+def make_band_csv(path, rows=10_000):
+    """X + Y 5列 + 帯の下端 5列 + 帯の上端 5列 = 16 列。"""
+    import math
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["x"] + [f"y{k + 1}" for k in range(5)] + [f"lo{k + 1}" for k in range(5)] + [f"hi{k + 1}" for k in range(5)])
+        for i in range(rows):
+            x = i * 0.01
+            ys = [math.sin(x * (k + 1)) + 0.1 * k for k in range(5)]
+            w.writerow([round(x, 4)] + [round(y, 5) for y in ys] + [round(y - 0.2, 5) for y in ys] + [round(y + 0.2, 5) for y in ys])
+
+
+def bench_p5b_change(browser, url, reps, band_path):
+    """5 系列すべてに塗りつぶし帯（下端 列6-10、上端 列11-15）と1次の近似曲線（凡例）を付け、注釈3つ（水平線・縦の帯・文字）を置き、
+    data-summary に帯 5・近似線 5・注釈が出るまで待ってから、既存の「設定変更」と同じ方法で測る。"""
+    out = []
+    ctx = _warm_context(browser, url, band_path)
+    for i in range(reps):
+        page = _prepared_page(ctx, url, band_path)
+        ids = page.evaluate("[...document.querySelectorAll('#seriesList .series-item')].map(e => e.querySelector('.series-y').id.match(/^series-(.+)-y$/)[1])")
+        assert len(ids) == 5, ids
+        for k, sid in enumerate(ids):
+            set_fill(page, sid, lower=f"__idx__{k + 6}", upper=f"__idx__{k + 11}")
+            add_fit(page, series=sid)
+        add_annotation(page, "hline", y="0.5")
+        add_annotation(page, "vspan", start="20", end="30")
+        add_annotation(page, "text", text="bench", x="50", y="1")
+        page.wait_for_function(
+            """() => { const d = document.querySelector('#plotArea img'); if (!d || !d.dataset.summary) return false;
+              try { const s = JSON.parse(d.dataset.summary)[0], a = s.annotations;
+                return s.bands >= 5 && s.fitlines >= 5 && a.hlines >= 1 && a.vspans >= 1 && a.texts >= 1; } catch (e) { return false; } }""",
+            timeout=TIMEOUT)
+        page.wait_for_timeout(3000)
+        out.append(page.evaluate(CHANGE_JS, ["#title", f"bench title {i}"]))
+        page.close()
+    ctx.close()
+    return out
+
+
 def fmt(name, xs):
     s = stats(xs)
     return f"{name:<44} median {s['median']:9.0f}  min {s['min']:9.0f}  max {s['max']:9.0f}  (ms, n={s['n']})"
@@ -511,7 +551,7 @@ def main():
     ap.add_argument("--reps", type=int, default=5)
     ap.add_argument("--headed", action="store_true")
     ap.add_argument("--json")
-    ap.add_argument("--only", choices=["old", "new", "p5a"], help="old: Phase 3 までの項目だけ / new: Phase 4 の項目だけ / p5a: Phase 5a の項目だけ（省略時は全部）")
+    ap.add_argument("--only", choices=["old", "new", "p5a", "p5b"], help="old: Phase 3 までの項目だけ / new: Phase 4 の項目だけ / p5a: Phase 5a の項目だけ / p5b: Phase 5b の項目だけ（省略時は全部）")
     a = ap.parse_args()
     serve = Path(os.environ.get("E2E_SERVE_DIR") or REPO)
     srv, url = start_server(serve)
@@ -526,6 +566,8 @@ def main():
     make_datetime_csv(dt_path)
     eb_path = tmp / "bench_errorbars_10000x11.csv"
     make_errorbar_csv(eb_path)
+    band_path = tmp / "bench_bands_10000x16.csv"
+    make_band_csv(band_path)
     big_tsv = make_tsv()
     small_tsv = make_tsv(rows=30, ys=2)
     with sync_playwright() as p:
@@ -583,6 +625,13 @@ def main():
                 "errorbar_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in eb_change],
                 "ticks_change_to_plot_ms": tk_change,
                 "ticks_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in tk_change],
+            })
+        if a.only in (None, "p5b"):
+            b_change = bench_p5b_change(browser, url, a.reps, band_path)
+            res.update({
+                # Phase 5b で追加（帯・近似曲線・注釈を付けた設定変更。デバウンス込みと、250 ms を除いた値）
+                "p5b_change_to_plot_ms": b_change,
+                "p5b_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in b_change],
             })
         browser.close()
     for k, v in res.items():

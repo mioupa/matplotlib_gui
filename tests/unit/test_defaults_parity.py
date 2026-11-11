@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from mplgui.settings import default_settings
+from mplgui.settings import default_annotation, default_fit, default_settings
 
 pytestmark = pytest.mark.unit
 
@@ -30,3 +30,17 @@ def test_js_palette_has_default_series_color(tmp_path):
     out = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True, check=True, timeout=30)
     palette, color = json.loads(out.stdout)
     assert len(palette) == 11 and palette[0] == color == default_settings()["series"][0]["color"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node が無い")
+def test_js_and_python_element_defaults_match(tmp_path):
+    module = tmp_path / "defaults.mjs"
+    module.write_text((REPO / "js" / "defaults.js").read_text(encoding="utf-8"), encoding="utf-8")
+    script = (
+        f"import {{ DEFAULT_ANNOTATION, DEFAULT_FIT }} from {json.dumps(module.as_uri())}; "
+        "console.log(JSON.stringify([DEFAULT_ANNOTATION, DEFAULT_FIT]));"
+    )
+    out = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True, check=True, timeout=30)
+    annotation, fit = json.loads(out.stdout)
+    assert annotation == default_annotation()
+    assert fit == default_fit()

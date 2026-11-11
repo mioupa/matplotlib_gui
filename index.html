@@ -544,6 +544,29 @@
           </div>
         </details>
 
+        <details class="panel-section" id="sectionAnalysis" open>
+          <summary class="section-header"><span class="section-title">注釈・解析</span></summary>
+          <div class="section-body">
+          <div class="group">
+            <div class="series-toolbar">
+              <span id="annotationLabel" class="field-label">注釈</span>
+              <button id="addAnnotationBtn" class="small-btn secondary" type="button">+ 注釈を追加</button>
+            </div>
+            <div id="annotationList" class="series-list" role="group" aria-labelledby="annotationLabel"></div>
+            <div class="help-text">文字・水平線・垂直線・帯（横・縦）を図に加えます。位置は軸の種類に合わせて入力します（日時の X は日付、文字列の X は何番目か）。</div>
+          </div>
+          <div class="group">
+            <div class="series-toolbar">
+              <span id="fitLabel" class="field-label">近似曲線</span>
+              <button id="addFitBtn" class="small-btn secondary" type="button">+ 近似曲線を追加</button>
+            </div>
+            <div id="fitList" class="series-list" role="group" aria-labelledby="fitLabel"></div>
+            <div id="fitBarNote" class="help-text" hidden>棒グラフでは近似曲線は使えません。</div>
+            <div class="help-text">系列の点から、最小二乗法で1次式・多項式をあてはめます（X が数値の系列だけ）。対数軸でも、近似は軸の目盛ではなく元の値で行うので、曲線は曲がって見えます。</div>
+          </div>
+          </div>
+        </details>
+
         <details class="panel-section" id="sectionSave" open>
           <summary class="section-header"><span class="section-title">保存</span></summary>
           <div class="section-body">

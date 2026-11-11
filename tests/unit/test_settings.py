@@ -20,7 +20,7 @@ pytestmark = pytest.mark.unit
 def test_defaults_are_complete_and_parse():
     d = default_settings()
     assert d["version"] == SCHEMA_VERSION == 4
-    assert set(d) == {"version", "load", "plot", "axes", "series", "save"}
+    assert set(d) == {"version", "load", "plot", "axes", "series", "annotations", "fits", "save"}
     assert set(d["axes"]) == {"x", "y", "y2"}
     s = parse_settings(d)
     assert s.plot.type == "line" and s.plot.font_size == 15 and s.plot.figure.width == 8 and s.plot.figure.height == 6
@@ -787,3 +787,80 @@ def test_migrate_v3_to_v4_and_older():
     for bad in (5, 0, "4"):
         with pytest.raises(UserError):
             migrate_settings({"version": bad})
+
+
+# ---------------------------------------------------------------- Phase 5b: 系列のスタイル・注釈・近似曲線
+
+
+def test_5b_defaults():
+    d = default_settings()
+    assert d["annotations"] == [] and d["fits"] == []
+    assert d["series"][0]["marker"] == "auto" and d["series"][0]["alpha"] == 1
+    assert d["series"][0]["fill"] == {"lower": "", "upper": "", "alpha": 0.25}
+    s = parse_settings(d)
+    assert s.annotations == () and s.fits == ()
+    assert (s.series[0].marker, s.series[0].alpha, s.series[0].fill.enabled, s.series[0].fill.alpha) == ("auto", 1.0, False, 0.25)
+
+
+def test_v3_settings_without_5b_keys_parse_with_defaults():
+    s = parse_settings({"version": 3, "series": [{"y": "__idx__1"}]})
+    assert s.series[0].marker == "auto" and s.annotations == () and s.fits == ()
+
+
+def test_series_style_fields_are_validated_with_series_number():
+    base = default_settings()
+
+    def with_series(**kw):
+        raw = copy.deepcopy(base)
+        raw["series"] = [{"id": "s1"}, {"id": "s2", **kw}]
+        return raw
+
+    for kw, field_name in [
+        ({"marker": "zzz"}, "系列2の点の形"),
+        ({"alpha": 1.1}, "系列2の不透明度"),
+        ({"alpha": -0.1}, "系列2の不透明度"),
+        ({"fill": {"lower": "__idx__1", "upper": ""}}, "系列2の塗りつぶし帯"),
+        ({"fill": {"lower": "", "upper": "__idx__1"}}, "系列2の塗りつぶし帯"),
+        ({"fill": {"lower": "abc", "upper": "__idx__1"}}, "系列2の塗りつぶし帯"),
+        ({"fill": {"lower": "__idx__1", "upper": "__idx__2", "alpha": 2}}, "系列2の塗りつぶし帯"),
+    ]:
+        with pytest.raises(UserError) as e:
+            parse_settings(with_series(**kw))
+        assert e.value.field == field_name, kw
+
+
+def test_fill_alpha_is_hidden_when_no_band():
+    s = parse_settings({"series": [{"fill": {"lower": "", "upper": "", "alpha": "oops"}}]})
+    assert not s.series[0].fill.enabled
+
+
+def test_scatter_marker_none_is_error_but_line_is_fine():
+    parse_settings({"plot": {"type": "line"}, "series": [{"marker": "none"}]})
+    with pytest.raises(UserError) as e:
+        parse_settings({"plot": {"type": "scatter"}, "series": [{"marker": "none"}]})
+    assert e.value.field == "系列1の点の形"
+
+
+def test_bar_hides_marker_and_fill_but_keeps_alpha():
+    s = parse_settings(
+        {"plot": {"type": "bar"}, "series": [{"marker": "zzz", "fill": {"lower": "x", "upper": ""}, "alpha": 0.4}]}
+    ).series[0]
+    assert (s.marker, s.fill.enabled, s.alpha) == ("auto", False, 0.4)
+
+
+def test_annotation_and_fit_elements_are_filled_from_defaults():
+    s = parse_settings({"annotations": [{}], "fits": [{}]})
+    a, f = s.annotations[0], s.fits[0]
+    assert (a.id, a.kind, a.color, a.line_style, a.line_width, a.alpha, a.font_size) == ("a1", "hline", "#000000", "dashed", 1.0, None, None)
+    assert (f.id, f.series, f.model, f.degree, f.show, f.color) == ("f1", "s1", "linear", 1, "legend", "")
+
+
+def test_annotation_and_fit_lists_must_be_lists():
+    for key in ("annotations", "fits"):
+        with pytest.raises(UserError):
+            parse_settings({key: {}})
+
+
+def test_annotation_ids_are_made_unique():
+    s = parse_settings({"annotations": [{"id": "a1", "y": 1}, {"id": "a1", "y": 2}, {"y": 3}]})
+    assert len({a.id for a in s.annotations}) == 3

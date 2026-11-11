@@ -16,6 +16,7 @@ from .errors import UserError
 from .loader import is_blank_cell as _is_blank_cell
 from .loader import looks_numeric as _looks_numeric
 from .settings import AxisSettings, ErrorSpec, Settings, check_axis_range, validate_date_range
+from .settings import _DATE_EXAMPLE, _date_range_value, _to_float
 
 MAX_EXAMPLES = 3
 NO_DRAWABLE_DATA = "描画可能なデータがありません。"
@@ -157,6 +158,54 @@ class ErrorPlan:
 
 
 @dataclass(frozen=True)
+class FillPlan:
+    """塗りつぶし帯（fill_between）。列は系列のデータ元の列番号（値は下端・上端そのもの）。"""
+
+    lower_index: int
+    upper_index: int
+    lower_label: str  # コメント用の列の表示（「名前 [番号]」）
+    upper_label: str
+    alpha: float
+
+
+@dataclass(frozen=True)
+class AnnotationPlan:
+    """解釈済みの注釈。位置は、軸の種類で解釈した値（数値は float、日時の X は正規化した日付の文字列）。"""
+
+    number: int  # 1 始まり
+    kind: str  # text / hline / vline / hspan / vspan
+    text: str = ""
+    x: float | str | None = None  # text（データ座標・図の中の割合）と vline の X
+    y: float | None = None  # text と hline の Y
+    start: float | str | None = None  # hspan は Y、vspan は X の範囲
+    end: float | str | None = None
+    date: bool = False  # X 軸の値（x / vspan の start・end）が日時（pd.Timestamp で書く）
+    coords: str = "data"  # text だけ
+    target: str = "ax"  # ax / ax2
+    color: str = "#000000"
+    line_style: str = "dashed"
+    line_width: float = 1.0
+    alpha: float | None = None  # None = 自動（帯 0.2、それ以外 1）
+    font_size: float | None = None  # None = FONT_SIZE
+    label: str = ""
+
+
+@dataclass(frozen=True)
+class FitPlan:
+    number: int  # 1 始まり
+    series_number: int  # 近似する系列の番号（1 始まり）
+    series_label: str  # コメント・凡例名用の系列の名前
+    degree: int  # linear は 1
+    show: str  # legend / text / none
+    color: str  # 実際に使う色（"" だった場合は系列の色）
+    line_style: str
+    line_width: float
+    label_prefix: str  # 凡例・図の中の文字の先頭（「温度の近似」）
+    text_index: int  # show が text の近似曲線のうちの順番（0 始まり。それ以外は -1）
+    target: str  # ax / ax2
+
+
+@dataclass(frozen=True)
 class SeriesPlan:
     number: int  # 1 始まり
     y_index: int
@@ -176,6 +225,9 @@ class SeriesPlan:
     y_err: ErrorPlan | None = None  # Y 方向のエラーバー（指定が無ければ None）
     x_err: ErrorPlan | None = None  # X 方向のエラーバー（line / scatter のみ）
     cap_size: float = 3.0  # エラーバーの端の線の長さ
+    marker: str = ""  # line は描く点の形（"" = 点なし）、scatter は "" = 既定の丸（引数を足さない）
+    alpha: float = 1.0  # 不透明度（1 のときはコードに書かない）
+    fill: FillPlan | None = None  # 塗りつぶし帯（line / scatter のみ）
 
 
 @dataclass(frozen=True)
@@ -236,6 +288,8 @@ class PlotPlan:
     sources: tuple[PlanSource, ...] = ()  # 描画に使うデータ元だけ（load.files の順）
     multi_source: bool = False  # load.files が2つ以上（生成コードで DATA_FILE_N / dfN と書く）
     axes: AxesPlan = field(default_factory=AxesPlan)  # 軸ごとの目盛の設定（効くものだけ）
+    annotations: tuple[AnnotationPlan, ...] = ()
+    fits: tuple[FitPlan, ...] = ()  # 近似曲線（line / scatter のみ）
 
     @property
     def plotted(self) -> tuple[SeriesPlan, ...]:
@@ -347,6 +401,222 @@ def _add_error_extent(ext: "_Extents", axis: str, base: pd.Series, plus, minus) 
     """エラーバーの両端（base - 下、base + 上）を、軸の範囲に加える（欠けた誤差の点は加えない）。"""
     ext.add_values(axis, base - minus)
     ext.add_values(axis, base + plus)
+
+
+# ---------------------------------------------------------------- series style (G3)
+
+DEFAULT_BAND_NOTE = "塗りつぶし帯"
+
+
+def _marker_plan(series, plot_type: str) -> tuple[str, float]:
+    """点の形と点サイズ（面積）。line の「自動」は今までどおり（点サイズが 0 より大きいときだけ丸）。
+
+    形を選んで点サイズが自動のときは、散布図と同じ面積 24 で描く。scatter の「自動」は引数を足さない。"""
+    shape = series.marker
+    if plot_type == "scatter":
+        return ("" if shape == "auto" else shape), series.effective_marker_size("scatter")
+    size = series.effective_marker_size("line")
+    if shape == "auto":
+        return ("o" if size > 0 else ""), size
+    if shape == "none":
+        return "", 0.0
+    return shape, size if size > 0 else 24.0
+
+
+def _band_column(df: pd.DataFrame, requested: str, n: int) -> int:
+    field_name = f"系列{n}の塗りつぶし帯"
+    idx = parse_column_index(requested)
+    if idx is None:
+        raise UserError(f"系列{n}の塗りつぶし帯の列の指定が正しくありません。列を選び直してください。", field=field_name)
+    if idx >= len(df.columns):
+        raise UserError(_column_out_of_range(idx, len(df.columns)), field=field_name)
+    return idx
+
+
+def _band_values(df: pd.DataFrame, idx: int, mask: pd.Series, n: int, what: str, load, warnings: list[dict]) -> pd.Series:
+    """帯の端の列を数値にする（数値にできない値は NaN。空欄も NaN で、警告しない）。警告の件数と例は、実際に描く行（mask）だけで数える。"""
+    raw = df.iloc[:, idx]
+    mask = mask.reindex(df.index, fill_value=False)
+    numeric, _, _ = coerce_numeric(raw)
+    _, count, examples = coerce_numeric(raw[mask])
+    if count:
+        ex = ", ".join(f'"{e}"' for e in examples)
+        message = (
+            f"系列{n}: 塗りつぶし帯（{what}）の列「{df.columns[idx]}」[{idx}] に数値にできない値が{count}件あったため、"
+            f"その点の帯は描きません（例: {ex}）。{load_hint(examples, load)}"
+        )
+        warnings.append({"series": n, "message": message})
+    return numeric
+
+
+def _plan_fill(df: pd.DataFrame, series, n: int, ok: pd.Series, y_axis: str, ext: "_Extents", load, warnings: list[dict]):
+    fill = series.fill
+    if not fill.enabled:
+        return None
+    lo_idx = _band_column(df, fill.lower, n)
+    hi_idx = _band_column(df, fill.upper, n)
+    lower = _band_values(df, lo_idx, ok, n, "下端", load, warnings)
+    upper = _band_values(df, hi_idx, ok, n, "上端", load, warnings)
+    both = lower.notna() & upper.notna() & ok.reindex(df.index, fill_value=False)
+    ext.add_values(y_axis, lower[both])
+    ext.add_values(y_axis, upper[both])
+    return FillPlan(lo_idx, hi_idx, _label_for(df, lo_idx)[1], _label_for(df, hi_idx)[1], fill.alpha)
+
+
+# ---------------------------------------------------------------- fits (G5)
+
+
+def _plan_fits(settings: Settings) -> list[tuple[int, object]]:
+    """(近似曲線の番号, FitSettings) を、系列の番号ごとに引けるように並べる。棒グラフでは使わない。"""
+    if settings.plot.type == "bar":
+        return []
+    return list(enumerate(settings.fits, start=1))
+
+
+def _fit_error(n: int, message: str) -> UserError:
+    return UserError(f"近似曲線{n}: {message}", field=f"近似曲線{n}の系列")
+
+
+def _check_fit_data(n: int, fit, p: "SeriesPlan", x: pd.Series, y: pd.Series) -> None:
+    """近似に使う点（x, y は描く行だけ）の検査。"""
+    if p.datetime_x:
+        raise _fit_error(n, "X が日時の列の系列は近似できません。")
+    if p.categorical_x:
+        raise _fit_error(n, "X が文字列の列の系列は近似できません。")
+    distinct = int(pd.Series(x).nunique())
+    need = fit.degree + 1
+    if distinct < need:
+        raise _fit_error(n, f"{fit.degree}次式で近似するには、X の異なる値が{need}個以上必要です（今は{distinct}個）。")
+    if int(pd.Series(y).nunique()) < 2:
+        raise _fit_error(n, "Y の値がすべて同じなので、近似できません（決定係数 R² を計算できません）。")
+
+
+def _build_fit_plans(settings: Settings, plans: list["SeriesPlan"]) -> tuple[FitPlan, ...]:
+    ids = {s.id: i for i, s in enumerate(settings.series)}
+    out = []
+    text_index = 0
+    for n, fit in _plan_fits(settings):
+        i = ids[fit.series]
+        sp, ss = plans[i], settings.series[i]
+        if not sp.has_points:
+            raise _fit_error(n, "近似する系列に、描ける点がありません。")
+        base = sp.legend_label if not sp.legend_label.startswith("_") else f"系列{sp.number}"
+        out.append(
+            FitPlan(
+                number=n,
+                series_number=sp.number,
+                series_label=sp.legend_label,
+                degree=fit.degree,
+                show=fit.show,
+                color=fit.color or ss.color,
+                line_style=fit.line_style,
+                line_width=ss.line_width,
+                label_prefix=f"{base}の近似",
+                text_index=text_index if fit.show == "text" else -1,
+                target="ax2" if sp.secondary else "ax",
+            )
+        )
+        if fit.show == "text":
+            text_index += 1
+    return tuple(out)
+
+
+# ---------------------------------------------------------------- annotations (G4)
+
+_ANNOTATION_DATE_HELP = f"年が先頭の日付か日時で入力してください（例: {_DATE_EXAMPLE}）"
+
+
+def _annotation_value(text: str, n: int, what: str, *, kind: str, log: bool) -> float | str:
+    """注釈の位置の入力 → 値。kind は軸の種類（number / log / datetime / category）。datetime は正規化した日付の文字列、それ以外は float。"""
+    field_name = f"注釈{n}の{what}"  # 「注釈1のX」「注釈1の開始」
+    if not text.strip():
+        raise UserError(f"{field_name}を入力してください。", field=field_name)
+    if kind == "datetime":
+        try:
+            return _date_range_value(text, "")
+        except UserError:
+            raise UserError(
+                f"{field_name}が正しくありません。X が日時の列なので、{_ANNOTATION_DATE_HELP}。", field=field_name
+            ) from None
+    value = _to_float(text)
+    if value is None:
+        if _looks_like_date(text):
+            raise UserError(f"{field_name}に日付は使えません。X が日時の列ではないので、数値で入力してください。", field=field_name)
+        hint = "（文字列の列では、何番目のカテゴリか（0 始まり）を数で指定します）" if kind == "category" else ""
+        raise UserError(f"{field_name}は数値で入力してください。{hint}", field=field_name)
+    if kind == "log" or log:
+        if value <= 0:
+            raise UserError(f"{field_name}は、対数軸では0より大きい値で入力してください。", field=field_name)
+    return value
+
+
+def _looks_like_date(text: str) -> bool:
+    try:
+        _date_range_value(text, "")
+    except UserError:
+        return False
+    return True
+
+
+def _plan_annotations(settings: Settings, x_kind: str, uses_secondary: bool, ext: "_Extents") -> tuple[AnnotationPlan, ...]:
+    out = []
+    y_log = {"y": settings.axes.y.scale == "log", "y2": settings.axes.y2.scale == "log"}
+    for n, a in enumerate(settings.annotations, start=1):
+        use_y2 = a.axis == "y2" and uses_secondary
+        target = "ax2" if use_y2 else "ax"
+        y_axis = "y2" if use_y2 else "y"
+        common = dict(
+            number=n, kind=a.kind, target=target, color=a.color, alpha=a.alpha, label=a.label, line_style=a.line_style,
+            line_width=a.line_width,
+        )
+
+        def xval(text: str, what: str = "X") -> float | str:
+            return _annotation_value(text, n, what, kind=x_kind, log=False)
+
+        def yval(text: str, what: str = "Y") -> float:
+            return _annotation_value(text, n, what, kind="log" if y_log[y_axis] else "number", log=False)  # type: ignore[return-value]
+
+        def add_x(*values) -> None:
+            if x_kind in {"number", "log"}:
+                nums = [float(v) for v in values]
+                ext.add("x", min(nums), max(nums))
+            elif x_kind == "datetime":
+                secs = [_timestamp_seconds(v) for v in values]
+                ext.add("x", min(secs), max(secs))
+
+        def add_y(*values) -> None:
+            ext.add(y_axis, min(values), max(values))
+
+        if a.kind == "text":
+            if not a.text.strip():
+                raise UserError(f"注釈{n}の文字を入力してください。", field=f"注釈{n}の文字")
+            if a.coords == "axes":
+                x = _annotation_value(a.x, n, "X", kind="number", log=False)
+                y = _annotation_value(a.y, n, "Y", kind="number", log=False)
+                out.append(AnnotationPlan(**common, text=a.text, x=x, y=y, coords="axes", font_size=a.font_size))
+            else:
+                x = xval(a.x)
+                y = yval(a.y)
+                out.append(
+                    AnnotationPlan(**common, text=a.text, x=x, y=y, coords="data", date=x_kind == "datetime", font_size=a.font_size)
+                )
+        elif a.kind == "hline":
+            y = yval(a.y)
+            add_y(y)
+            out.append(AnnotationPlan(**common, y=y))
+        elif a.kind == "vline":
+            x = xval(a.x)
+            add_x(x)
+            out.append(AnnotationPlan(**common, x=x, date=x_kind == "datetime"))
+        elif a.kind == "hspan":
+            lo, hi = yval(a.start, "開始"), yval(a.end, "終了")
+            add_y(lo, hi)
+            out.append(AnnotationPlan(**common, start=lo, end=hi))
+        else:  # vspan
+            lo, hi = xval(a.start, "開始"), xval(a.end, "終了")
+            add_x(lo, hi)
+            out.append(AnnotationPlan(**common, start=lo, end=hi, date=x_kind == "datetime"))
+    return tuple(out)
 
 
 NOT_LOADED_MESSAGE = "データ{n}（{name}）を読み込めていません。読込設定やファイルを確認してください。"
@@ -555,6 +825,8 @@ def _plan_xy(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str])
     warnings: list[dict] = []
     category_values: set = set()
     ext = _Extents()
+    fit_settings = _plan_fits(settings)
+    fits_of = {settings.series[i].id: [(k, f) for k, f in fit_settings if f.series == settings.series[i].id] for i in range(len(settings.series))}
     for n, (df, series, y_request) in enumerate(zip(dfs, settings.series, y_requests), start=1):
         x_index = resolve_column_index(df, series.x) if series.x else None
         x_label = str(df.columns[x_index]) if x_index is not None else "index"
@@ -576,6 +848,7 @@ def _plan_xy(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str])
             warnings.append(dropped_warning(n, f"系列{n}（{y_name}）", y_dropped, y_examples, settings.load))
 
         has_points = bool((y_numeric.notna() & pd.notna(x_series)).any())
+        marker, marker_size = _marker_plan(series, plot_type)
         plans.append(
             SeriesPlan(
                 number=n,
@@ -590,15 +863,20 @@ def _plan_xy(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str])
                 and not datetime_x
                 and not convert_x
                 and not pd.api.types.is_numeric_dtype(x_series.dtype),
-                marker_size=series.effective_marker_size(plot_type),
+                marker_size=marker_size,
                 has_points=has_points,
                 secondary=series.secondary_axis,
                 datetime_x=datetime_x,
+                marker=marker,
+                alpha=series.alpha,
             )
         )
         if has_points:
             ok = y_numeric.notna() & pd.notna(x_series)
             y_axis = "y2" if series.secondary_axis else "y"
+            fill_plan = _plan_fill(df, series, n, ok, y_axis, ext, settings.load, warnings)
+            for k, fit in fits_of[series.id]:
+                _check_fit_data(k, fit, plans[-1], x_series[ok], y_numeric[ok])
             ext.add_values(y_axis, y_numeric[ok])
             if datetime_x:
                 ext.add_values("x", _seconds(x_series[ok]))
@@ -616,7 +894,7 @@ def _plan_xy(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str])
                 _add_error_extent(ext, y_axis, y_numeric[ok], _take(y_plus, ok), _take(y_minus, ok))
             if x_err is not None:
                 _add_error_extent(ext, "x", x_series[ok], _take(x_plus, ok), _take(x_minus, ok))
-            plans[-1] = replace(plans[-1], y_err=y_err, x_err=x_err, cap_size=bars.cap_size)
+            plans[-1] = replace(plans[-1], y_err=y_err, x_err=x_err, cap_size=bars.cap_size, fill=fill_plan)
         if has_points and x_index is not None and plans[-1].categorical_x:
             shown = x_series[y_numeric.notna() & x_series.notna()]
             category_values.update(shown.tolist())
@@ -639,6 +917,7 @@ def _plan_xy(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str])
         datetime_x=any(p.datetime_x and p.has_points for p in plans),
         thin_categorical_x=len(category_values) > MAX_CATEGORY_TICKS,
         axes_args=(x_kind, ext, len(category_values)),
+        fits=_build_fit_plans(settings, plans),
     )
 
 
@@ -696,6 +975,7 @@ def _plan_bar(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> Pl
                 has_points=True,
                 secondary=series.secondary_axis,
                 datetime_x=datetime_x,
+                alpha=series.alpha,
             )
         )
 
@@ -753,11 +1033,13 @@ def _finish(
     thin_categorical_x: bool = False,
     bar_date_format: str | None = None,
     axes_args: tuple[str, _Extents, int] | None = None,
+    fits: tuple[FitPlan, ...] = (),
 ) -> PlotPlan:
     primary = [p.data_label for p in plans if not p.secondary]
     secondary = [p.data_label for p in plans if p.secondary]
     uses_secondary = any(p.secondary and p.has_points for p in plans)
     x_kind, ext, categories = axes_args or ("number", _Extents(), 0)
+    annotations = _plan_annotations(settings, x_kind, uses_secondary, ext)  # 範囲を ext に足すので、軸の計画より前
     return PlotPlan(
         skip_rows=settings.plot.skip_rows,
         plot_type=settings.plot.type,
@@ -773,4 +1055,6 @@ def _finish(
         thin_categorical_x=thin_categorical_x,
         bar_date_format=bar_date_format,
         axes=_plan_axes(settings, x_kind, uses_secondary, ext, categories),
+        annotations=annotations,
+        fits=fits,
     )
