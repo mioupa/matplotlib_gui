@@ -23,3 +23,4 @@
 | `datetime_iso_tz.csv` | ISO 8601。時刻（すべて `+09:00`）、混在（`Z` と `+09:00` が交互。UTC にそろえる）、値 |
 | `dates_ja.csv` | `2026年1月5日` 形式の日付（時刻なし、8行）と売上。棒グラフ用 |
 | `datetime.xlsx` | Excel の日時セル（datetime 型、6時間刻みで24行）/ 値 / 温度 |
+| `errorbars.csv` | エラーバー用。x（0〜11）/ y / y2 / sd（4行目は空欄、7行目は `bad`、10行目は負の値 `-0.2`）/ sd_low / sd_high（上下で別の誤差）/ xsd（X 方向の誤差） |

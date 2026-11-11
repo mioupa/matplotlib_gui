@@ -201,7 +201,7 @@
             </select>
           </div>
 
-          <div class="row group">
+          <div id="xRangeGroup" class="row group">
             <div>
               <label for="xMin">X軸最小値</label>
               <input id="xMin" type="number" step="any" placeholder="自動" />
@@ -210,6 +210,20 @@
               <label for="xMax">X軸最大値</label>
               <input id="xMax" type="number" step="any" placeholder="自動" />
             </div>
+          </div>
+
+          <div id="xDateRangeGroup" class="group" hidden>
+            <div class="row">
+              <div>
+                <label for="xDateMin">X軸の最小値（日時）</label>
+                <input id="xDateMin" type="text" placeholder="2026-01-01" autocomplete="off" />
+              </div>
+              <div>
+                <label for="xDateMax">X軸の最大値（日時）</label>
+                <input id="xDateMax" type="text" placeholder="2026-12-31 23:59" autocomplete="off" />
+              </div>
+            </div>
+            <div class="help-text">年が先頭の日付か日時で入力します（例: 2026-01-31、2026-01-31 12:00、2026/1/31 9:05:07）。空欄は自動です。</div>
           </div>
 
           <div id="xDateFormatGroup" class="group" hidden>
@@ -230,6 +244,58 @@
             <div class="help-text">X が日時の列のときの目盛の書き方です。棒グラフでは、棒のラベルの書き方になります。</div>
           </div>
 
+          <details id="xTickGroup" class="tick-details">
+            <summary class="tick-summary">X軸の目盛</summary>
+            <div class="tick-body">
+              <div class="group">
+                <label for="xMajorStep">主目盛の間隔</label>
+                <div id="xMajorStepRow" class="tick-step-row">
+                  <input id="xMajorStep" type="number" step="any" min="0" placeholder="自動" aria-describedby="xMajorStepHelp" />
+                            <span id="xMajorStepUnitWrap" hidden>
+                              <select id="xMajorStepUnit" aria-label="主目盛の間隔の単位">
+                                <option value="year">年</option>
+                                <option value="month">月</option>
+                                <option value="day">日</option>
+                                <option value="hour">時</option>
+                                <option value="minute">分</option>
+                                <option value="second">秒</option>
+                              </select>
+                            </span>
+                </div>
+                <div id="xMajorStepHelp" class="help-text">空欄は自動です。</div>
+              </div>
+              <div id="xMinorGroup" class="group">
+                <label for="xMinorTicks">副目盛</label>
+                <select id="xMinorTicks">
+                  <option value="auto">自動（副目盛線に合わせる）</option>
+                  <option value="on">表示</option>
+                  <option value="off">表示しない</option>
+                </select>
+                <div id="xMinorDivisionsWrap" class="tick-sub" hidden>
+                  <label for="xMinorDivisions">分割数</label>
+                  <input id="xMinorDivisions" type="number" step="1" min="2" max="10" placeholder="自動" />
+                </div>
+              </div>
+              <div id="xTickFormatGroup" class="group">
+                <label for="xTickFormat">目盛の数字の書式</label>
+                <select id="xTickFormat">
+                  <option value="auto">自動</option>
+                  <option value="fixed">小数（桁数を指定）</option>
+                  <option value="sci">指数表記（1.5e+03）</option>
+                  <option value="pow10">10^n 表記</option>
+                </select>
+                <div id="xTickDecimalsWrap" class="tick-sub" hidden>
+                  <label for="xTickDecimals">小数の桁数</label>
+                  <input id="xTickDecimals" type="number" step="1" min="0" max="10" />
+                </div>
+              </div>
+              <div class="group inline">
+                <input id="xInverted" type="checkbox" />
+                <label for="xInverted">X軸を反転</label>
+              </div>
+            </div>
+          </details>
+
           <div class="group">
             <label for="yScale">Y軸スケール</label>
             <select id="yScale">
@@ -249,6 +315,48 @@
             </div>
           </div>
 
+          <details id="yTickGroup" class="tick-details">
+            <summary class="tick-summary">Y軸の目盛</summary>
+            <div class="tick-body">
+              <div class="group">
+                <label for="yMajorStep">主目盛の間隔</label>
+                <div id="yMajorStepRow" class="tick-step-row">
+                  <input id="yMajorStep" type="number" step="any" min="0" placeholder="自動" aria-describedby="yMajorStepHelp" />
+                </div>
+                <div id="yMajorStepHelp" class="help-text">空欄は自動です。</div>
+              </div>
+              <div id="yMinorGroup" class="group">
+                <label for="yMinorTicks">副目盛</label>
+                <select id="yMinorTicks">
+                  <option value="auto">自動（副目盛線に合わせる）</option>
+                  <option value="on">表示</option>
+                  <option value="off">表示しない</option>
+                </select>
+                <div id="yMinorDivisionsWrap" class="tick-sub" hidden>
+                  <label for="yMinorDivisions">分割数</label>
+                  <input id="yMinorDivisions" type="number" step="1" min="2" max="10" placeholder="自動" />
+                </div>
+              </div>
+              <div id="yTickFormatGroup" class="group">
+                <label for="yTickFormat">目盛の数字の書式</label>
+                <select id="yTickFormat">
+                  <option value="auto">自動</option>
+                  <option value="fixed">小数（桁数を指定）</option>
+                  <option value="sci">指数表記（1.5e+03）</option>
+                  <option value="pow10">10^n 表記</option>
+                </select>
+                <div id="yTickDecimalsWrap" class="tick-sub" hidden>
+                  <label for="yTickDecimals">小数の桁数</label>
+                  <input id="yTickDecimals" type="number" step="1" min="0" max="10" />
+                </div>
+              </div>
+              <div class="group inline">
+                <input id="yInverted" type="checkbox" />
+                <label for="yInverted">Y軸を反転</label>
+              </div>
+            </div>
+          </details>
+
           <div id="y2AxisSettingsGroup" class="group" style="display: none">
             <div class="group">
               <label for="y2Scale">第2Y軸スケール</label>
@@ -267,6 +375,47 @@
                 <input id="y2Max" type="number" step="any" placeholder="自動" />
               </div>
             </div>
+            <details id="y2TickGroup" class="tick-details">
+              <summary class="tick-summary">第2Y軸の目盛</summary>
+              <div class="tick-body">
+                <div class="group">
+                  <label for="y2MajorStep">主目盛の間隔</label>
+                  <div id="y2MajorStepRow" class="tick-step-row">
+                    <input id="y2MajorStep" type="number" step="any" min="0" placeholder="自動" aria-describedby="y2MajorStepHelp" />
+                  </div>
+                  <div id="y2MajorStepHelp" class="help-text">空欄は自動です。</div>
+                </div>
+                <div id="y2MinorGroup" class="group">
+                  <label for="y2MinorTicks">副目盛</label>
+                  <select id="y2MinorTicks">
+                    <option value="auto">自動（副目盛線に合わせる）</option>
+                    <option value="on">表示</option>
+                    <option value="off">表示しない</option>
+                  </select>
+                  <div id="y2MinorDivisionsWrap" class="tick-sub" hidden>
+                    <label for="y2MinorDivisions">分割数</label>
+                    <input id="y2MinorDivisions" type="number" step="1" min="2" max="10" placeholder="自動" />
+                  </div>
+                </div>
+                <div id="y2TickFormatGroup" class="group">
+                  <label for="y2TickFormat">目盛の数字の書式</label>
+                  <select id="y2TickFormat">
+                    <option value="auto">自動</option>
+                    <option value="fixed">小数（桁数を指定）</option>
+                    <option value="sci">指数表記（1.5e+03）</option>
+                    <option value="pow10">10^n 表記</option>
+                  </select>
+                  <div id="y2TickDecimalsWrap" class="tick-sub" hidden>
+                    <label for="y2TickDecimals">小数の桁数</label>
+                    <input id="y2TickDecimals" type="number" step="1" min="0" max="10" />
+                  </div>
+                </div>
+                <div class="group inline">
+                  <input id="y2Inverted" type="checkbox" />
+                  <label for="y2Inverted">第2Y軸を反転</label>
+                </div>
+              </div>
+            </details>
           </div>
 
           <div class="row group">
@@ -279,6 +428,18 @@
               <label for="showMinorGrid">副目盛線を表示</label>
             </div>
           </div>
+
+          <div class="row group">
+            <div class="group inline">
+              <input id="spineTop" type="checkbox" />
+              <label for="spineTop">上の枠線を表示</label>
+            </div>
+            <div class="group inline">
+              <input id="spineRight" type="checkbox" />
+              <label for="spineRight">右の枠線を表示</label>
+            </div>
+          </div>
+          <div id="spineRightHelp" class="help-text group" hidden>第2Y軸があるときは、右の枠線（第2Y軸の線）は消せません。</div>
           </div>
         </details>
 

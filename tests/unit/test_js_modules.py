@@ -56,7 +56,7 @@ def test_new_series_color_is_first_unused_palette_color(tmp_path):
     assert res["first"] == "#FF4B00"
     assert res["second"] == "#03AF7A"
     assert res["allUsed"] == 11
-    assert res["newSource"] == "" and res["version"] == 3
+    assert res["newSource"] == "" and res["version"] == 4
     assert res["cycled"] == res["cycledExpected"]
 
 

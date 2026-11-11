@@ -352,6 +352,30 @@ def apply_datetime_columns(df: pd.DataFrame, specs: tuple[DatetimeColumn, ...]) 
     return warnings_out
 
 
+def is_blank_cell(value) -> bool:
+    if value is None:
+        return True
+    try:
+        if pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return isinstance(value, str) and value.strip() == ""
+
+
+def looks_numeric(raw: pd.Series) -> bool:
+    """文字列を含む列でも、空欄以外の半数以上が数値に変換できるなら数値列として扱う（dataprep と共有する規則）。"""
+    if pd.api.types.is_numeric_dtype(raw.dtype):
+        return True
+    if pd.api.types.is_datetime64_any_dtype(raw.dtype):
+        return False  # 日時の列は数値として読まない（10,000 個の値を1つずつ調べない）
+    non_blank = [v for v in raw.tolist() if not is_blank_cell(v)]
+    if not non_blank:
+        return False
+    ok = pd.to_numeric(pd.Series(non_blank, dtype=object), errors="coerce").notna().sum()
+    return bool(ok * 2 >= len(non_blank))
+
+
 def column_kind(dtype) -> str:
     if pd.api.types.is_datetime64_any_dtype(dtype):
         return "datetime"
@@ -481,7 +505,8 @@ def load_dataframe(file_bytes: bytes, filename: str, delimiter: str, has_header:
 def column_options(df: pd.DataFrame) -> list[dict]:
     """列セレクト用の選択肢。値は列番号ベース（"__idx__N"）で、同名列も区別できる。"""
     return [
-        {"value": f"__idx__{i}", "label": f"{col} [{i}]", "kind": column_kind(df.dtypes.iloc[i])}
+        {"value": f"__idx__{i}", "label": f"{col} [{i}]", "kind": column_kind(df.dtypes.iloc[i]),
+         "numericLike": looks_numeric(df.iloc[:, i])}
         for i, col in enumerate(df.columns)
     ]
 

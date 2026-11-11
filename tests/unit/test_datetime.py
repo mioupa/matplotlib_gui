@@ -261,6 +261,7 @@ def test_iso_tz_fixture():
 def test_api_load_file_reports_kinds_and_warnings():
     out = json.loads(api.load_file_json("datetime.csv", (FIXTURES / "datetime.csv").read_bytes(), json.dumps(default_settings())))
     assert out["ok"] and out["columns"][0]["kind"] == "datetime" and out["preview"]["columnKinds"][0] == "datetime"
+    assert out["columns"][0]["numericLike"] is False
     assert any("測定エラー" in w for w in out["warnings"])
     off = default_settings()
     off["load"]["parseDates"] = False
@@ -366,15 +367,12 @@ def test_mixed_datetime_and_other_x_is_an_error():
         plan(df, series=[{"x": "__idx__0", "y": "__idx__1"}, {"x": "", "y": "__idx__2"}])
 
 
-def test_datetime_x_with_log_or_range_is_an_error():
+def test_datetime_x_with_log_is_an_error_and_numeric_range_is_ignored():
     with pytest.raises(UserError) as e:
         plan(dt_frame(), mutate=lambda s: s["axes"]["x"].update(scale="log"))
     assert str(e.value) == "X が日時の列のときは、X軸を対数にできません。" and e.value.field == "X軸スケール"
-    for key in ("min", "max"):
-        with pytest.raises(UserError) as e:
-            plan(dt_frame(), mutate=lambda s, k=key: s["axes"]["x"].update(**{k: 3}))
-        assert str(e.value) == "X が日時の列のときは、X軸の最小値・最大値は指定できません。空欄にしてください。"
-        assert e.value.field == "X軸の範囲"
+    for key in ("min", "max"):  # 数値の範囲の欄は日時の X では隠れているので、エラーにせず使わない
+        assert plan(dt_frame(), mutate=lambda s, k=key: s["axes"]["x"].update(**{k: 3})).axes.x.kind == "datetime"
 
 
 def test_datetime_y_is_an_error():

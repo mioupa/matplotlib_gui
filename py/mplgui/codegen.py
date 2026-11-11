@@ -13,11 +13,11 @@ import math
 from dataclasses import dataclass
 from typing import Callable
 
-from .dataprep import PlotPlan, SeriesPlan
+from .dataprep import AxisPlan, ErrorPlan, PlotPlan, SeriesPlan
 from .fonts import LATIN_FONTS, SANS_SERIF_PRIORITY
 from .formats import FORMATS, build_filename, savefig_kwargs, savefig_rc
 from .loader import DatetimeColumn, SourceInfo
-from .settings import SeriesSettings, Settings
+from .settings import AxisSettings, SeriesSettings, Settings
 
 SCRIPT_NAME = "plot.py"
 
@@ -28,6 +28,10 @@ MARGIN_ERROR = "余白の設定を適用できませんでした。左 < 右、�
 
 def axis_error_message(label: str) -> str:
     return f"{label}軸のスケールまたは範囲を適用できませんでした。範囲の値を確認してください。"
+
+
+def tick_error_message(label: str) -> str:
+    return f"{label}軸の目盛を設定できませんでした。目盛の設定を確認してください。"
 
 
 # ---------------------------------------------------------------- literals and comments
@@ -153,7 +157,9 @@ def _label_size_expr(font_size: float) -> str:
 # ---------------------------------------------------------------- sections
 
 
-def _emit_header(b: _Builder, sources: list[SourceInfo], latin_font: str = "default", plan: PlotPlan | None = None) -> None:
+def _emit_header(
+    b: _Builder, sources: list[SourceInfo], latin_font: str = "default", plan: PlotPlan | None = None, settings: Settings | None = None
+) -> None:
     latin = LATIN_FONTS.get(latin_font)
     if len(sources) == 1:
         source = sources[0]
@@ -175,7 +181,7 @@ def _emit_header(b: _Builder, sources: list[SourceInfo], latin_font: str = "defa
     if plan is not None and _uses_date_axis(plan):
         b.add("import matplotlib.dates as mdates")
     b.add("import matplotlib.pyplot as plt")
-    if plan is not None and plan.thin_categorical_x:
+    if plan is not None and settings is not None and _uses_ticker(settings, plan):
         b.add("import matplotlib.ticker as ticker")
     if latin is not None:
         b.add("from matplotlib import font_manager")
@@ -357,6 +363,111 @@ def _style_args(s: SeriesSettings) -> str:
     return f"color={literal(s.color)}, linewidth={literal(s.line_width)}, linestyle={literal(s.line_style)}"
 
 
+# ---- error bars (G1) ----
+
+ERROR_BAR_FUNCTION = (
+    'def draw_error_bars(ax, x, y, low, high, *, direction="y", color="black", linewidth=1.0, capsize=3.0, zorder=2):',
+    '    """ax.errorbar(x, y, yerr=…, fmt="none", capsize=…) と同じ見た目のエラーバーを描く（点が多くても速く描ける）。',
+    "",
+    "    ax.errorbar は点ごとに別の線を作るので、点が多いと遅い。そこで、各点の線（low → high）を NaN で区切った1本の線にまとめる。",
+    "    両端の短い線（capsize）は、その線の端点の記号で描く（NaN の区切りには記号が付かない）。",
+    "    direction=\"y\" は縦線（low・high は Y の下端・上端）、",
+    "    direction=\"x\" は横線（low・high は X の左端・右端）。low・high のどちらかが NaN の点は描かない。",
+    '    """',
+    "    low = np.asarray(low, dtype=float)",
+    "    high = np.asarray(high, dtype=float)",
+    "    ends = np.column_stack([low, high, np.full(len(low), np.nan)]).ravel()  # 下端, 上端, 区切り（NaN）, …",
+    '    style = dict(color=color, linewidth=linewidth, zorder=zorder, label="_errorbar")  # _ で始まるラベルは凡例に出ない',
+    '    cap = ("_" if direction == "y" else "|") if capsize > 0 else "None"',
+    '    cap_style = dict(marker=cap, markersize=2 * capsize, markeredgewidth=linewidth)',
+    '    if direction == "y":',
+    "        ax.plot(np.repeat(np.asarray(x), 3), ends, **cap_style, **style)",
+    "    else:",
+    "        ax.plot(ends, np.repeat(np.asarray(y), 3), **cap_style, **style)",
+)
+
+
+def _uses_error_function(plan: PlotPlan) -> bool:
+    return plan.plot_type in {"line", "scatter"} and any(p.has_points and (p.y_err or p.x_err) for p in plan.series)
+
+
+def _error_names(err: ErrorPlan, owner: str = "") -> tuple[str, str]:
+    """誤差の変数名（上（右）, 下（左））。対称なら同じ名前。owner は棒グラフ（複数系列）の "y1" など。"""
+    base = f"{owner}_err" if owner else f"{err.direction}_err"
+    return (base, base) if err.symmetric else (f"{base}_plus", f"{base}_minus")
+
+
+def _emit_error_columns(b: _Builder, p: SeriesPlan, err: ErrorPlan, owner: str = "") -> None:
+    """列の誤差を、数値にして、負の値を NaN にする（fixed のときは何も書かない）。"""
+    if err.mode != "column":
+        return
+    plus, minus = _error_names(err, owner)
+    side = "Y" if err.direction == "y" else "X"
+    pairs = [(plus, err.index, err.label, "")]
+    if not err.symmetric:
+        pairs = [
+            (plus, err.index, err.label, "（上）" if err.direction == "y" else "（右）"),
+            (minus, err.index_minus, err.label_minus, "（下）" if err.direction == "y" else "（左）"),
+        ]
+    for name, index, label, note in pairs:
+        b.add(
+            f'{name} = pd.to_numeric({p.data_var}.iloc[:, {index}], errors="coerce")'
+            f"  # {side} の誤差{note}: {comment_text(label)}（数値にできない値は NaN）",
+            f"{name} = {name}.where({name} >= 0)  # 負の値は NaN にする（その点のエラーバーは描かない）",
+        )
+
+
+def _error_step(p: SeriesPlan, err: ErrorPlan) -> tuple[str, str]:
+    side = err.direction.upper()
+    return f"系列{p.number}のエラーバーを描けませんでした。誤差の列・値を確認してください。", f"系列{p.number}の{side}誤差"
+
+
+def _emit_line_error_bars(b: _Builder, s: SeriesSettings, p: SeriesPlan, *, zorder: int | None = None) -> None:
+    """line / scatter の系列本体の直前に、エラーバー（Y・X 方向）を描く。"""
+    for err in (p.y_err, p.x_err):
+        if err is None:
+            continue
+        message, field_name = _error_step(p, err)
+        with b.step(message, field_name):
+            _emit_error_columns(b, p, err)
+            plus, minus = _error_names(err)
+            base = "y[ok]" if err.direction == "y" else "x[ok]"
+            if err.mode == "fixed":
+                minus_value = err.value if err.symmetric else err.value_minus
+                low, high = f"{base} - {literal(minus_value)}", f"{base} + {literal(err.value)}"
+            else:
+                low, high = f"{base} - {minus}[ok]", f"{base} + {plus}[ok]"
+            extra = f", zorder={zorder}" if zorder is not None else ""
+            b.add(
+                f'draw_error_bars({_target(p)}, x[ok], y[ok], {low}, {high}, direction="{err.direction}", '
+                f"color={literal(s.color)}, linewidth={literal(s.line_width)}, capsize={literal(p.cap_size)}{extra})"
+            )
+
+
+def _bar_yerr_expr(err: ErrorPlan, owner: str = "") -> str:
+    """ax.bar の yerr 引数の式（owner が空なら1系列の棒グラフ、"y1" などなら bar_data の列）。"""
+    if err.mode == "fixed":
+        if err.symmetric:
+            return literal(err.value)
+        return f"[[{literal(err.value_minus)}], [{literal(err.value)}]]"
+    plus, minus = _error_names(err, owner)
+    if owner:
+        plus, minus = f'bar_data["{plus}"]', f'bar_data["{minus}"]'
+    else:
+        plus, minus = f"{plus}[ok]", f"{minus}[ok]"
+    return plus if err.symmetric else f"[{minus}, {plus}]"
+
+
+def _bar_error_args(s: SeriesSettings, p: SeriesPlan, owner: str = "") -> str:
+    if p.y_err is None:
+        return ""
+    width = literal(s.line_width)
+    return (
+        f", yerr={_bar_yerr_expr(p.y_err, owner)}, capsize={literal(p.cap_size)}, ecolor=\"black\", "
+        f'error_kw={{"elinewidth": {width}, "capthick": {width}}}'
+    )
+
+
 def _emit_line_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
     ax2 = _Axes2State()
     for i, (s, p) in enumerate(zip(settings.series, plan.series)):
@@ -371,6 +482,7 @@ def _emit_line_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
             _emit_x_data(b, p)
             _emit_y_data(b, p)
             _emit_ok_mask(b)
+            _emit_line_error_bars(b, s, p)
             marker = ""
             if p.marker_size > 0:
                 b.add("# 点の大きさ: 面積（scatter の s と同じ単位）の平方根を markersize（直径）にする")
@@ -392,6 +504,7 @@ def _emit_scatter_series(b: _Builder, settings: Settings, plan: PlotPlan) -> Non
             _emit_x_data(b, p)
             _emit_y_data(b, p)
             _emit_ok_mask(b)
+            _emit_line_error_bars(b, s, p, zorder=1)  # 点を上に描くため、エラーバーは zorder=1
             b.add(
                 f"{_target(p)}.scatter(x[ok], y[ok], color={literal(s.color)}, s={literal(p.marker_size)}, "
                 f"label={literal(p.legend_label)})"
@@ -421,20 +534,34 @@ def _emit_bar_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
             _emit_bar_x(b, plan)
             _emit_y_data(b, p)
             _emit_ok_mask(b)
-            b.add(f"{_target(p)}.bar(x[ok], y[ok], {_style_args(s)}, label={literal(p.legend_label)})")
+            if p.y_err is not None:
+                with b.step(*_error_step(p, p.y_err)):
+                    _emit_error_columns(b, p, p.y_err)
+            b.add(f"{_target(p)}.bar(x[ok], y[ok], {_style_args(s)}, label={literal(p.legend_label)}{_bar_error_args(s, p)})")
         return
 
     n = len(plan.series)
     b.add("# 複数の系列を、X の値ごとに横に並べた棒グラフにする（X は共通）")
     with b.step(GENERIC_ERROR_MESSAGE):
         _emit_bar_x(b, plan)
+        for p in plan.series:
+            if p.y_err is not None:
+                with b.step(*_error_step(p, p.y_err)):
+                    _emit_error_columns(b, p, p.y_err, f"y{p.number}")
         b.add("bar_data = pd.DataFrame({")
         b.add('    "x": x,')
         for p in plan.series:
             b.add(f'    "y{p.number}": pd.to_numeric({p.data_var}.iloc[:, {p.y_index}], errors="coerce"),  # {_column_comment(p, "y")}')
+            if p.y_err is not None and p.y_err.mode == "column":
+                for name in dict.fromkeys(_error_names(p.y_err, f"y{p.number}")):
+                    b.add(f'    "{name}": {name},')
         b.add("})")
         keys = ", ".join(literal(f"y{p.number}") for p in plan.series)
         b.add(f'bar_data = bar_data.dropna(subset=[{keys}], how="all")  # 全ての系列が欠けている行は描かない')
+        for p in plan.series:
+            if p.y_err is not None and p.y_err.mode == "column":
+                for name in dict.fromkeys(_error_names(p.y_err, f"y{p.number}")):
+                    b.add(f'bar_data["{name}"] = bar_data["{name}"].where(bar_data["y{p.number}"].notna())  # 棒を描かない行のエラーバーも描かない')
         b.add("x_labels = [str(v) for v in bar_data[\"x\"]]")
         b.add("positions = np.arange(len(x_labels))")
         b.add(f"width = 0.8 / {n}  # 棒1本の幅")
@@ -445,7 +572,7 @@ def _emit_bar_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
             b.add(f"offset = -0.4 + (width / 2.0) + ({i} * width)")
             b.add(
                 f'{_target(p)}.bar(positions + offset, bar_data["y{p.number}"].fillna(0.0), width=width, '
-                f"{_style_args(s)}, label={literal(p.legend_label)})"
+                f"{_style_args(s)}, label={literal(p.legend_label)}{_bar_error_args(s, p, f'y{p.number}')})"
             )
 
 
@@ -471,26 +598,149 @@ def _axis_lines(var: str, which: str, scale: str, lo, hi) -> list[str]:
     return lines
 
 
-def _x_tick_lines(settings: Settings, plan: PlotPlan) -> list[str]:
-    """X 軸の目盛の書式（日時の軸、文字列の列の間引き）。line / scatter だけ。"""
-    if plan.plot_type not in {"line", "scatter"}:
-        return []
-    if _uses_date_axis(plan):
+_AXIS_NAMES = {"x": "X", "y": "Y", "y2": "第2Y"}
+_INVERT_NOTES = {"x": "右が小さい値", "y": "上が小さい値", "y2": "上が小さい値"}
+_DATE_LOCATORS = {
+    "year": ("YearLocator", "base", "年"),
+    "month": ("MonthLocator", "interval", "か月"),
+    "day": ("DayLocator", "interval", "日"),
+    "hour": ("HourLocator", "interval", "時間"),
+    "minute": ("MinuteLocator", "interval", "分"),
+    "second": ("SecondLocator", "interval", "秒"),
+}
+
+
+@dataclass(frozen=True)
+class _AxisBlock:
+    var: str  # Axes の変数名（ax / ax2）
+    which: str  # x / y（軸の向き）
+    name: str  # x / y / y2（設定上の軸）
+    label: str  # X / Y / 第2Y
+    axis: AxisSettings
+    plan: AxisPlan
+
+
+def _axis_blocks(settings: Settings, plan: PlotPlan) -> list[_AxisBlock]:
+    blocks = [
+        _AxisBlock("ax", "x", "x", "X", settings.axes.x, plan.axes.x),
+        _AxisBlock("ax", "y", "y", "Y", settings.axes.y, plan.axes.y),
+    ]
+    if plan.uses_secondary and plan.axes.y2 is not None:
+        blocks.append(_AxisBlock("ax2", "y", "y2", "第2Y", settings.axes.y2, plan.axes.y2))
+    return blocks
+
+
+def _per_axis_minor(plan: PlotPlan) -> bool:
+    """副目盛を軸ごとに書くか（どれかの軸が「自動」でないとき）。すべて「自動」なら、今までの書き方（ax.minorticks_on() など）。"""
+    return any(a is not None and a.minor != "auto" for a in (plan.axes.x, plan.axes.y, plan.axes.y2))
+
+
+def _uses_ticker(settings: Settings, plan: PlotPlan) -> bool:
+    return any("ticker." in line for blk in _axis_blocks(settings, plan) for line in _axis_tick_lines(blk, settings, plan))
+
+
+def _scale_lines(blk: _AxisBlock, plan: PlotPlan) -> list[str]:
+    """スケールと範囲。X が日時の列のときは、日時の範囲（pd.Timestamp）。"""
+    var, which, axis = blk.var, blk.which, blk.axis
+    if blk.plan.kind == "datetime":
+        limits = [
+            f"{k}=pd.Timestamp({literal(v)})" for k, v in (("left", blk.plan.date_min), ("right", blk.plan.date_max)) if v
+        ]
+        return [f"{var}.set_xlim({', '.join(limits)})"] if limits else []
+    return _axis_lines(var, which, axis.scale, axis.min, axis.max)
+
+
+def _major_lines(blk: _AxisBlock, settings: Settings, plan: PlotPlan) -> list[str]:
+    ap, axis_var = blk.plan, f"{blk.var}.{blk.which}axis"
+    label = blk.label
+    if ap.kind == "datetime":
         fmt = settings.axes.x.date_format
-        if fmt:
-            return [f"ax.xaxis.set_major_formatter(mdates.DateFormatter({literal(fmt)}))  # 日時の表示書式"]
+        if ap.major_step is None:
+            if fmt:
+                return [f"{axis_var}.set_major_formatter(mdates.DateFormatter({literal(fmt)}))  # 日時の表示書式"]
+            return [
+                "# X が日時の列: 範囲に合わせて目盛の間隔と表示を自動で決める",
+                "date_locator = mdates.AutoDateLocator()",
+                f"{axis_var}.set_major_locator(date_locator)",
+                f"{axis_var}.set_major_formatter(mdates.ConciseDateFormatter(date_locator))",
+            ]
+        func, kwarg, unit_name = _DATE_LOCATORS[ap.major_step_unit]
+        formatter = f"mdates.DateFormatter({literal(fmt)})" if fmt else "mdates.ConciseDateFormatter(date_locator)"
         return [
-            "# X が日時の列: 範囲に合わせて目盛の間隔と表示を自動で決める",
-            "date_locator = mdates.AutoDateLocator()",
-            "ax.xaxis.set_major_locator(date_locator)",
-            "ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(date_locator))",
+            f"date_locator = mdates.{func}({kwarg}={literal(ap.major_step)})  # {label}軸の主目盛: {ap.major_step}{unit_name}ごと",
+            f"{axis_var}.set_major_locator(date_locator)",
+            f"{axis_var}.set_major_formatter({formatter})",
         ]
-    if plan.thin_categorical_x:
-        return [
-            "# X が文字列の列: 目盛に X の値を出す（25個を超えるので間引く）",
-            "ax.xaxis.set_major_locator(ticker.MaxNLocator(nbins=25, integer=True))",
+    if ap.kind == "category":
+        if plan.plot_type == "bar" and len(plan.series) > 1:
+            return []  # 複数系列の棒は、棒の位置に目盛を付ける節（tick_step）で扱う
+        if ap.major_step is not None:
+            return [f"{axis_var}.set_major_locator(ticker.MultipleLocator({literal(ap.major_step)}))  # {label}軸の主目盛: {ap.major_step}個おきにラベルを出す"]
+        if plan.plot_type in {"line", "scatter"} and plan.thin_categorical_x:
+            return [
+                "# X が文字列の列: 目盛に X の値を出す（25個を超えるので間引く）",
+                f"{axis_var}.set_major_locator(ticker.MaxNLocator(nbins=25, integer=True))",
+            ]
+        return []
+    lines = []
+    if ap.major_step is not None:
+        lines.append(f"{axis_var}.set_major_locator(ticker.MultipleLocator({literal(ap.major_step)}))  # {label}軸の主目盛: {comment_text(literal(ap.major_step))} ごと")
+    fmt = ap.tick_format
+    if fmt == "auto":
+        return lines
+    d = ap.tick_decimals
+    formatter = f"{blk.name}_formatter"
+    if fmt == "fixed":
+        lines.append(f'{axis_var}.set_major_formatter(ticker.FormatStrFormatter({literal(f"%.{d}f")}))  # {label}軸の数字: 小数 {d} 桁')
+    elif fmt == "sci":
+        lines.append(f'{axis_var}.set_major_formatter(ticker.FormatStrFormatter({literal(f"%.{d}e")}))  # {label}軸の数字: 指数表記（小数 {d} 桁）')
+    elif ap.kind == "log":
+        lines.append(f"{axis_var}.set_major_formatter(ticker.LogFormatterSciNotation())  # {label}軸の数字: 10^n 表記")
+    else:
+        lines += [
+            f"{formatter} = ticker.ScalarFormatter(useMathText=True)  # {label}軸の数字: 10^n 表記（軸の端に ×10^n をまとめて書く）",
+            f"{formatter}.set_powerlimits((0, 0))",
+            f"{axis_var}.set_major_formatter({formatter})",
         ]
+    if ap.kind == "log":
+        lines.append(f"{axis_var}.set_minor_formatter(ticker.NullFormatter())  # 副目盛の数字は消す")
+    return lines
+
+
+def _minor_lines(blk: _AxisBlock, grid_minor: bool) -> list[str]:
+    ap, axis_var, label = blk.plan, f"{blk.var}.{blk.which}axis", blk.label
+    if ap.minor == "on":
+        if ap.minor_divisions is not None and ap.kind != "log":
+            n = ap.minor_divisions
+            return [f"{axis_var}.set_minor_locator(ticker.AutoMinorLocator({literal(n)}))  # {label}軸の副目盛: 主目盛の間を {n} 等分"]
+        return [f"{axis_var}.minorticks_on()  # {label}軸の副目盛を表示する"]
+    if ap.minor == "off":
+        return [f"{axis_var}.minorticks_off()  # {label}軸の副目盛は出さない"]
+    if grid_minor:
+        return [f"{axis_var}.minorticks_on()  # {label}軸の副目盛を表示する（副目盛線を表示するため）"]
+    if ap.kind == "log":
+        return [f"{axis_var}.minorticks_off()  # 対数軸の補助目盛は出さない"]
     return []
+
+
+def _axis_tick_lines(blk: _AxisBlock, settings: Settings, plan: PlotPlan) -> list[str]:
+    """1つの軸の目盛の行（主目盛 → 書式 → 副目盛（軸ごとに書くときだけ）→ 反転）。Axes の変数名と AxisPlan だけで決まる。"""
+    lines = _major_lines(blk, settings, plan)
+    if _per_axis_minor(plan):
+        lines += _minor_lines(blk, settings.plot.grid_minor)
+    if blk.plan.inverted:
+        lines.append(f"{blk.var}.invert_{blk.which}axis()  # {blk.label}軸を反転する（{_INVERT_NOTES[blk.name]}）")
+    return lines
+
+
+def _emit_spines(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
+    plot = settings.plot
+    if not plot.spine_top:
+        b.add('ax.spines["top"].set_visible(False)  # 上の枠線を消す')
+        if plan.uses_secondary:
+            b.add('ax2.spines["top"].set_visible(False)')
+    if not plot.spine_right and not plan.uses_secondary:  # 第2Y軸があるときの右の枠線は、第2Y軸の線なので消せない
+        b.add('ax.spines["right"].set_visible(False)  # 右の枠線を消す')
 
 
 def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
@@ -503,24 +753,30 @@ def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
     if plan.uses_secondary:
         b.add(f"ax2.set_ylabel({literal(axes.y2.label or plan.y2_label)}, fontsize=FONT_SIZE)")
 
-    for var, which, label, axis in (
-        ("ax", "x", "X", axes.x),
-        ("ax", "y", "Y", axes.y),
-        ("ax2", "y", "第2Y", axes.y2),
-    ):
-        if var == "ax2" and not plan.uses_secondary:
-            continue
-        lines = _axis_lines(var, which, axis.scale, axis.min, axis.max)
-        if var == "ax" and which == "x":
-            lines = _x_tick_lines(settings, plan) + lines
+    # 軸ごとに: スケール → 範囲 → 主目盛・書式 → 副目盛 → 反転（スケールを変えると目盛の設定が戻るので、この順）
+    for blk in _axis_blocks(settings, plan):
+        lines = _scale_lines(blk, plan)
         if lines:
-            with b.step(axis_error_message(label), f"{label}軸の範囲"):
+            with b.step(axis_error_message(blk.label), f"{blk.label}軸の範囲"):
                 b.add(*lines)
+        ticks = _axis_tick_lines(blk, settings, plan)
+        if ticks:
+            with b.step(tick_error_message(blk.label), f"{blk.label}軸の目盛"):
+                b.add(*ticks)
 
     if plan.plot_type == "bar" and len(plan.series) > 1:
+        step = plan.axes.x.major_step
+        if step is not None:
+            b.add(
+                f"# 棒の位置に X の値を目盛として付ける（X軸の主目盛の間隔: {step}個おき）",
+                f"tick_step = {literal(step)}",
+            )
+        else:
+            b.add(
+                "# 棒の位置に X の値を目盛として付ける（25個を超えるときは間引く）",
+                "tick_step = max(1, len(positions) // 25)",
+            )
         b.add(
-            "# 棒の位置に X の値を目盛として付ける（25個を超えるときは間引く）",
-            "tick_step = max(1, len(positions) // 25)",
             "ax.set_xticks(positions[::tick_step])",
             'ax.set_xticklabels(x_labels[::tick_step], rotation=45, ha="right")',
         )
@@ -530,17 +786,18 @@ def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
     if plan.uses_secondary:
         b.add(f'ax2.tick_params(which="both", direction="in", labelsize={size})')
 
-    if not plot.grid_minor:
+    if not plot.grid_minor and not _per_axis_minor(plan):
         if axes.x.scale == "log" or axes.y.scale == "log":
             b.add("ax.minorticks_off()  # 対数軸の補助目盛は出さない")
         if plan.uses_secondary and axes.y2.scale == "log":
             b.add("ax2.minorticks_off()")
+    _emit_spines(b, settings, plan)
 
 
 def _emit_grid_and_legend(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
     b.section("6. グリッドと凡例")
     plot = settings.plot
-    if plot.grid_minor:
+    if plot.grid_minor and not _per_axis_minor(plan):  # 軸ごとの副目盛の指定があるときは、5. 軸で書いた（minorticks_on() は軸ごとの指定を上書きする）
         b.add("ax.minorticks_on()")
         if plan.uses_secondary:
             b.add("ax2.minorticks_on()")
@@ -631,8 +888,11 @@ def generate_script(settings: Settings, source, plan: PlotPlan) -> GeneratedScri
         source = {src.id: source for src in plan.sources}
     infos = [source[src.id] for src in plan.sources]
     b = _Builder()
-    _emit_header(b, infos, settings.plot.latin_font, plan)
+    _emit_header(b, infos, settings.plot.latin_font, plan, settings)
     b.add(f"FONT_SIZE = {literal(settings.plot.font_size)}  # 文字の大きさ（pt）")
+    if _uses_error_function(plan):
+        b.blank()
+        b.add(*ERROR_BAR_FUNCTION)
     _emit_load(b, plan, infos)
     _emit_skip_rows(b, plan)
     _emit_figure(b, settings)

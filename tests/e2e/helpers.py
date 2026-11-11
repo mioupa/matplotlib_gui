@@ -426,3 +426,83 @@ def remove_file(page, file_id):
         page.click(f"#file-{file_id}-remove")
     else:
         page.evaluate("(id) => import(new URL('js/bridge.js', document.baseURI)).then((m) => m.removeFile(id))", file_id)
+
+
+# --- 目盛・枠線・日時の範囲（Phase 5a） ---
+def open_tick_group(page, axis):
+    """軸の目盛の折りたたみ（#xTickGroup / #yTickGroup / #y2TickGroup）を開く（開く操作は設定を変えない）。"""
+    page.evaluate("(id) => { document.getElementById(id).open = true; }", f"{axis}TickGroup")
+
+
+def set_axis_option(page, selector, value, *, wait=True):
+    """目盛などの入力欄を変える。wait=True なら、再描画（画像の世代が進む）まで待つ。値の種類は要素から決める。"""
+
+    def act():
+        kind = page.evaluate(
+            "(s) => { const e = document.querySelector(s); return e.type === 'checkbox' ? 'checkbox' : e.tagName.toLowerCase(); }",
+            selector,
+        )
+        if kind == "checkbox":
+            page.set_checked(selector, bool(value))
+        elif kind == "select":
+            page.select_option(selector, value)
+        else:
+            page.fill(selector, str(value))
+
+    if wait:
+        act_and_wait_render(page, act)
+    else:
+        act()
+
+
+def wait_error_status(page, timeout=60_000):
+    page.wait_for_function("document.getElementById('status').dataset.kind === 'error'", timeout=timeout)
+
+
+def code_value(page) -> str:
+    """コードタブの内容（タブを開かずに読む）。"""
+    return page.evaluate("document.getElementById('customPyCode').value")
+
+
+def is_hidden_by_id(page, element_id) -> bool:
+    """hidden 属性・display:none のどちらでも、画面に出ていない。"""
+    return page.evaluate("(id) => { const e = document.getElementById(id); return !e || e.getClientRects().length === 0; }", element_id)
+
+
+# --- エラーバー（Phase 5a, G1） ---
+def eb_id(series_id, direction, name):
+    """エラーバーの入力欄の id。direction は y / x、name は mode / symmetric / value / value-minus / column / column-minus。"""
+    return f"#series-{series_id}-{direction}err-{name}"
+
+
+def set_errorbars(
+    page, series_id, direction, *, mode=None, symmetric=None, value=None, value_minus=None, column=None, column_minus=None
+):
+    """系列のエラーバーの入力欄を順に変える（待たない。呼び出し側が wait_settled などで待つ）。
+    折りたたみが閉じていれば開く（開く操作は設定を変えない）。"""
+    page.evaluate("(id) => { document.getElementById(`series-${id}-errorbars`).open = true; }", series_id)
+    if mode is not None:
+        page.select_option(eb_id(series_id, direction, "mode"), mode)
+    if symmetric is not None:
+        page.set_checked(eb_id(series_id, direction, "symmetric"), bool(symmetric))
+    if value is not None:
+        page.fill(eb_id(series_id, direction, "value"), str(value))
+    if value_minus is not None:
+        page.fill(eb_id(series_id, direction, "value-minus"), str(value_minus))
+    if column is not None:
+        page.select_option(eb_id(series_id, direction, "column"), column)
+    if column_minus is not None:
+        page.select_option(eb_id(series_id, direction, "column-minus"), column_minus)
+
+
+def error_bar_count(page, axis_index=0) -> int:
+    """表示中の図の、エラーバーの数（data-summary の errorbars）。"""
+    return image_summary(page)[axis_index]["errorbars"]
+
+
+def series_errorbars(page, series_id) -> dict:
+    """画面の状態（state）にある系列の errorBars。"""
+    return page.evaluate(
+        "(id) => import(new URL('js/state.js', document.baseURI)).then((m) => m.getSettings().series.find((s) => s.id === id).errorBars)",
+        series_id,
+    )

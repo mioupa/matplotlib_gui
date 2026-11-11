@@ -17,7 +17,9 @@ from helpers import (
     image_summary,
     load_fixture,
     open_code_tab,
+    open_tick_group,
     paste_text,
+    set_errorbars,
     wait_data_ready,
     wait_app_ready,
     wait_code_contains,
@@ -123,6 +125,81 @@ def _configure_csv_and_second_sheet(page):
     add_series_with_source(page, "d2", "__idx__2")
 
 
+def _configure_ticks_fixed_inverted(page):
+    _configure_xy_1(page)
+    for axis in ("x", "y"):
+        open_tick_group(page, axis)
+    page.select_option("#yTickFormat", "fixed")
+    page.fill("#yTickDecimals", "2")
+    page.check("#yInverted")
+    page.uncheck("#spineTop")
+    page.uncheck("#spineRight")
+    page.select_option("#xMinorTicks", "on")
+    page.fill("#xMinorDivisions", "4")
+    page.select_option("#yMinorTicks", "on")
+    page.fill("#yMinorDivisions", "5")
+
+
+def _configure_ticks_pow10(page):
+    _configure_xy_1(page)
+    open_tick_group(page, "y")
+    page.select_option("#yTickFormat", "pow10")
+    page.fill("#yMajorStep", "250")
+
+
+def _configure_datetime_month_range(page):
+    _configure_datetime_line(page)
+    open_tick_group(page, "x")
+    page.select_option("#xMajorStepUnit", "day")
+    page.fill("#xMajorStep", "2")
+    page.fill("#xDateMin", "2026-01-01")
+    page.fill("#xDateMax", "2026-01-05 12:00")
+
+
+def _configure_text_x_step(page):
+    page.select_option("#series-s1-x", "__idx__1")  # ID（文字列の列）
+    page.select_option("#series-s1-y", "__idx__3")
+    open_tick_group(page, "x")
+    page.fill("#xMajorStep", "10")
+
+
+def _configure_errbars_line(page):
+    page.select_option("#series-s1-x", "__idx__0")
+    page.select_option("#series-s1-y", "__idx__1")
+    set_errorbars(page, "s1", "y", mode="column", column="__idx__3")
+    set_errorbars(page, "s1", "x", mode="fixed", value="0.2")
+
+
+def _configure_errbars_scatter(page):
+    page.select_option("#plotType", "scatter")
+    page.select_option("#series-s1-x", "__idx__0")
+    page.select_option("#series-s1-y", "__idx__1")
+    set_errorbars(page, "s1", "y", mode="column", symmetric=False, column="__idx__4", column_minus="__idx__5")
+
+
+def _configure_errbars_bar(page):
+    page.select_option("#plotType", "bar")
+    page.select_option("#xColumn", "__idx__0")
+    page.select_option("#series-s1-y", "__idx__1")
+    set_errorbars(page, "s1", "y", mode="fixed", value="2.5")
+
+
+def _configure_errbars_bar_multi(page):
+    page.select_option("#plotType", "bar")
+    page.select_option("#xColumn", "__idx__0")
+    page.select_option("#series-s1-y", "__idx__1")
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s2-y", "__idx__2")
+    set_errorbars(page, "s1", "y", mode="fixed", value="2.5")
+    set_errorbars(page, "s2", "y", mode="fixed", symmetric=False, value="3", value_minus="1")
+
+
+def _configure_errbars_two_files(page):
+    page.select_option("#series-s1-y", "__idx__1")
+    add_series_with_source(page, "d2", "__idx__1")
+    set_errorbars(page, "s2", "y", mode="column", column="__idx__3")
+
+
 # 読込の設定を変えた場合: 生成スクリプトの読込部が、GUI の読み方と同じ図を作る
 PRE_STEPS = {"preamble_csv": _pre_preamble, "european_csv": _pre_european}
 
@@ -147,6 +224,15 @@ CASES = {
     "csv_and_xlsx_second_sheet": (("utf8.csv", "multi_sheet.xlsx"), _configure_csv_and_second_sheet),
     "preamble_csv": ("preamble.csv", _configure_xy_1),
     "european_csv": ("european.csv", _configure_xy_1),
+    "ticks_fixed_inverted": ("growth.csv", _configure_ticks_fixed_inverted),
+    "ticks_pow10": ("growth.csv", _configure_ticks_pow10),
+    "datetime_day_step_range": ("datetime.csv", _configure_datetime_month_range),
+    "text_x_step": ("datetime.csv", _configure_text_x_step),
+    "errbars_line": ("errorbars.csv", _configure_errbars_line),
+    "errbars_scatter": ("errorbars.csv", _configure_errbars_scatter),
+    "errbars_bar": ("categories.csv", _configure_errbars_bar),
+    "errbars_bar_multi": ("categories.csv", _configure_errbars_bar_multi),
+    "errbars_two_files": (("utf8.csv", "errorbars.csv"), _configure_errbars_two_files),
     "scatter_paper1": ("utf8.csv", _configure_scatter_paper1),
     "scatter_arimo_paper2_pdf": ("utf8.csv", _configure_scatter_arimo_paper2_pdf),
 }
@@ -161,6 +247,13 @@ def _run_in_cpython(script: Path, workdir: Path) -> tuple[list[dict], str]:
     assert proc.returncode == 0, proc.stderr
     line = next(ln for ln in proc.stdout.splitlines() if ln.startswith("FIGURE_SUMMARY:"))
     return json.loads(line[len("FIGURE_SUMMARY:"):]), proc.stderr
+
+
+TICK_CASES = ("ticks_fixed_inverted", "ticks_pow10", "datetime_day_step_range", "text_x_step")
+
+
+def l_ax_summary(summary, key):
+    return summary[0][key]
 
 
 EXACT_KEYS = ("title", "xlabel", "ylabel", "xscale", "yscale", "lines", "collections", "patches", "legend")
@@ -207,6 +300,14 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
 
     assert len(local) == len(browser)
     assert len(browser) == (2 if case == "line" else 1)
+    if case.startswith("errbars_"):
+        assert browser[0]["errorbars"] > 0
+        assert l_ax_summary(local, "errorbars") == l_ax_summary(browser, "errorbars")
+        text = script.read_text(encoding="utf-8")
+        is_bar = case in ("errbars_bar", "errbars_bar_multi")
+        assert ("draw_error_bars(" in text) != is_bar  # 折れ線・散布図はヘルパー、棒グラフは ax.bar の yerr
+        if is_bar:
+            assert "yerr=" in text
     for b_ax, l_ax in zip(browser, local):
         for key in EXACT_KEYS:
             assert l_ax[key] == b_ax[key], key
@@ -235,10 +336,32 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
         assert "Date" in browser[0]["xconverter"] and local[0]["xconverter"] == browser[0]["xconverter"]
         assert local[0]["xticklabels"] == browser[0]["xticklabels"] and any(browser[0]["xticklabels"])
         assert ("to_datetime" in script.read_text(encoding="utf-8")) == (case == "datetime_axis")
+    if case in TICK_CASES:
+        for key in ("xinverted", "yinverted", "spines", "xmajor", "ymajor", "xminor", "yminor", "xformatter", "yformatter", "yoffset"):
+            assert l_ax_summary(local, key) == l_ax_summary(browser, key), key
+    if case == "ticks_fixed_inverted":
+        assert browser[0]["yinverted"] and not browser[0]["xinverted"]
+        assert browser[0]["spines"] == {"top": False, "right": False}
+        assert browser[0]["yformatter"] == "FormatStrFormatter" and browser[0]["xminor"] == browser[0]["yminor"] == "AutoMinorLocator"
+        assert local[0]["yticklabels"] == browser[0]["yticklabels"]  # 位置は MultipleLocator でなくても、書式は同じ
+    if case == "ticks_pow10":
+        assert browser[0]["ymajor"] == "MultipleLocator" and browser[0]["yformatter"] == "ScalarFormatter"
+        assert local[0]["yticklabels"] == browser[0]["yticklabels"] and browser[0]["yoffset"]
+    if case == "datetime_day_step_range":
+        assert browser[0]["xmajor"] == "DayLocator" and local[0]["xlim"] == pytest.approx(browser[0]["xlim"])
+        assert local[0]["xticklabels"] == browser[0]["xticklabels"]
+        assert 'ax.set_xlim(left=pd.Timestamp("2026-01-01"), right=pd.Timestamp("2026-01-05 12:00:00"))' in script.read_text(encoding="utf-8")
+    if case == "text_x_step":
+        assert browser[0]["xmajor"] == "MultipleLocator" and local[0]["xticklabels"] == browser[0]["xticklabels"]
+        assert "MultipleLocator(10)" in script.read_text(encoding="utf-8")
     if case == "bar":
         assert local[0]["xticklabels"] == browser[0]["xticklabels"]
         assert "品目A" in browser[0]["xticklabels"][0]
         assert browser[0]["patches"] == 12  # 2 系列 × 6 カテゴリ
+    if case == "errbars_two_files":
+        assert "df2.iloc[:, 3]" in script.read_text(encoding="utf-8")
+    if case in ("errbars_bar", "errbars_bar_multi"):
+        assert local[0]["xticklabels"] == browser[0]["xticklabels"]
     if case == "line":
         assert browser[0]["yscale"] == "log" and browser[0]["lines"] == 1 and browser[1]["lines"] == 1
         assert browser[0]["legend"] == ["指数 [1]", "線形 [2]"]

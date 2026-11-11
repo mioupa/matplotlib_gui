@@ -102,16 +102,33 @@ def test_invalid_date_format_is_a_japanese_error(start, fixtures_dir):
     assert "X軸の日時の書式" in status_text(page)
 
 
-def test_x_range_with_datetime_is_an_error_and_recovers(start, fixtures_dir):
+def test_numeric_x_range_is_hidden_and_unused_with_datetime_x(start, fixtures_dir):
     page = start
     load_fixture(page, fixtures_dir / "datetime.csv")
     wait_settled(page)
-    pick(page, "__idx__0", "__idx__3")
-    page.fill("#xMin", "5")
-    page.wait_for_function("document.getElementById('status').dataset.kind === 'error'")
-    assert "X軸の最小値・最大値は指定できません" in status_text(page)
+    pick(page, "__idx__2", "__idx__3")  # 通番（数値）の X
+    assert page.is_visible("#xRangeGroup") and page.is_hidden("#xDateRangeGroup")
+    page.fill("#xMin", "1050")
+    wait_settled(page)
+    assert image_summary(page)[0]["xlim"][0] == 1050
+    pick(page, "__idx__0", "__idx__3")  # 日時の X: 数値の範囲の欄は隠れ、値は使わない（エラーにしない）
+    assert page.is_hidden("#xRangeGroup") and page.is_visible("#xDateRangeGroup")
+    assert page.input_value("#xMin") == "1050"
+    assert status_kind(page) != "error"
+    assert "Date" in image_summary(page)[0]["xconverter"] and image_summary(page)[0]["xlim"][0] < 100_000
+    open_code_tab(page)
+    assert "set_xlim" not in code_text(page)
+    # 日時の範囲は使える
     before = plot_src(page)
-    page.fill("#xMin", "")
+    page.fill("#xDateMin", "2026-01-02")
+    wait_plot_changed(page, before)
+    wait_settled(page)
+    wait_code_contains(page, 'ax.set_xlim(left=pd.Timestamp("2026-01-02"))')
+    # 対数軸は、日時の X ではできない（今までどおり）
+    page.select_option("#xScale", "log")
+    page.wait_for_function("document.getElementById('status').dataset.kind === 'error'")
+    assert "X軸を対数にできません" in status_text(page)
+    page.select_option("#xScale", "linear")
     wait_settled(page)
     assert status_kind(page) != "error"
 

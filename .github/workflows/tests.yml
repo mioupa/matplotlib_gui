@@ -32,7 +32,8 @@ jobs:
     # push では実行しない（pull_request と手動実行のみ）
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 全件で 30 分を超える（Phase 4 で 28 分、Phase 5a で約 36 分）。余裕を持たせる
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

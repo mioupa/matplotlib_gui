@@ -1051,3 +1051,138 @@ button.series-color-chip.active {
 .series-source-wrap[hidden] {
   display: none;
 }
+
+/* 軸・目盛区分の「目盛」の折りたたみ（区分より控えめに見せる） */
+.tick-details {
+  margin: 0 0 12px;
+  border-left: 2px solid var(--line-soft);
+  padding-left: 8px;
+}
+.tick-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.tick-summary::-webkit-details-marker {
+  display: none;
+}
+.tick-summary::before {
+  content: "";
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  transform: rotate(-45deg);
+  transition: transform 0.12s ease;
+}
+.tick-details[open] > .tick-summary::before {
+  transform: rotate(45deg);
+}
+.tick-summary:hover {
+  color: var(--text);
+}
+.tick-summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.tick-body {
+  padding: 6px 0 0;
+}
+.tick-body .group:last-child {
+  margin-bottom: 0;
+}
+.tick-step-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.tick-step-row input {
+  flex: 1 1 8rem;
+  min-width: 0;
+  margin-top: 0;
+}
+.tick-step-row > span {
+  flex: 1 1 5rem;
+  min-width: 0;
+}
+.tick-step-row select {
+  margin-top: 0;
+}
+.tick-sub {
+  margin-top: 8px;
+}
+
+/* 系列カードの「エラーバー」の折りたたみ（目盛の折りたたみと同じ控えめな見た目） */
+.series-errorbars {
+  margin: 8px 0 0;
+  border-left: 2px solid var(--line-soft);
+  padding-left: 8px;
+}
+.series-errorbars-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.series-errorbars-summary::-webkit-details-marker {
+  display: none;
+}
+.series-errorbars-summary::before {
+  content: "";
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  transform: rotate(-45deg);
+  transition: transform 0.12s ease;
+}
+.series-errorbars[open] > .series-errorbars-summary::before {
+  transform: rotate(45deg);
+}
+.series-errorbars-summary:hover {
+  color: var(--text);
+}
+.series-errorbars-summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.series-errorbars-body {
+  padding: 6px 0 0;
+}
+.series-errorbars-body .group:last-child {
+  margin-bottom: 0;
+}
+.err-block {
+  margin-bottom: 8px;
+}
+.err-block .row > div {
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+.err-block .row[hidden],
+.err-block .group[hidden],
+.err-minus-wrap[hidden],
+.err-x-wrap[hidden],
+.err-capsize-wrap[hidden] {
+  display: none;
+}
+@media (max-width: 360px) {
+  .err-block .row {
+    grid-template-columns: 1fr;
+  }
+}
