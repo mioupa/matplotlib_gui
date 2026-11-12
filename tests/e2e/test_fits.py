@@ -72,7 +72,7 @@ def test_linear_legend_poly_text_and_series_select(page, app_url, fixtures_dir, 
     page.select_option("#xColumn", X)
     wait_settled(page)
     assert is_hidden_by_id(page, "fitList") and is_hidden_by_id(page, "addFitBtn")
-    assert page.inner_text("#fitBarNote") == "棒グラフ・ヒストグラムでは近似曲線を使えません。"
+    assert page.inner_text("#fitBarNote") == "棒グラフ・ヒストグラム・箱ひげ図・バイオリン図・ヒートマップでは近似曲線を使えません。"
     assert image_summary(page)[0]["fitlines"] == 0
     page.select_option("#plotType", "line")
     wait_settled(page)

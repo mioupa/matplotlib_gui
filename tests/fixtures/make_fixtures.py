@@ -149,6 +149,7 @@ def main():
     make_errorbar_fixture()
     make_band_fixture()
     make_chart_types_fixture()
+    make_grid_fixture()
 
 
 def make_errorbar_fixture():
@@ -191,6 +192,15 @@ def make_chart_types_fixture():
         m = "n/a" if i == 3 else ("" if i == 7 else str(round(i * 0.7, 2)))
         lines.append(f"項目{i + 1},{a},{b},{c},{err},{m}")
     (OUT / "chart_types.csv").write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+
+
+def make_grid_fixture():
+    """ヒートマップ（5d, G8）。縦長の格子の表: x（0〜3）/ y（0〜2）/ z（値）/ xname（文字列 A〜D）/ yname（文字列 P〜R）。12行。"""
+    lines = ["x,y,z,xname,yname"]
+    for j in range(3):
+        for i in range(4):
+            lines.append(f"{i},{j},{round(i * 1.5 + j * 2.0 + 0.5, 2)},{'ABCD'[i]},{'PQR'[j]}")
+    (OUT / "grid.csv").write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
 
 
 def make_datetime_fixtures(fixed):

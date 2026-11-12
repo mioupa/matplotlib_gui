@@ -319,6 +319,31 @@ def _configure_scatter_color(page):
     page.fill("#colorbarLabel", "電流 (A)")
 
 
+def _configure_box(page):
+    page.select_option("#plotType", "box")
+    page.select_option("#series-s1-y", "__idx__1")
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s2-y", "__idx__5")  # 数値にできない値と空欄を含む
+    page.check("#boxMeans")
+
+
+def _configure_violin(page):
+    page.select_option("#plotType", "violin")
+    page.select_option("#series-s1-y", "__idx__1")
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s2-y", "__idx__2")
+    page.check("#violinMeans")
+
+
+def _configure_heatmap(page):
+    page.select_option("#plotType", "heatmap")
+    page.select_option("#series-s1-x", "__idx__0")
+    page.select_option("#series-s1-y", "__idx__1")
+    page.select_option("#series-s1-color-column", "__idx__2")
+    page.select_option("#colorMap", "coolwarm")
+    page.fill("#colorbarLabel", "値")
+
+
 # --- 計算した列（Phase 5c, G6） ---
 def _configure_computed_one_file(page):
     page.fill("#skipRows", "2")  # 計算は、除外した行を除いて行う（max もその行だけ）
@@ -383,6 +408,9 @@ CASES = {
     "type_bar_stacked": ("chart_types.csv", _configure_bar_stacked),
     "type_hist": ("chart_types.csv", _configure_hist),
     "type_scatter_color": ("chart_types.csv", _configure_scatter_color),
+    "type_box": ("chart_types.csv", _configure_box),
+    "type_violin": ("chart_types.csv", _configure_violin),
+    "type_heatmap": ("grid.csv", _configure_heatmap),
     "computed_one_file": ("chart_types.csv", _configure_computed_one_file),
     "computed_two_files": (("chart_types.csv", "band.csv"), _configure_computed_two_files),
     "scatter_paper1": ("utf8.csv", _configure_scatter_paper1),
@@ -412,6 +440,7 @@ EXACT_KEYS = (
     "title", "xlabel", "ylabel", "xscale", "yscale", "lines", "collections", "patches", "legend",
     "bands", "markers", "alphas", "annotations", "fitlines", "fittexts",  # Phase 5b
     "drawstyles", "bars", "colorbar",  # Phase 5c
+    "boxes", "violins", "meshes",  # Phase 5d
 )
 
 
