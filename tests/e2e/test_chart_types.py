@@ -56,15 +56,17 @@ def test_type_options_keep_existing_labels_and_add_new(page, app_url, fixtures_d
     assert options[3:] == [
         ["step", "step"], ["barh", "barh（横棒）"], ["barStacked", "bar（積み上げ）"],
         ["hist", "hist（ヒストグラム）"], ["scatterColor", "scatter（色分け）"],
+        ["box", "box（箱ひげ図）"], ["violin", "violin（バイオリン図）"], ["heatmap", "heatmap（ヒートマップ）"],
     ]
     labels = page.eval_on_selector_all("#colorMap option", "els => els.map(e => e.value)")
     assert labels == ["viridis", "cividis", "plasma", "inferno", "magma", "coolwarm", "RdBu_r", "gray"]
 
 
-GROUP_IDS = ["stepGroup", "histGroup", "colorMapGroup", "yScaleGroup", "globalXGroup", "addFitBtn", "fitList", "addAnnotationBtn"]
+GROUP_IDS = ["stepGroup", "histGroup", "boxGroup", "violinGroup", "xScaleGroup", "colorMapGroup", "yScaleGroup", "globalXGroup", "addFitBtn", "fitList", "addAnnotationBtn"]
 CARD_IDS = [
     "series-s1-x", "series-s1-marker", "series-s1-marker-size", "series-s1-errorbars", "series-s1-xerr-mode", "series-s1-yerr-mode",
     "series-s1-fill", "series-s1-use-y2", "series-s1-color-column", "series-s1-line-width", "series-s1-alpha",
+    "series-s1-line-style", "series-s1-color-trigger",
 ]
 BAR_LIKE = dict(globalXGroup=False, addFitBtn=False, fitList=False, addAnnotationBtn=True)
 XY = dict(globalXGroup=False, addFitBtn=True, fitList=True, addAnnotationBtn=True)
@@ -82,6 +84,12 @@ EXPECTED = {
     "barh": {**BAR_LIKE, "globalXGroup": True, "yScaleGroup": False, "series-s1-errorbars": 1, "series-s1-yerr-mode": 1},
     "barStacked": {**BAR_LIKE, "globalXGroup": True},
     "hist": {**BAR_LIKE, "histGroup": 1},
+    # 箱ひげ・バイオリン: 系列の X 列・X のスケールを使わない。エラーバー・第2Y軸なし。線種は使わない
+    "box": {**BAR_LIKE, "boxGroup": 1, "xScaleGroup": 0, "series-s1-line-style": 0},
+    "violin": {**BAR_LIKE, "violinGroup": 1, "xScaleGroup": 0, "series-s1-line-style": 0},
+    # ヒートマップ: 値の列とカラーマップ。色・線幅・線種は使わない。エラーバー・第2Y軸なし
+    "heatmap": {**BAR_LIKE, "colorMapGroup": 1, "series-s1-x": 1, "series-s1-color-column": 1, "series-s1-line-width": 0,
+                "series-s1-line-style": 0, "series-s1-color-trigger": 0},
 }
 
 
@@ -92,18 +100,24 @@ def test_visibility_per_type(plot_type, page, app_url, fixtures_dir, console_log
     set_plot_type(page, plot_type)
     want = EXPECTED[plot_type]
     got = visible_ids(page, GROUP_IDS + CARD_IDS)
-    always = {"series-s1-line-width", "series-s1-alpha", "addAnnotationBtn", "yScaleGroup"}  # 種類によらず出る（barh の Y スケールだけ隠す）
+    always = {"series-s1-line-width", "series-s1-alpha", "addAnnotationBtn", "yScaleGroup", "xScaleGroup",
+              "series-s1-line-style", "series-s1-color-trigger"}  # 種類によらず出る（barh の Y スケールだけ隠す）
     for element_id, shown in got.items():
         assert shown == bool(want.get(element_id, element_id in always)), f"{plot_type}: {element_id} shown={shown}"
     note_shown = not is_hidden_by_id(page, "fitBarNote")
-    assert note_shown == (plot_type in ("bar", "barh", "barStacked", "hist"))
+    assert note_shown == (plot_type in ("bar", "barh", "barStacked", "hist", "box", "violin", "heatmap"))
     if note_shown:
         assert "ヒストグラム" in page.inner_text("#fitBarNote")
+        assert "ヒートマップ" in page.inner_text("#fitBarNote")
 
 
 def test_hidden_values_are_kept_when_switching_type(page, app_url, fixtures_dir, console_log):
     start(page, app_url, fixtures_dir, plot_type="step")
     page.select_option("#stepWhere", "mid")
+    page.select_option("#series-s1-line-style", "dashed")
+    page.select_option("#series-s1-x", B)
+    set_plot_type(page, "box")
+    assert is_hidden_by_id(page, "series-s1-x") and is_hidden_by_id(page, "series-s1-line-style")
     set_plot_type(page, "hist")
     page.fill("#histBins", "7")
     page.check("#histDensity")
@@ -117,8 +131,10 @@ def test_hidden_values_are_kept_when_switching_type(page, app_url, fixtures_dir,
     assert plot["step"]["where"] == "mid" and plot["hist"] == {"bins": 7, "density": True}
     assert plot["colormap"] == "plasma" and plot["colorbarLabel"] == "電流"
     assert series_state(page, "s1")["colorColumn"] == C
+    assert series_state(page, "s1")["lineStyle"] == "dashed" and series_state(page, "s1")["x"] == B
     set_plot_type(page, "step")
-    assert page.input_value("#stepWhere") == "mid"
+    assert page.input_value("#stepWhere") == "mid" and page.input_value("#series-s1-line-style") == "dashed"
+    assert page.input_value("#series-s1-x") == B
     assert axis0(page)["drawstyles"] == ["steps-mid"]
     set_plot_type(page, "hist")
     assert page.input_value("#histBins") == "7" and page.is_checked("#histDensity")
@@ -291,13 +307,143 @@ def test_narrow_screen_has_no_horizontal_scroll(page, app_url, fixtures_dir, con
     page.set_viewport_size({"width": 375, "height": 800})
     start(page, app_url, fixtures_dir, plot_type="scatterColor", x="__idx__1", y=B)
     page.select_option("#series-s1-color-column", C)
-    for plot_type in ("hist", "step", "scatterColor"):
+    for plot_type in ("hist", "step", "scatterColor", "box", "violin", "heatmap"):
         set_plot_type(page, plot_type)
         overflow = page.evaluate(
             """() => {
-              const wide = [...document.querySelectorAll('#stepGroup, #histGroup, #colorMapGroup, .series-item')]
+              const wide = [...document.querySelectorAll('#stepGroup, #histGroup, #boxGroup, #violinGroup, #colorMapGroup, .series-item')]
                 .filter((e) => e.scrollWidth > e.clientWidth + 1).map((e) => e.id || e.className);
               return {page: document.documentElement.scrollWidth - window.innerWidth, wide};
             }"""
         )
         assert overflow["page"] <= 0 and overflow["wide"] == [], plot_type
+
+
+# --- Phase 5d, G8: 箱ひげ図・バイオリン図・ヒートマップ ---
+def two_series(page, y2=B):
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s2-y", y2)
+    wait_settled(page)
+
+
+def test_box_summary_and_toggles(page, app_url, fixtures_dir, console_log):
+    start(page, app_url, fixtures_dir, plot_type="box", y=A)
+    two_series(page)
+    s = axis0(page)
+    assert s["boxes"] == 2 and s["xlabel"] == "" and s["xscale"] == "linear"
+    assert is_hidden_by_id(page, "series-s1-x") and is_hidden_by_id(page, "xColumn")
+    assert page.is_checked("#boxFliers") and not page.is_checked("#boxMeans")
+    wait_code_generated(page)
+    before = code_text(page)
+    page.check("#boxMeans")
+    wait_settled(page)
+    wait_code_generated(page)
+    after_means = code_text(page)
+    assert after_means != before
+    page.uncheck("#boxFliers")
+    wait_settled(page)
+    wait_code_generated(page)
+    assert code_text(page) != after_means
+    assert axis0(page)["boxes"] == 2
+    plot = plot_settings(page)
+    assert plot["box"] == {"fliers": False, "means": True}
+
+
+def test_box_x_axis_is_category_for_ticks_and_annotations(page, app_url, fixtures_dir, console_log):
+    start(page, app_url, fixtures_dir, plot_type="box", y=A)
+    two_series(page)
+    open_tick_group(page, "x")
+    assert "何個おき" in page.inner_text("#xMajorStepHelp")
+    ann = add_annotation(page, "vline")
+    assert "何番目" in page.inner_text(f"#annotation-{ann} .ann-help")
+
+
+def test_violin_summary_and_medians_toggle(page, app_url, fixtures_dir, console_log):
+    start(page, app_url, fixtures_dir, plot_type="violin", y=A)
+    two_series(page)
+    assert axis0(page)["violins"] == 2
+    assert page.is_checked("#violinMedians") and not page.is_checked("#violinMeans")
+    assert is_hidden_by_id(page, "boxGroup") and not is_hidden_by_id(page, "violinGroup")
+    wait_code_generated(page)
+    before = code_text(page)
+    page.uncheck("#violinMedians")
+    wait_settled(page)
+    wait_code_generated(page)
+    assert code_text(page) != before
+    assert axis0(page)["violins"] == 2
+
+
+def heatmap_start(page, app_url, fixtures_dir, x="__idx__0", y="__idx__1", z="__idx__2"):
+    page.goto(app_url)
+    wait_app_ready(page)
+    load_fixture(page, fixtures_dir / "grid.csv")
+    wait_settled(page)
+    set_plot_type(page, "heatmap")
+    page.select_option("#series-s1-x", x)
+    page.select_option("#series-s1-y", y)
+    if z:
+        page.select_option("#series-s1-color-column", z)
+    wait_settled(page)
+
+
+def test_heatmap_renders_with_value_column_label(page, app_url, fixtures_dir, console_log):
+    heatmap_start(page, app_url, fixtures_dir)
+    assert status_kind(page) != "error"
+    s = axis0(page)
+    assert s["meshes"] == 1 and s["colorbar"] is not None and s["colorbar"]["label"] == "z [2]"
+    assert page.inner_text("#seriesList .series-color-column-label") == "値の列"
+    assert not is_hidden_by_id(page, "colorMapGroup")
+    page.select_option("#colorMap", "plasma")
+    wait_settled(page)
+    assert axis0(page)["colorbar"]["cmap"] == "plasma"
+    # 色分け散布図に戻すとラベルが戻る
+    set_plot_type(page, "scatterColor")
+    assert page.inner_text("#seriesList .series-color-column-label") == "色分けの列"
+
+
+def test_heatmap_value_column_missing_error_and_recovery(page, app_url, fixtures_dir, console_log):
+    heatmap_start(page, app_url, fixtures_dir, z=None)
+    wait_error_status(page)
+    assert "値の列" in status_text(page) and code_is_stale(page)
+    page.select_option("#series-s1-color-column", "__idx__2")
+    wait_settled(page)
+    assert status_kind(page) != "error" and not code_is_stale(page)
+    assert axis0(page)["meshes"] == 1
+
+
+def test_heatmap_two_series_error_and_recovery(page, app_url, fixtures_dir, console_log):
+    heatmap_start(page, app_url, fixtures_dir)
+    page.click("#addSeriesBtn")  # 2つ目の値の列は未選択のまま: 系列の数のエラーが先に出る
+    wait_error_status(page)
+    assert "ヒートマップは系列1つ" in status_text(page)
+    page.click("#series-s2-remove")
+    wait_settled(page)
+    assert status_kind(page) != "error" and axis0(page)["meshes"] == 1
+
+
+def test_heatmap_text_axes_use_category_wording(page, app_url, fixtures_dir, console_log):
+    heatmap_start(page, app_url, fixtures_dir, x="__idx__3", y="__idx__4")
+    assert status_kind(page) != "error"
+    assert axis0(page)["meshes"] == 1
+    # 文字列の軸はカテゴリ（スケールは使わない）
+    assert is_hidden_by_id(page, "xScaleGroup") and is_hidden_by_id(page, "yScaleGroup")
+    open_tick_group(page, "x")
+    assert "何個おき" in page.inner_text("#xMajorStepHelp")
+    open_tick_group(page, "y")
+    assert "何個おき" in page.inner_text("#yMajorStepHelp")
+    # 数値の列に戻すとスケールの欄が戻る
+    page.select_option("#series-s1-x", "__idx__0")
+    page.select_option("#series-s1-y", "__idx__1")
+    wait_settled(page)
+    assert not is_hidden_by_id(page, "xScaleGroup") and not is_hidden_by_id(page, "yScaleGroup")
+
+
+def test_edit_mode_does_not_redraw_on_new_type_change(page, app_url, fixtures_dir, console_log):
+    start(page, app_url, fixtures_dir, plot_type="step", y=B)
+    wait_code_generated(page)
+    enter_edit_mode(page)
+    before = (image_generation(page), code_text(page))
+    for plot_type in ("box", "violin", "heatmap"):
+        page.select_option("#plotType", plot_type)
+    page.wait_for_timeout(1000)
+    assert (image_generation(page), code_text(page)) == before

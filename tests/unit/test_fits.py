@@ -309,3 +309,250 @@ def test_column_name_comment_cannot_inject(tmp_path):
 def test_uses_only_numpy_in_generated_code(tmp_path):
     b = Built(tmp_path, df=quad_frame(), fits=[fit()])
     assert "polyfit" not in b.script.text and "scipy" not in b.script.text
+
+
+# ---------------------------------------------------------------- 任意の式（G10）
+
+from scipy.optimize import curve_fit  # noqa: E402
+
+from mplgui.api import _step_error  # noqa: E402
+from mplgui.runner import ScriptError, run_script  # noqa: E402
+
+
+def custom(expr="a * exp(-b * x) + c", **kw):
+    d = {"series": "s1", "model": "custom", "expr": expr}
+    d.update(kw)
+    return d
+
+
+def decay_frame():
+    t = np.linspace(0, 5, 30)
+    return pd.DataFrame({"t": t, "y": 3.0 * np.exp(-0.8 * t) + 0.5 + 0.01 * np.cos(7 * t)})
+
+
+def logistic_frame():
+    t = np.linspace(-5, 5, 40)
+    return pd.DataFrame({"t": t, "y": 4.0 / (1 + np.exp(-1.5 * (t - 0.5))) + 0.02 * np.sin(5 * t)})
+
+
+def test_custom_defaults_and_settings():
+    d = default_fit()
+    assert d["expr"] == "" and d["initial"] == {"a": 1, "b": 1, "c": 1, "d": 1, "e": 1}
+    f = parse_settings(raw_settings(fits=[custom(initial={"a": "2.5", "b": 3, "c": 7})])).fits[0]
+    assert f.model == "custom" and f.params == ("a", "b", "c") and f.initial == (2.5, 3.0, 7.0)
+    # 使うパラメータだけ。式の中の順に関わらず a〜e の順
+    f = parse_settings(raw_settings(fits=[custom("c * x + a", initial={"a": 4, "c": 9})])).fits[0]
+    assert f.params == ("a", "c") and f.initial == (4.0, 9.0)
+    # 空欄・欠けは 1
+    f = parse_settings(raw_settings(fits=[custom("a * x", initial={"a": ""})])).fits[0]
+    assert f.initial == (1.0,)
+
+
+@pytest.mark.parametrize(
+    "item, field_name, text",
+    [
+        (custom(""), "近似曲線1の式", "近似曲線1の式を入力してください。"),
+        (custom("   "), "近似曲線1の式", "近似曲線1の式を入力してください。"),
+        (custom("a * (x"), "近似曲線1の式", "近似曲線1の式: "),
+        (custom("a * " + "x" * 300), "近似曲線1の式", "近似曲線1の式: "),
+        (custom("a * b"), "近似曲線1の式", "x を含めて"),
+        (custom("x + 1"), "近似曲線1の式", "パラメータ"),
+        (custom("max(x) * a"), "近似曲線1の式", "近似曲線1の式: "),
+        (custom("a * x", initial={"a": "abc"}), "近似曲線1の初期値（a）", "初期値（a）"),
+        (custom("a * x", initial={"a": float("inf")}), "近似曲線1の初期値（a）", "初期値（a）"),
+        (custom("a * x + b", initial={"a": 1, "b": None if False else "zz"}), "近似曲線1の初期値（b）", "初期値（b）"),
+    ],
+)
+def test_custom_validation_errors(item, field_name, text):
+    with pytest.raises(UserError) as e:
+        parse_settings(raw_settings(fits=[item]))
+    assert e.value.field == field_name and text in str(e.value)
+
+
+def test_custom_fields_hidden_for_other_models():
+    # expr / initial は custom 以外では検証せず使わない。custom の degree も使わない
+    for model in ("linear", "poly"):
+        f = parse_settings(raw_settings(fits=[fit(model=model, expr="((", initial={"a": "zz"})])).fits[0]
+        assert f.expr == "" and f.expr_node is None and f.params == ()
+    parse_settings(raw_settings(fits=[custom(degree="abc")]))
+    # 使っていないパラメータの初期値は検証しない
+    parse_settings(raw_settings(fits=[custom("a * x", initial={"a": 1, "b": "zz"})]))
+
+
+def test_custom_exponential_matches_scipy(tmp_path):
+    df = decay_frame()
+    b = Built(tmp_path, df=df, series_list=[series(1, label="減衰")], fits=[custom(initial={"a": 1, "b": 1, "c": 1})])
+    assert "from scipy.optimize import curve_fit" in b.script.text
+    assert "scipy" in b.script.text.split("\n")[2]
+
+    def model(x, a, b, c):
+        return a * np.exp(-b * x) + c
+
+    x, y = df["t"].to_numpy(), df["y"].to_numpy()
+    expect, _ = curve_fit(model, x, y, p0=[1.0, 1.0, 1.0], maxfev=10000)
+    r2 = 1 - np.sum((y - model(x, *expect)) ** 2) / np.sum((y - y.mean()) ** 2)
+
+    def check(fig):
+        ax = fig.axes[0]
+        line = fit_line(ax)
+        assert line.get_label().startswith("減衰の近似: y = a*exp(-b*x) + c（a = ")
+        assert line.get_label().endswith(f"、$R^2$ = {r2:.4f}）")
+        xs, ys = line.get_data()
+        assert len(xs) == 200 and xs[0] == x.min() and xs[-1] == x.max()
+        np.testing.assert_allclose(ys, model(xs, *expect), rtol=1e-6)
+        for name, value in zip("abc", expect):
+            assert f"{name} = {value:.4g}" in line.get_label()
+
+    summary = b.check(check)
+    assert summary[0]["fitlines"] == 1
+
+
+def test_custom_logistic_matches_scipy(tmp_path):
+    df = logistic_frame()
+    b = Built(tmp_path, df=df, fits=[custom("a / (1 + exp(-b * (x - c)))", initial={"a": 3, "b": 1, "c": 0})])
+
+    def model(x, a, b, c):
+        return a / (1 + np.exp(-b * (x - c)))
+
+    x, y = df["t"].to_numpy(), df["y"].to_numpy()
+    expect, _ = curve_fit(model, x, y, p0=[3.0, 1.0, 0.0], maxfev=10000)
+
+    def check(fig):
+        xs, ys = fit_line(fig.axes[0]).get_data()
+        np.testing.assert_allclose(ys, model(xs, *expect), rtol=1e-6)
+
+    b.check(check)
+    assert "p0=[3.0, 1.0, 0.0]" in b.script.text and "def fit_model_1(x, a, b, c):" in b.script.text
+
+
+def test_custom_generated_snippet(tmp_path):
+    b = Built(tmp_path, df=decay_frame(), fits=[custom()])
+    text = b.script.text
+    assert "def fit_model_1(x, a, b, c):  # 近似曲線1の式: a * exp(-b * x) + c" in text
+    assert "    return a * np.exp(-b * x) + c" in text or "np.exp(" in text
+    assert "fit_params, _ = curve_fit(fit_model_1, x[ok], y[ok], p0=[1.0, 1.0, 1.0], maxfev=10000)" in text
+    assert "fit_model_1(x[ok], *fit_params)" in text and "np.isfinite(fit_y)" in text
+
+
+def test_custom_show_variants(tmp_path):
+    df = decay_frame()
+    b = Built(
+        tmp_path, df=df, series_list=[series(1, label="A")],
+        fits=[custom(show="text"), custom("a * x + b", show="none"), custom("a * x + b")],
+    )
+
+    def check(fig):
+        ax = fig.axes[0]
+        assert len(ax.texts) == 1 and ax.texts[0].get_position() == (0.03, 0.97)
+        assert ax.texts[0].get_text().startswith("Aの近似: y = a*exp(-b*x) + c（")
+        legend = [t.get_text() for t in ax.get_legend().get_texts()]
+        assert len(legend) == 2 and legend[0] == "A" and legend[1].startswith("Aの近似: y = a*x + b（a = ")
+        assert sum(ln.get_label() == "_fit" for ln in ax.lines) == 2  # show=text と none
+
+    summary = b.check(check)
+    assert summary[0]["fitlines"] == 3 and summary[0]["fittexts"] == 1
+    assert "poly_text" not in b.script.text  # 任意の式だけなら poly_text は要らない
+
+
+def test_custom_mixed_with_poly(tmp_path):
+    b = Built(tmp_path, df=decay_frame(), fits=[custom(), fit(model="poly", degree=2)])
+    assert "def poly_text(coef):" in b.script.text and "curve_fit" in b.script.text
+    assert b.check(lambda fig: None)[0]["fitlines"] == 2
+
+
+def test_custom_secondary_axis(tmp_path):
+    df = decay_frame().assign(w=lambda d: 2 * d["y"] + 1)
+    b = Built(tmp_path, df=df, series_list=[series(1), series(2, secondaryAxis=True)], fits=[{**custom(show="text"), "series": "s2"}])
+    assert "ax2.plot(x_fit, fit_model_1(x_fit, *fit_params)" in b.script.text and "ax2.text(0.03, 0.97" in b.script.text
+
+    def check(fig):
+        ax, ax2 = fig.axes
+        assert len(ax2.texts) == 1 and not ax.texts
+
+    b.check(check)
+
+
+def test_custom_fit_number_names_function(tmp_path):
+    b = Built(tmp_path, df=decay_frame(), fits=[fit(), custom("a * x + b")])
+    assert "def fit_model_2(x, a, b):" in b.script.text and "fit_model_1" not in b.script.text
+    assert b.check(lambda fig: None)[0]["fitlines"] == 2
+
+
+def test_scipy_not_imported_without_custom(tmp_path):
+    for fits in ([], [fit()], [fit(model="poly", degree=2, show="text")]):
+        b = Built(tmp_path, df=decay_frame(), fits=fits)
+        assert "scipy" not in b.script.text and "curve_fit" not in b.script.text
+    b = Built(tmp_path, df=decay_frame(), fits=[custom()], plot_type="bar")  # 棒グラフでは使わない
+    assert "scipy" not in b.script.text
+
+
+@pytest.mark.filterwarnings("ignore:invalid value encountered in log:RuntimeWarning")
+@pytest.mark.filterwarnings("ignore:Covariance of the parameters could not be estimated")
+def test_custom_non_finite_initial_maps_to_step_message(tmp_path):
+    t = np.arange(10.0)
+    df = pd.DataFrame({"t": t, "y": 2 * t + 1})
+    b = Built(tmp_path, df=df, fits=[custom("log(a) * x + b", initial={"a": -1, "b": 1})])
+    with pytest.raises(ScriptError) as e:
+        with run_script(b.script.text, cwd=tmp_path):
+            pass
+    mapped = _step_error(b.script, e.value)
+    assert mapped.args[0] == "近似曲線1: 式を当てはめられませんでした。初期値を変えてみてください。"
+    assert mapped.field == "近似曲線1の初期値"
+
+
+def test_custom_no_convergence_maps_to_step_message(tmp_path):
+    b = Built(tmp_path, df=decay_frame(), fits=[custom()])
+
+    def fail(*args, **kwargs):  # 収束しないときの curve_fit と同じ例外（plot.py の外で起こす）
+        raise RuntimeError("Optimal parameters not found: The maximum number of function evaluations is exceeded.")
+
+    text = b.script.text.replace("from scipy.optimize import curve_fit", "curve_fit = fail")
+    assert text.count("\n") == b.script.text.count("\n")
+    with pytest.raises(ScriptError) as e:
+        with run_script(text, injected={"fail": fail}, cwd=tmp_path):
+            pass
+    mapped = _step_error(b.script, e.value)
+    assert mapped.args[0] == "近似曲線1: 式を当てはめられませんでした。初期値を変えてみてください。"
+    assert mapped.field == "近似曲線1の初期値"
+
+
+def test_custom_not_enough_distinct_x():
+    df = pd.DataFrame({"t": [1.0, 1.0, 2.0, 2.0, 3.0, 3.0], "v": [1.0, 2.0, 3.0, 4.0, 5.0, 7.0]})
+    plan_of(df=df, fits=[custom("a * x + b")])  # 3 個 > 2 個
+    with pytest.raises(UserError) as e:
+        plan_of(df=df, fits=[custom("a * x**2 + b * x + c")])  # 3 個 <= 3 個
+    assert e.value.field == "近似曲線1の系列" and "近似曲線1: " in str(e.value) and "4個以上" in str(e.value)
+
+
+def test_custom_data_errors():
+    df = decay_frame().assign(d=pd.date_range("2026-01-01", periods=30).strftime("%Y-%m-%d"), c=[f"k{i}" for i in range(30)])
+    for x, word in ((2, "日時"), (3, "文字列")):
+        with pytest.raises(UserError) as e:
+            plan_of(df=df, series_list=[series(1, x=x)], fits=[custom()])
+        assert e.value.field == "近似曲線1の系列" and word in str(e.value)
+    flat = pd.DataFrame({"t": np.arange(5.0), "v": np.full(5, 3.0)})
+    with pytest.raises(UserError) as e:
+        plan_of(df=flat, fits=[custom("a * x + b")])
+    assert "すべて同じ" in str(e.value)
+
+
+def test_custom_injection(tmp_path):
+    evil = 'x"\n__import__("os").system("x")  # \'\'\''
+    b = Built(tmp_path, df=decay_frame(), series_list=[series(1, label=evil)], fits=[custom(), custom("a * x + b", show="text")])
+    compile(b.script.text, "plot.py", "exec")
+    assert "\n__import__" not in b.script.text
+    with b.full() as run:
+        assert any(ln.get_label().startswith(evil + "の近似: ") for ln in run.fig.axes[0].lines)
+    # 式の文字列に命令を入れても、パーサが拒否する
+    for bad in ('a * __import__("os")', "a * x; import os", "a * x\nimport os", "a.__class__ * x", "a * x  # \n"):
+        with pytest.raises(UserError):
+            parse_settings(raw_settings(fits=[custom(bad)]))
+
+
+def test_custom_expression_only_in_comment(tmp_path):
+    b = Built(tmp_path, df=decay_frame(), fits=[custom("a   *   exp( -b*x )+c")])
+    lines = [ln for ln in b.script.text.split("\n") if "a   *   exp( -b*x )+c" in ln]
+    assert len(lines) == 1 and lines[0].startswith("def fit_model_1(") and "# 近似曲線1の式: " in lines[0]
+    assert "\n" not in lines[0]
+    # 木から整えた式だけがコードとラベルに入る
+    assert "a*exp(-b*x) + c" in b.script.text

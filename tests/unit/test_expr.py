@@ -324,3 +324,207 @@ def test_invalid_count_aggregate():
     assert count == 1 and r.isna().all()
     r, count = run("max([2]) + 1")
     assert count == 0
+
+
+# ---- 近似の式（モデル。G10） -------------------------------------------------
+
+MODELS = [
+    "a*exp(-b*x) + c",
+    "a*x^2 + b*x + c",
+    "a/(1 + exp(-b*(x - c)))",
+    "a*sin(b*x + c) + d",
+    "-a^2 * x",
+    "a^b^c + x",
+    "(a + b)*(x - e)/2",
+    "a*x**-b + 1e-3",
+    "a - (b - x)",
+    "a/(b*x)",
+    "log(abs(x) + 1)*a + sqrt(b**2)",
+]
+
+
+def merr(text):
+    with pytest.raises(ExprError) as e:
+        expr.parse_model(text)
+    return e.value
+
+
+def mcode(text):
+    return expr.model_to_code(expr.parse_model(text), repr)
+
+
+def mrun(text, x, **p):
+    ns = {"np": np, "x": x, **{k: np.float64(v) for k, v in p.items()}}
+    with np.errstate(all="ignore"):
+        return eval(mcode(text), ns)  # テスト内だけで使う
+
+
+@pytest.mark.parametrize("text", MODELS)
+def test_model_accepted(text):
+    node = expr.parse_model(text)
+    assert expr.model_params(node)
+
+
+def test_model_params_order_and_dedup():
+    assert expr.model_params(expr.parse_model("c*x + a*x + c")) == ("a", "c")
+    assert expr.model_params(expr.parse_model("e*x + d + b")) == ("b", "d", "e")
+
+
+def test_model_e_vs_number_vs_exp():
+    n = expr.parse_model("1e-3*x + e")
+    assert expr.model_params(n) == ("e",)
+    assert expr.model_to_text(n) == "0.001*x + e"
+    n = expr.parse_model("2.5E3*x + a")
+    assert expr.model_to_text(n) == "2500*x + a"
+    n = expr.parse_model("exp(x) + e")
+    assert expr.model_params(n) == ("e",)
+    assert expr.model_to_code(n, repr) == "np.exp(x) + e"
+
+
+def test_model_errors_with_positions():
+    e = merr("a*[0]*x")
+    assert (e.message, e.position) == (
+        "近似の式では列は使えません（変数は x、パラメータは a〜e です）。",
+        3,
+    )
+    e = merr("a*A + x")
+    assert e.position == 3 and "列は使えません" in e.message
+    assert merr("a*BC*x").position == 3
+    for name in ("min", "max", "mean", "median", "std", "first", "last"):
+        e = merr(f"a*{name}(x)")
+        assert e.position == 3 and "近似の式では使えません" in e.message and "sqrt" in e.message
+    for name in ("rolling_mean", "diff", "cumsum"):
+        e = merr(f"{name}(x)*a")
+        assert e.position == 1 and "近似の式では使えません" in e.message
+    assert merr("a + 1").message == "式に x を含めてください。"
+    assert merr("a*2*3").message == "式に x を含めてください。"
+    assert merr("x + 1").message == "式にパラメータ（a〜e）を1つ以上含めてください。"
+    e = merr("a*y + x")
+    assert e.position == 3 and "使える名前は x と a〜e です" in e.message
+    assert merr("f*x").position == 1
+    assert merr("a*x + k").position == 7
+    e = merr("2e")
+    assert e.position == 2 and "演算子" in e.message
+    assert merr("a*x ab").position == 5
+    assert merr("a(x)").position == 1
+    assert merr("exp").position == 1
+    assert merr("").message == "式を入力してください"
+
+
+def test_model_normal_parse_unchanged():
+    for text in ("x", "a", "x + [0]", "a*[0]"):
+        with pytest.raises(ExprError) as e:
+            parse(text)
+        assert "使えません" in e.value.message
+    assert parse("[0] + 1").kind == "series"
+
+
+def test_model_fullwidth():
+    n = expr.parse_model("ａ＊ｅｘｐ（－ｂ＊ｘ）＋ｃ")
+    assert expr.model_to_text(n) == "a*exp(-b*x) + c"
+
+
+def test_model_precedence_and_assoc():
+    x = np.array([0.5, 1.0, 2.0])
+    assert np.allclose(mrun("-a^2 + 0*x", x, a=3), -9.0)  # -(a^2)
+    assert np.allclose(mrun("a^b^c + 0*x", x, a=2, b=3, c=2), 2**9)
+    assert np.allclose(mrun("(-a)^2 + 0*x", x, a=3), 9.0)
+    assert np.allclose(mrun("a - (b - x)", x, a=1, b=5), 1 - (5 - x))
+    assert expr.model_to_text(expr.parse_model("-a^2 + x")) == "-a^2 + x"
+    assert expr.model_to_text(expr.parse_model("(-a)^2 + x")) == "(-a)^2 + x"
+    assert expr.model_to_text(expr.parse_model("a^b^c + x")) == "a^b^c + x"
+    assert expr.model_to_text(expr.parse_model("(a^b)^c + x")) == "(a^b)^c + x"
+    assert expr.model_to_code(expr.parse_model("(a^b)^c + x"), repr) == "(a ** b) ** c + x"
+
+
+@pytest.mark.parametrize("text", MODELS)
+@pytest.mark.parametrize("kind", ["array", "series"])
+def test_model_code_matches_evaluate(text, kind):
+    xs = np.array([0.1, 0.5, 1.0, 2.0, 3.5])
+    x = xs if kind == "array" else pd.Series(xs, index=range(5, 10))
+    params = {"a": 1.3, "b": 0.7, "c": 2.0, "d": -0.4, "e": 1.1}
+    node = expr.parse_model(text)
+    got = np.asarray(mrun(text, x, **params), dtype=float)
+    want = expr.evaluate_model(node, xs, params)
+    assert np.allclose(got, want, equal_nan=True)
+    assert want.shape == xs.shape
+
+
+def test_model_code_as_function_body():
+    code = mcode("a*exp(-b*x) + c")
+    ns = {"np": np}
+    exec(f"def f(x, a, b, c):\n    return {code}\n", ns)  # テスト内だけで使う
+    x = np.linspace(0, 2, 5)
+    assert np.allclose(ns["f"](x, np.float64(2), np.float64(1), np.float64(0.5)), 2 * np.exp(-x) + 0.5)
+    assert expr.evaluate_model(expr.parse_model("a*x + 1"), [1, 2], {"a": 2}).tolist() == [3.0, 5.0]
+
+
+@pytest.mark.parametrize(
+    "text, want",
+    [
+        ("a*exp(-b*x)+c", "a*exp(-b*x) + c"),
+        ("a * x ** 2 + b * x + c", "a*x^2 + b*x + c"),
+        ("a/(1+exp(-b*(x-c)))", "a/(1 + exp(-b*(x - c)))"),
+        ("a*x^0.5", "a*x^0.5"),
+        ("a*x + 1e-5", "a*x + 1e-05"),
+        ("(a*x)^2", "(a*x)^2"),
+        ("a/(b*x)", "a/(b*x)"),
+        ("a*(b + x)", "a*(b + x)"),
+        ("2*3*a*x", "6*a*x"),
+    ],
+)
+def test_model_to_text(text, want):
+    assert expr.model_to_text(expr.parse_model(text)) == want
+
+
+@pytest.mark.parametrize("text", MODELS)
+def test_model_text_is_safe(text):
+    t = expr.model_to_text(expr.parse_model(text))
+    assert t.isascii() and "$" not in t and "\n" not in t
+    assert set(t) <= set("abcdexlogsintqrpw0123456789.+-*/^() ")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "a*x); import os #",
+        "a*x\nimport os",
+        "__import__('os')",
+        "a*x; b",
+        "a.real*x",
+        "x[0]*a",
+        "a*x$",
+        "lambda: a*x",
+        "a*x if b else c",
+    ],
+)
+def test_model_injection_rejected(text):
+    with pytest.raises(ExprError):
+        expr.parse_model(text)
+
+
+def test_model_limits():
+    with pytest.raises(ExprError):
+        expr.parse_model("a*x" + "+1" * 100)
+    e = merr("a*x+" + "1" * 200)
+    assert "200文字" in e.message
+    with pytest.raises(ExprError):
+        expr.parse_model("(" * 60 + "a*x" + ")" * 60)
+    with pytest.raises(ExprError):
+        expr.parse_model("-" * 150 + "a*x")
+    with pytest.raises(ExprError):
+        expr.parse_model("a^" * 90 + "x")
+
+
+def test_model_nonfinite_constant():
+    with pytest.raises(ExprError):
+        expr.parse_model("a*x + 1/0")
+
+
+def test_no_dynamic_execution_in_module():
+    import inspect
+    import re
+
+    src = inspect.getsource(expr)
+    for word in ("eval", "exec", "compile", "ast"):
+        assert not re.search(rf"(?<![.\w]){word}\(|import {word}\b", src)

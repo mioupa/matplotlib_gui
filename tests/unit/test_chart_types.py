@@ -750,3 +750,589 @@ def test_scatter_color_points_have_no_edge_and_compensated_size(tmp_path):
         assert proxies[0].get_sizes()[0] == pytest.approx((24 ** 0.5 + 1.5) ** 2) and list(proxies[0].get_linewidths()) == [0.0]
 
     bt.check(fn)
+
+
+# ================================================================ Phase 5d: 箱ひげ図・バイオリン図・ヒートマップ（G8）
+
+import json  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from mplgui import settings as settings_module  # noqa: E402
+from mplgui.settings import MAX_HEATMAP_SIZE  # noqa: E402
+
+REPO = Path(__file__).resolve().parents[2]
+NEW_TYPES = ("box", "violin", "heatmap")
+
+
+def dist_frame(n=40, seed=1):
+    """値の列 3 つ（a: 外れ値あり、b: 文字列を含む、c: 欠けた値だけ）と 1 行だけの列。"""
+    rng = np.random.default_rng(seed)
+    a = list(rng.normal(0, 1, n))
+    a[0] = 15.0  # 外れ値
+    b = [str(v) for v in rng.normal(3, 1, n)]
+    b[1] = "bad"
+    return pd.DataFrame({"a": a, "b": b, "c": [np.nan] * n, "one": [2.0] + [np.nan] * (n - 1)})
+
+
+def grid_frame():
+    """縦長の表: x（数値）・y（数値）・z（値）・tx（文字列）・ty（文字列）。3×2 の格子で (1, 0) の組が 1 つ欠け、(0, 0) は 2 回現れる。"""
+    rows = [(0, 0, 1.0), (0, 0, 3.0), (0, 1, 4.0), (1, 1, 5.0), (2, 0, 6.0), (2, 1, 7.0)]
+    df = pd.DataFrame(rows, columns=["x", "y", "z"])
+    df["tx"] = df["x"].map({0: "low", 1: "mid", 2: "high"})
+    df["ty"] = df["y"].map({0: "off", 1: "on"})
+    return df
+
+
+def hm(x=0, y=1, z=2, **kw):
+    return series(y=y, x=x, colorColumn=f"__idx__{z}", **kw)
+
+
+def build_new(tmp_path, plot_type, series_list, df, **plot):
+    return Built(tmp_path, df=df, series_list=series_list, plot_type=plot_type, mutate=mutate_plot(**plot))
+
+
+# ---------------------------------------------------------------- 設定（settings）
+
+
+def test_new_types_accepted_and_plot_defaults():
+    for t in NEW_TYPES:
+        sl = [hm()] if t == "heatmap" else [series()]
+        assert parse_settings(raw_settings(sl, plot_type=t)).plot.type == t
+    d = parse_settings(raw_settings(plot_type="line")).plot
+    assert (d.box_fliers, d.box_means, d.violin_medians, d.violin_means) == (True, False, True, False)
+    raw = settings_module.default_settings()
+    assert raw["plot"]["box"] == {"fliers": True, "means": False} and raw["plot"]["violin"] == {"medians": True, "means": False}
+    assert settings_module.SCHEMA_VERSION == 4
+
+
+def test_box_violin_options_validated_only_for_own_type():
+    bad = {"box": {"fliers": "x", "means": 3}, "violin": {"medians": "x", "means": 3}}
+    for t in ("line", "bar", "hist", "heatmap", "box", "violin"):
+        sl = [hm()] if t == "heatmap" else [series()]
+        if t == "box":
+            bad2 = {"violin": bad["violin"]}
+        elif t == "violin":
+            bad2 = {"box": bad["box"]}
+        else:
+            bad2 = bad
+        parse_settings(raw_settings(sl, plot_type=t, mutate=mutate_plot(**bad2)))  # 隠れているので、エラーにならない
+    with pytest.raises(UserError) as e:
+        parse_settings(raw_settings(plot_type="box", mutate=mutate_plot(box={"fliers": "x"})))
+    assert e.value.field == "外れ値の点"
+    with pytest.raises(UserError) as e:
+        parse_settings(raw_settings(plot_type="violin", mutate=mutate_plot(violin={"medians": 3})))
+    assert e.value.field == "中央値の線"
+    s = parse_settings(raw_settings(plot_type="box", mutate=mutate_plot(box={"fliers": False, "means": True}))).plot
+    assert (s.box_fliers, s.box_means) == (False, True)
+    s = parse_settings(raw_settings(plot_type="violin", mutate=mutate_plot(violin={"medians": False, "means": True}))).plot
+    assert (s.violin_medians, s.violin_means) == (False, True)
+
+
+def test_heatmap_value_column_required_with_value_wording():
+    with pytest.raises(UserError) as e:
+        parse_settings(raw_settings([series()], plot_type="heatmap"))
+    assert str(e.value) == "系列1の値の列を選んでください。" and e.value.field == "系列1の値の列"
+    with pytest.raises(UserError) as e:
+        parse_settings(raw_settings([series(colorColumn="abc")], plot_type="heatmap"))
+    assert e.value.field == "系列1の値の列" and "値の列" in str(e.value)
+    # 系列が2つ以上なら、系列ごとの値の列の検証より先に、系列の数のエラーを出す
+    with pytest.raises(UserError) as e:
+        parse_settings(raw_settings([hm(), series(colorColumn="abc")], plot_type="heatmap"))
+    assert str(e.value).startswith("ヒートマップは系列1つで描きます。") and e.value.field == "系列"
+    # scatterColor の文言は変えない
+    with pytest.raises(UserError) as e:
+        parse_settings(raw_settings([series()], plot_type="scatterColor"))
+    assert e.value.field == "系列1の色分けの列"
+    for t in ("box", "violin"):  # 使わない種類では要らない・検証しない
+        assert parse_settings(raw_settings([series(colorColumn=5)], plot_type=t)).series[0].color_column == ""
+
+
+def test_heatmap_colormap_used_and_validated_for_heatmap_only():
+    with pytest.raises(UserError) as e:
+        parse_settings(raw_settings([hm()], plot_type="heatmap", mutate=mutate_plot(colormap="nope")))
+    assert e.value.field == "カラーマップ"
+    s = parse_settings(raw_settings([hm()], plot_type="heatmap", mutate=mutate_plot(colormap="plasma", colorbarLabel=" 値 ")))
+    assert (s.plot.colormap, s.plot.colorbar_label) == ("plasma", "値")
+    for t in ("box", "violin"):
+        parse_settings(raw_settings(plot_type=t, mutate=mutate_plot(colormap="nope")))
+
+
+def test_new_types_hide_settings_and_keep_existing_rules():
+    bad = {"marker": "zzz", "fill": {"lower": "x", "upper": ""}, "secondaryAxis": "yes", "errorBars": {"x": {"mode": "zzz"}, "y": {"mode": "zzz"}}}
+    fit = [{"series": "s1", "model": "zzz"}]
+    for t in NEW_TYPES:
+        extra = {"colorColumn": "__idx__2"} if t == "heatmap" else {}
+        s = parse_settings(raw_settings([series(**bad, **extra)], plot_type=t, fits=fit))
+        sr = s.series[0]
+        assert s.fits == () and sr.marker == "auto" and not sr.fill.enabled and sr.secondary_axis is False
+        assert not sr.error_bars.y.enabled if hasattr(sr.error_bars.y, "enabled") else sr.error_bars.y.mode == "none"
+        assert sr.error_bars.x.mode == "none"
+    # 使う設定は従来どおり検証する（不透明度は3種類とも使う）
+    for t in NEW_TYPES:
+        extra = {"colorColumn": "__idx__2"} if t == "heatmap" else {}
+        with pytest.raises(UserError):
+            parse_settings(raw_settings([series(alpha=5, **extra)], plot_type=t))
+    # box / violin は色・線幅を使う。線種・点サイズは使わない
+    with pytest.raises(UserError):
+        parse_settings(raw_settings([series(color="zzz")], plot_type="box"))
+    with pytest.raises(UserError):
+        parse_settings(raw_settings([series(lineWidth=0)], plot_type="violin"))
+    parse_settings(raw_settings([series(lineStyle="zzz", markerSize="x")], plot_type="box"))
+    parse_settings(raw_settings([series(lineStyle="zzz", markerSize="x")], plot_type="violin"))
+    # heatmap は色・線幅・線種・点サイズを使わない（検証せず、既定の値）
+    s = parse_settings(raw_settings([hm(color="zzz", lineWidth=-1, lineStyle="zzz", markerSize="x")], plot_type="heatmap")).series[0]
+    assert (s.line_width, s.line_style, s.marker_size) == (2.0, "solid", None)
+    # 既存の種類は従来どおり（色・線種は検証する）
+    for t in ("line", "bar", "hist"):
+        with pytest.raises(UserError):
+            parse_settings(raw_settings([series(color="zzz")], plot_type=t))
+        with pytest.raises(UserError):
+            parse_settings(raw_settings([series(lineStyle="zzz")], plot_type=t))
+    # X列（plot.xColumn）は新しい種類で使わない
+    for t in NEW_TYPES:
+        sl = [hm()] if t == "heatmap" else [series()]
+        assert parse_settings(raw_settings(sl, plot_type=t, mutate=mutate_plot(xColumn="__idx__3"))).plot.x_column == ""
+    assert parse_settings(raw_settings(plot_type="bar", mutate=mutate_plot(xColumn="__idx__3"))).plot.x_column == "__idx__3"
+
+
+def test_python_rule_constants_are_consistent():
+    S = settings_module
+    assert set(S.XY_TYPES) == {"line", "step", "scatter", "scatterColor"}
+    assert set(S.BOX_TYPES) == {"box", "violin"}
+    assert set(S.NO_Y2_TYPES) == {"barh", "barStacked", "hist", "scatterColor", "box", "violin", "heatmap"}
+    assert set(S.NO_Y_ERROR_TYPES) == {"barStacked", "hist", "box", "violin", "heatmap"}
+    assert set(S.SERIES_X_TYPES) == set(S.XY_TYPES) | {"heatmap"}
+    assert set(S.COLOR_COLUMN_TYPES) == {"scatterColor", "heatmap"}
+    assert set(S.CATEGORY_BAR_TYPES) == {"bar", "barStacked", "barh"}
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node が無い")
+def test_js_chart_types_match_python_rules(tmp_path):
+    """js/chart-types.js の述語が、settings.py の規則の定数と、全種類で一致する。"""
+    (tmp_path / "package.json").write_text('{"type": "module"}', encoding="utf-8")
+    (tmp_path / "chart-types.js").write_text((REPO / "js/chart-types.js").read_text(encoding="utf-8"), encoding="utf-8")
+    (tmp_path / "run.mjs").write_text(
+        """
+        import * as m from "./chart-types.js";
+        const out = {types: m.PLOT_TYPES};
+        for (const t of m.PLOT_TYPES) {
+          out[t] = {
+            seriesX: m.usesSeriesX(t), globalX: m.usesGlobalX(t), marker: m.usesMarker(t), fill: m.usesFill(t), fits: m.usesFits(t),
+            xErr: m.usesXErrors(t), yErr: m.usesYErrors(t), y2: m.usesY2(t), color: m.usesColorColumn(t), colormap: m.usesColormap(t),
+            box: m.usesBox(t), violin: m.usesViolin(t), boxLike: m.isBoxLike(t), heatmap: m.isHeatmap(t),
+          };
+        }
+        console.log(JSON.stringify(out));
+        """,
+        encoding="utf-8",
+    )
+    js = json.loads(subprocess.run(["node", "run.mjs"], cwd=tmp_path, capture_output=True, text=True, check=True, timeout=30).stdout)
+    S = settings_module
+    assert set(js["types"]) == set(S.PLOT_TYPES)
+    for t in S.PLOT_TYPES:
+        r = js[t]
+        assert r["seriesX"] == (t in S.SERIES_X_TYPES), t
+        assert r["globalX"] == (t in S.CATEGORY_BAR_TYPES), t
+        assert r["marker"] == r["fill"] == r["fits"] == r["xErr"] == (t in S.XY_TYPES), t
+        assert r["yErr"] == (t not in S.NO_Y_ERROR_TYPES), t
+        assert r["y2"] == (t not in S.NO_Y2_TYPES), t
+        assert r["color"] == r["colormap"] == (t in S.COLOR_COLUMN_TYPES), t
+        assert r["boxLike"] == (t in S.BOX_TYPES) and r["box"] == (t == "box") and r["violin"] == (t == "violin"), t
+        assert r["heatmap"] == (t == "heatmap")
+
+
+# ---------------------------------------------------------------- 箱ひげ図
+
+
+def test_box_one_box_per_series_with_labels_and_positions(tmp_path):
+    bt = build_new(tmp_path, "box", [series(y=0), series(y=1, label="B系列"), series(y=3)], dist_frame())
+
+    def fn(fig):
+        ax = fig.axes[0]
+        assert [t.get_text() for t in ax.get_xticklabels()] == ["a [0]", "B系列", "one [3]"]
+        assert ax.get_legend() is None and ax.get_xlim() == (-0.5, 2.5)
+
+    s = bt.check(fn)
+    assert s[0]["boxes"] == 3 and s[0]["violins"] == 0 and s[0]["meshes"] == 0
+    assert s[0]["xlabel"] == "" and s[0]["ylabel"] == ""  # 系列が複数なら縦軸の自動ラベルは空
+    assert s[0]["markers"] == [] and s[0]["alphas"] == [] and s[0]["drawstyles"] == []  # 箱ひげの線は系列の線に数えない
+    assert s[0]["xscale"] == "linear" and s[0]["legend"] == []
+    assert "tick_labels" not in bt.script.text and "vert=" not in bt.script.text
+
+
+def test_box_values_style_fliers_means_and_numeric_cleaning(tmp_path):
+    df = dist_frame()
+    sl = [series(y=0, color="#00AA00", lineWidth=3.0, alpha=0.5), series(y=1)]
+    bt = build_new(tmp_path, "box", sl, df)
+    with bt.full() as run:
+        ax = run.fig.axes[0]
+        patches = [p for p in ax.patches if p.get_label() == "_box"]
+        assert len(patches) == 2
+        assert patches[0].get_alpha() == 0.5 and patches[0].get_linewidth() == 3.0
+        assert matplotlib_color(patches[0].get_facecolor()[:3]) == "#00aa00" and matplotlib_color(patches[0].get_edgecolor()[:3]) == "#000000"
+        meds = [ln for ln in ax.lines if ln.get_label() == "_box" and len(ln.get_xdata()) == 2 and ln.get_ydata()[0] == ln.get_ydata()[1] and abs(ln.get_xdata()[1] - ln.get_xdata()[0]) < 0.6 and ln.get_linewidth() == 3.0]
+        assert meds and all(ln.get_color() == "black" for ln in meds)
+        # 外れ値（15.0）が点として描かれる。NaN が混ざっても中央値は NaN にならない
+        fliers = [ln for ln in ax.lines if ln.get_marker() == "o" and ln.get_label() == "_box"]
+        assert any(15.0 in list(ln.get_ydata()) for ln in fliers)
+        assert not any(np.isnan(np.asarray(ln.get_ydata(), dtype=float)).any() for ln in ax.lines)
+    # 数値にできない値は警告（既存の形式）
+    assert any(w["series"] == 2 and "数値に変換できない値が1件" in w["message"] and '"bad"' in w["message"] for w in bt.plan.warnings)
+    assert bt.plan.warnings[0]["message"].startswith("系列2（b）:")
+    # alpha 1 はコードに書かない
+    assert '"alpha"' in bt.script.text and bt.script.text.count('"alpha"') == 1
+
+
+def matplotlib_color(rgb):
+    from matplotlib.colors import to_hex
+
+    return to_hex(rgb)
+
+
+def test_box_fliers_and_means_toggle(tmp_path):
+    on = build_new(tmp_path, "box", [series(y=0)], dist_frame(), box={"fliers": True, "means": False})
+    off = build_new(tmp_path, "box", [series(y=0)], dist_frame(), box={"fliers": False, "means": True})
+
+    def counts(bt):
+        with bt.full() as run:
+            ax = run.fig.axes[0]
+            fl = [ln for ln in ax.lines if ln.get_marker() == "o"]
+            means = [ln for ln in ax.lines if ln.get_marker() == "D"]
+            return sum(len(ln.get_xdata()) for ln in fl), len(means)
+
+    assert counts(on)[0] >= 1 and counts(on)[1] == 0 and counts(off) == (0, 1)
+    assert "showfliers=True" in on.script.text and "showmeans=True" in off.script.text
+    on.check(lambda f: None)
+    off.check(lambda f: None)
+
+
+def test_box_empty_series_keeps_its_position_and_warns(tmp_path):
+    bt = build_new(tmp_path, "box", [series(y=0), series(y=2), series(y=1)], dist_frame())
+    assert any(w["series"] == 2 and "箱は描きません" in w["message"] for w in bt.plan.warnings)
+    assert [p.has_points for p in bt.plan.series] == [True, False, True]
+    assert "描ける値が無い" in bt.script.text
+
+    def fn(fig):
+        ax = fig.axes[0]
+        assert ax.get_xlim() == (-0.5, 2.5)
+        assert [t.get_text() for t in ax.get_xticklabels()] == ["a [0]", "c [2]", "b [1]"]
+        centers = sorted(round(float((p.get_path().vertices[:, 0].min() + p.get_path().vertices[:, 0].max()) / 2), 3) for p in ax.patches if p.get_label() == "_box")
+        assert centers == [0.0, 2.0]  # 2 つ目の位置は空いたまま
+
+    assert bt.check(fn)[0]["boxes"] == 2
+
+
+def test_box_no_values_at_all_is_error():
+    with pytest.raises(UserError) as e:
+        plan_of(df=dist_frame(), plot_type="box", series_list=[series(y=2)])
+    assert "描画可能な数値データがありません" in str(e.value)
+
+
+def test_box_datetime_y_is_error():
+    df = pd.DataFrame({"d": pd.to_datetime(["2024-01-01", "2024-01-02"]), "v": [1.0, 2.0]})
+    for t in ("box", "violin"):
+        with pytest.raises(UserError) as e:
+            plan_of(df=df, plot_type=t, series_list=[series(y=0)])
+        assert e.value.field == "系列1のY列" and "日時の列" in str(e.value)
+
+
+def test_box_single_series_label_and_multiple_sources(tmp_path):
+    bt = build_new(tmp_path, "box", [series(y=0)], dist_frame())
+    s = bt.check(lambda f: None)
+    assert s[0]["ylabel"] == "a [0]" and s[0]["xlabel"] == ""
+    # データ元が違ってもよい（複数ファイル）
+    from mplgui.dataprep import plan_plot
+
+    sets = raw_settings([series(y=0), series(y=0, source="d2")], plot_type="box")
+    sets["load"]["files"] = [{"id": "d1", "name": "a.csv", "sheet": ""}, {"id": "d2", "name": "b.csv", "sheet": ""}]
+    st = parse_settings(sets)
+    frames = {"d1": dist_frame(), "d2": dist_frame(seed=5)}
+    plan = plan_plot(frames, st)
+    assert [p.data_var for p in plan.series] == ["df1", "df2"]
+    from mplgui.codegen import generate_script
+    from mplgui.loader import load_file
+    from mplgui.runner import figure_summary, run_script
+
+    infos = {}
+    for i, fid in enumerate(("d1", "d2")):
+        (tmp_path / f"f{i}.csv").write_text(frames[fid].to_csv(index=False), encoding="utf-8")
+        infos[fid] = load_file((tmp_path / f"f{i}.csv").read_bytes(), f"f{i}.csv", "", True).source
+    script = generate_script(st, infos, plan)
+    with run_script(script.auto_render_text(), injected={"df1": frames["d1"], "df2": frames["d2"]}) as run:
+        assert figure_summary(run.fig)[0]["boxes"] == 2
+
+
+def test_box_log_y_and_tick_step_and_annotation_index(tmp_path):
+    df = pd.DataFrame({f"s{i}": [1.0 + i, 5, 20, 80 + i] for i in range(5)})
+    sl = [series(y=i) for i in range(5)]
+
+    def mutate(raw):
+        raw["axes"]["y"]["scale"] = "log"
+        raw["axes"]["x"]["majorStep"] = 2
+        raw["axes"]["x"]["scale"] = "log"  # 横軸はカテゴリなので使わない
+        raw["annotations"] = [
+            {"kind": "vline", "x": "1.5", "label": "境目"},
+            {"kind": "text", "text": "メモ", "x": "3", "y": "30"},
+        ]
+
+    bt = Built(tmp_path, df=df, series_list=sl, plot_type="box", mutate=mutate)
+    s = bt.check(lambda f: None)
+    assert s[0]["yscale"] == "log" and s[0]["xscale"] == "linear"
+    assert [t for t in s[0]["xticklabels"] if t] == ["s0 [0]", "s2 [2]", "s4 [4]"]  # 2 個おき
+    assert "tick_step = 2" in bt.script.text
+    assert s[0]["annotations"]["vlines"] == 1 and s[0]["annotations"]["texts"] == 1
+    assert s[0]["legend"] == ["境目"]  # 注釈の凡例名だけ。箱は凡例に出さない
+    # 注釈の X は 0 始まりの番号。文字列は解釈できない
+    with pytest.raises(UserError) as e:
+        Built(tmp_path, df=df, series_list=sl, plot_type="box", mutate=lambda r: r.update(annotations=[{"kind": "vline", "x": "abc"}]))
+    assert "注釈1" in str(e.value)
+
+
+def test_box_axis_labels_override_and_title(tmp_path):
+    def mutate(raw):
+        raw["axes"]["x"]["label"] = "群"
+        raw["axes"]["y"]["label"] = "値"
+
+    bt = Built(tmp_path, df=dist_frame(), series_list=[series(y=0), series(y=1)], plot_type="box", mutate=mutate)
+    s = bt.check(lambda f: None)
+    assert (s[0]["xlabel"], s[0]["ylabel"]) == ("群", "値")
+
+
+def test_box_tick_step_too_many_is_error():
+    df = pd.DataFrame({"a": [1.0, 2, 3]})
+    with pytest.raises(UserError):
+        plan_of(df=df, plot_type="box", series_list=[series(y=0)], mutate=lambda r: r["axes"]["x"].update(majorStep=0.5))
+
+
+# ---------------------------------------------------------------- バイオリン図
+
+
+def test_violin_bodies_medians_means_and_colors(tmp_path):
+    sl = [series(y=0, color="#0000FF", lineWidth=2.5, alpha=0.4), series(y=1)]
+    bt = build_new(tmp_path, "violin", sl, dist_frame(), violin={"medians": True, "means": True})
+
+    def fn(fig):
+        ax = fig.axes[0]
+        bodies = [c for c in ax.collections if c.get_label() == "_violin"]
+        assert len(bodies) == 2
+        assert bodies[0].get_alpha() == 0.4 and matplotlib_color(bodies[0].get_facecolor()[0][:3]) == "#0000ff"
+        assert bodies[0].get_linewidth()[0] == 2.5
+        assert [t.get_text() for t in ax.get_xticklabels()] == ["a [0]", "b [1]"]
+
+    s = bt.check(fn)
+    assert s[0]["violins"] == 2 and s[0]["boxes"] == 0 and s[0]["lines"] == 0 and s[0]["legend"] == []
+    assert s[0]["collections"] == 2 + 2 * 5  # 胴 2 つ + (端 3 + 中央値 + 平均) × 2
+    assert "vert=" not in bt.script.text
+
+
+def test_violin_medians_off_and_means_off(tmp_path):
+    bt = build_new(tmp_path, "violin", [series(y=0)], dist_frame(), violin={"medians": False, "means": False})
+    s = bt.check(lambda f: None)
+    assert s[0]["collections"] == 1 + 3  # 胴 + 端の線 3 つ
+    assert "showmedians=False" in bt.script.text
+
+
+def test_violin_needs_two_values(tmp_path):
+    bt = build_new(tmp_path, "violin", [series(y=0), series(y=3), series(y=2)], dist_frame())
+    msgs = [w["message"] for w in bt.plan.warnings]
+    assert any("系列2" in m and "値が1個だけ" in m for m in msgs) and any("系列3" in m and "描きません" in m for m in msgs)
+    s = bt.check(lambda f: None)
+    assert s[0]["violins"] == 1 and s[0]["xlim"] == [-0.5, 2.5]
+    with pytest.raises(UserError):
+        plan_of(df=dist_frame(), plot_type="violin", series_list=[series(y=3)])  # 描ける系列が無い
+
+
+# ---------------------------------------------------------------- ヒートマップ
+
+
+def test_heatmap_numeric_grid_missing_cell_duplicates_and_colorbar(tmp_path):
+    bt = build_new(tmp_path, "heatmap", [hm()], grid_frame(), colormap="plasma", colorbarLabel="温度 (℃)")
+    assert any("1件重複" in w["message"] and w["series"] == 1 for w in bt.plan.warnings)
+
+    def fn(fig):
+        ax = fig.axes[0]
+        mesh = [c for c in ax.collections if type(c).__name__ == "QuadMesh"][0]
+        z = np.ma.filled(mesh.get_array().astype(float), np.nan).reshape(2, 3)
+        assert np.allclose(z, [[2.0, np.nan, 6.0], [4.0, 5.0, 7.0]], equal_nan=True)  # (0,0) は 1 と 3 の平均。欠けたマスは NaN
+        assert mesh.get_cmap().name == "plasma" and ax.get_legend() is None
+
+    s = bt.check(fn)
+    assert s[0]["meshes"] == 1 and s[0]["boxes"] == 0 and s[0]["violins"] == 0
+    assert s[0]["colorbar"] == {"label": "温度 (℃)", "cmap": "plasma", "vmin": 2.0, "vmax": 7.0}
+    assert (s[0]["xlabel"], s[0]["ylabel"]) == ("x", "y [1]") and len(s) == 1
+    assert s[0]["xlim"] == [-0.5, 2.5] and s[0]["ylim"] == [-0.5, 1.5]
+    assert 'shading="nearest"' in bt.script.text and "pivot_table" in bt.script.text and "alpha=" not in bt.script.text
+
+
+def test_heatmap_default_colorbar_label_and_alpha(tmp_path):
+    bt = build_new(tmp_path, "heatmap", [hm(alpha=0.5)], grid_frame())
+    s = bt.check(lambda f: None)
+    assert s[0]["colorbar"]["label"] == "z [2]" and s[0]["colorbar"]["cmap"] == "viridis"
+    assert "alpha=0.5" in bt.script.text
+    with bt.full() as run:
+        mesh = [c for c in run.fig.axes[0].collections if type(c).__name__ == "QuadMesh"][0]
+        assert mesh.get_alpha() == 0.5
+
+
+def test_heatmap_text_axes_in_order_of_appearance_and_tick_step(tmp_path):
+    df = grid_frame()
+    bt = build_new(tmp_path, "heatmap", [hm(x=3, y=4)], df)
+
+    def fn(fig):
+        ax = fig.axes[0]
+        assert [t.get_text() for t in ax.get_xticklabels()] == ["low", "mid", "high"]  # 現れた順（アルファベット順ではない）
+        assert [t.get_text() for t in ax.get_yticklabels()] == ["off", "on"]
+
+    s = bt.check(fn)
+    assert s[0]["xlim"] == [-0.5, 2.5] and (s[0]["xlabel"], s[0]["ylabel"]) == ("tx", "ty [4]")
+
+    wide = pd.DataFrame({"x": [f"c{i}" for i in range(10)] * 2, "y": ["r1"] * 10 + ["r2"] * 10, "z": np.arange(20.0)})
+    bt = Built(tmp_path, df=wide, series_list=[hm()], plot_type="heatmap", mutate=lambda r: r["axes"]["x"].update(majorStep=3))
+    s = bt.check(lambda f: None)
+    assert [t for t in s[0]["xticklabels"] if t] == ["c0", "c3", "c6", "c9"] and "x_tick_step = 3" in bt.script.text
+
+
+def test_heatmap_numeric_looking_text_axis_is_converted_with_warning(tmp_path):
+    df = pd.DataFrame({"x": ["1", "2", "bad", "1", "2"], "y": [1.0, 1, 1, 2, 2], "z": [1.0, 2, 3, 4, 5]})
+    bt = build_new(tmp_path, "heatmap", [hm()], df)
+    assert any("X列" in w["message"] and "数値に変換できない値が1件" in w["message"] for w in bt.plan.warnings)
+    s = bt.check(lambda f: None)
+    assert s[0]["xlim"] == [0.5, 2.5]  # X は数値の軸（bad の行は除外）
+
+
+def test_heatmap_value_column_warnings_and_errors():
+    df = grid_frame()
+    df["zs"] = ["1", "x", "3", "4", "5", "6"]
+    plan = plan_of(df=df, plot_type="heatmap", series_list=[hm(z=5)])
+    assert any("値の列" in w["message"] and "数値にできない値が1件" in w["message"] and "その行は使いません" in w["message"] for w in plan.warnings)
+    df2 = grid_frame()
+    df2["d"] = pd.to_datetime(["2024-01-01"] * 6)
+    for kw, field_name in (({"z": 5}, "系列1の値の列"), ({"x": 5}, "系列1のX列"), ({"y": 5}, "系列1のY列")):
+        with pytest.raises(UserError) as e:
+            plan_of(df=df2, plot_type="heatmap", series_list=[hm(**kw)])
+        assert e.value.field == field_name and "日時の列" in str(e.value)
+    with pytest.raises(UserError) as e:
+        plan_of(df=df, plot_type="heatmap", series_list=[hm(z=9)])
+    assert e.value.field == "系列1の値の列" and "列" in str(e.value)
+    with pytest.raises(UserError) as e:
+        plan_of(df=df, plot_type="heatmap", series_list=[hm(), hm()])
+    assert str(e.value).startswith("ヒートマップは系列1つで描きます。") and e.value.field == "系列"
+    # 2つ目の系列の値の列が未選択でも、系列の数のエラーを先に出す（設定の検証の段階）
+    with pytest.raises(UserError) as e:
+        parse_settings(raw_settings([hm(), series(colorColumn="")], plot_type="heatmap"))
+    assert str(e.value).startswith("ヒートマップは系列1つで描きます。") and e.value.field == "系列"
+    nan_z = pd.DataFrame({"x": [0, 1], "y": [0, 1], "z": ["a", "b"]})
+    with pytest.raises(UserError) as e:
+        plan_of(df=nan_z, plot_type="heatmap", series_list=[hm()])
+    assert "描画可能な数値データがありません" in str(e.value)
+
+
+def test_heatmap_size_limit():
+    n = MAX_HEATMAP_SIZE
+    ok = pd.DataFrame({"x": np.arange(n, dtype=float), "y": np.zeros(n), "z": np.ones(n)})
+    assert plan_of(df=ok, plot_type="heatmap", series_list=[hm()]).heatmap.x_count == n
+    big = pd.DataFrame({"x": np.arange(n + 1, dtype=float), "y": np.zeros(n + 1), "z": np.ones(n + 1)})
+    with pytest.raises(UserError) as e:
+        plan_of(df=big, plot_type="heatmap", series_list=[hm()])
+    assert e.value.field == "系列1のX列" and f"{n + 1}種類" in str(e.value) and "X" in str(e.value)
+    with pytest.raises(UserError) as e:
+        plan_of(df=big[["y", "x", "z"]], plot_type="heatmap", series_list=[hm()])
+    assert e.value.field == "系列1のY列" and "Y" in str(e.value)
+
+
+def test_heatmap_single_row_column_log_axes_and_annotation(tmp_path):
+    df = pd.DataFrame({"x": [1.0, 10, 100], "y": [1.0, 1, 1], "z": [1.0, 2, 3]})  # 1 行だけの格子
+
+    def mutate(raw):
+        raw["axes"]["x"]["scale"] = "log"
+        raw["annotations"] = [{"kind": "vline", "x": "10"}]
+
+    bt = Built(tmp_path, df=df, series_list=[hm()], plot_type="heatmap", mutate=mutate)
+    s = bt.check(lambda f: None)
+    assert s[0]["meshes"] == 1 and s[0]["xscale"] == "log" and s[0]["annotations"]["vlines"] == 1
+    one = pd.DataFrame({"x": [3.0], "y": [4.0], "z": [5.0]})  # 1 マスだけ
+    assert Built(tmp_path, df=one, series_list=[hm()], plot_type="heatmap").check(lambda f: None)[0]["meshes"] == 1
+
+
+def test_heatmap_annotation_on_text_axis_is_index(tmp_path):
+    def mutate(raw):
+        raw["annotations"] = [{"kind": "vline", "x": "1"}, {"kind": "hline", "y": "0.5"}]
+
+    bt = Built(tmp_path, df=grid_frame(), series_list=[hm(x=3, y=4)], plot_type="heatmap", mutate=mutate)
+    s = bt.check(lambda f: None)
+    assert s[0]["annotations"]["vlines"] == 1 and s[0]["annotations"]["hlines"] == 1
+    # 日時の注釈は文字列の軸では使えない
+    with pytest.raises(UserError):
+        Built(tmp_path, df=grid_frame(), series_list=[hm(x=3, y=4)], plot_type="heatmap", mutate=lambda r: r.update(annotations=[{"kind": "vline", "x": "2024-01-01"}]))
+
+
+def test_heatmap_legend_not_emitted_without_labelled_artists(tmp_path):
+    bt = Built(tmp_path, df=grid_frame(), series_list=[hm(label="系列名")], plot_type="heatmap")
+    assert "凡例に出せるラベルが無い" in bt.script.text
+    assert bt.check(lambda f: None)[0]["legend"] == []
+
+
+# ---------------------------------------------------------------- 共通
+
+@pytest.mark.parametrize("plot_type", NEW_TYPES)
+def test_new_types_full_and_auto_summaries_match(tmp_path, plot_type):
+    if plot_type == "heatmap":
+        bt = build_new(tmp_path, plot_type, [hm(x=3, y=1)], grid_frame())
+    else:
+        bt = build_new(tmp_path, plot_type, [series(y=0), series(y=1, label="B")], dist_frame())
+    bt.check(lambda f: None)
+
+
+@pytest.mark.parametrize("plot_type", NEW_TYPES)
+def test_new_types_steps_and_axis_ranges(tmp_path, plot_type):
+    bt = build_new(tmp_path, plot_type, [hm()] if plot_type == "heatmap" else [series(y=0)], grid_frame() if plot_type == "heatmap" else dist_frame())
+    steps = bt.script.steps
+    assert steps and all(s.message for s in steps)
+    if plot_type == "heatmap":
+        assert {"系列1の値の列", "カラーマップ"} <= {s.field for s in steps}
+        assert any("ヒートマップ" in s.message for s in steps)
+    else:
+        assert any(s.message.startswith("グラフを描画できませんでした") for s in steps)
+
+
+def test_existing_types_summaries_have_zero_new_keys(tmp_path):
+    for t in ("line", "bar", "hist", "scatterColor"):
+        sl = [colored()] if t == "scatterColor" else [series(y=1, x=4)]
+        s = build(tmp_path, t, sl).check(lambda f: None)
+        assert (s[0]["boxes"], s[0]["violins"], s[0]["meshes"]) == (0, 0, 0)
+
+
+def test_injection_new_types(tmp_path):
+    import ast
+
+    evil = '"); import os; os.system("echo hi") #'
+    label = "'''\n" + evil
+    df = pd.DataFrame(
+        {
+            'c"\'\n' + evil: ["a", "b", "a", "b", "c"],
+            "v" + evil: [1.0, 2, 3, 4, 5],
+            "z" + evil: [1.0, 2, 3, 4, 6],
+            "t" + evil: ["p", "q", "p", "q", "p"],
+        }
+    )
+    cases = [
+        ("box", [series(y=1, label=label), series(y=2, label=label)], {}),
+        ("violin", [series(y=1, label=label), series(y=2, label=label)], {}),
+        ("heatmap", [series(y=3, x=0, label=label, colorColumn="__idx__2")], {"colorbarLabel": label}),
+    ]
+    for plot_type, sl, plot in cases:
+        bt = build_new(tmp_path, plot_type, sl, df, **plot)
+        tree = ast.parse(bt.script.text)
+        assert not [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "system"]
+        for line in bt.script.text.splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            assert "echo hi" not in line.split("  #")[0] or line.count('"') >= 2  # コードの中では文字列の内側にだけ現れる
+        with bt.full() as run:
+            assert run.fig is not None and "echo hi" not in run.output
+        bt.check(lambda f: None)
+    # 凡例名は目盛のラベルとしてリテラルに入る（柔軟な文字列でもそのまま読み戻せる）
+    bt = build_new(tmp_path, "box", [series(y=1, label=label)], df)
+    assert bt.check(lambda f: None)[0]["xticklabels"][0] == label

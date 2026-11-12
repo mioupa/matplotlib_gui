@@ -616,6 +616,131 @@ def bench_computed_change(browser, url, reps, csv_path):
     return out
 
 
+# --- Phase 5d: 箱ひげ図・バイオリン図・ヒートマップ・任意の式の近似曲線 ---
+def make_heatmap_csv(path, side=100):
+    """縦持ちの格子 side × side 行（x, y, z の3列。z はなめらかな関数。実行時に作る合成データ）。"""
+    import math
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["x", "y", "z"])
+        for i in range(side):
+            for j in range(side):
+                w.writerow([i, j, round(math.sin(i / 10) * math.cos(j / 15) + 0.01 * i, 5)])
+
+
+def _bench_type_change(browser, url, reps, csv_path, plot_type, cond, setup=None):
+    """種類を plot_type にし（setup があれば続けて設定）、data-summary が cond を満たす図が出るまで待ってから、「設定変更」（タイトル入力 → 新しい画像）を測る。"""
+    out = []
+    ctx = _warm_context(browser, url, csv_path)
+    for i in range(reps):
+        page = _prepared_page(ctx, url, csv_path)
+        page.select_option("#plotType", plot_type)
+        if setup:
+            setup(page)
+        _wait_summary(page, cond)
+        page.wait_for_timeout(3000)
+        out.append(page.evaluate(CHANGE_JS, ["#title", f"bench title {i}"]))
+        page.close()
+    ctx.close()
+    return out
+
+
+def bench_box_change(browser, url, reps, csv_path):
+    """箱ひげ図: 5 系列（Y 列1-5）で boxes == 5 の図が出るまで待ってから、「設定変更」を測る。"""
+    return _bench_type_change(browser, url, reps, csv_path, "box", "s.boxes === 5")
+
+
+def bench_violin_change(browser, url, reps, csv_path):
+    """バイオリン図: 5 系列（Y 列1-5）で violins == 5 の図が出るまで待ってから、「設定変更」を測る。"""
+    return _bench_type_change(browser, url, reps, csv_path, "violin", "s.violins === 5")
+
+
+def bench_heatmap_change(browser, url, reps, heat_path):
+    """ヒートマップ: 100×100 の縦持ちデータ（10,000 行）、1 系列（X = 列0、Y = 列1、値の列 = 列2）で meshes == 1 とカラーバーが出るまで待ってから、「設定変更」を測る。
+    系列は1本だけ（_prepared_page は5系列にするので使わず、ここで読み込む）。"""
+    out = []
+    ctx = browser.new_context()
+    # 温め（HTTP キャッシュ・Cache Storage の日本語フォント）
+    w = ctx.new_page()
+    w.set_default_timeout(TIMEOUT)
+    w.goto(url)
+    wait_app_ready(w, TIMEOUT)
+    w.close()
+    for i in range(reps):
+        page = ctx.new_page()
+        page.set_default_timeout(TIMEOUT)
+        page.goto(url)
+        wait_app_ready(page, TIMEOUT)
+        page.set_input_files("#fileInput", str(heat_path))
+        wait_data_ready(page, TIMEOUT)
+        wait_plot_changed(page, "", TIMEOUT)
+        page.select_option("#plotType", "heatmap")
+        sid = series_ids(page)[0]
+        page.select_option(f"#series-{sid}-x", "__idx__0")
+        page.select_option(f"#series-{sid}-y", "__idx__1")
+        page.select_option(f"#series-{sid}-color-column", "__idx__2")
+        _wait_summary(page, "s.meshes === 1 && !!s.colorbar")
+        page.wait_for_timeout(3000)
+        out.append(page.evaluate(CHANGE_JS, ["#title", f"bench title {i}"]))
+        page.close()
+    ctx.close()
+    return out
+
+
+def bench_custom_fit_change(browser, url, reps, csv_path):
+    """任意の式の近似曲線: line 5 系列に、系列ごとの近似曲線（model = custom、式 a*x + b、凡例）を 5 本付け、
+    data-scipy-state が ready で fitlines == 5 の図が出るまで待ってから、「設定変更」を測る（scipy は読み込み済みの状態）。"""
+    out = []
+    ctx = _warm_context(browser, url, csv_path)
+    for i in range(reps):
+        page = _prepared_page(ctx, url, csv_path)
+        for sid in series_ids(page):
+            add_fit(page, series=sid, model="custom", expr="a*x + b", show="legend")
+        page.wait_for_function("() => document.documentElement.dataset.scipyState === 'ready'", timeout=TIMEOUT)
+        _wait_summary(page, "s.fitlines === 5")
+        page.wait_for_timeout(3000)
+        out.append(page.evaluate(CHANGE_JS, ["#title", f"bench title {i}"]))
+        page.close()
+    ctx.close()
+    return out
+
+
+def bench_scipy_first_load(browser, url, reps, csv_path):
+    """参考値: scipy の初回読み込み。新しいページごとに1回だけ測る（reps 個の新しいページ）。
+    データ読込・1系列の描画が済んだあと、近似曲線1本を custom（a*x + b）にした時点から、fitlines == 1 の図が出るまで。
+    約 14 MB の scipy の取得と import を含むので、ネットワークに依存する。
+    コンテキストは bench_custom_fit_change などと同じく温め済み（_warm_context: HTTP キャッシュ・日本語フォントの Cache Storage は温かい）。
+    scipy の wheel も温め中は取得されないが、ブラウザの HTTP キャッシュが効けばネットワークは速くなる点に注意（コンテキスト内の2回目以降）。"""
+    out = []
+    ctx = _warm_context(browser, url, csv_path)
+    for i in range(reps):
+        page = ctx.new_page()
+        page.set_default_timeout(TIMEOUT)
+        page.goto(url)
+        wait_app_ready(page, TIMEOUT)
+        page.set_input_files("#fileInput", str(csv_path))
+        wait_data_ready(page, TIMEOUT)
+        wait_plot_changed(page, "", TIMEOUT)
+        page.wait_for_timeout(3000)
+        fit_id = add_fit(page)  # 追加だけでは（1次式）scipy は不要
+        page.wait_for_timeout(3000)
+        out.append(page.evaluate(
+            """([fid]) => new Promise((resolve) => {
+              const t0 = performance.now();
+              const ok = () => { const d = document.querySelector('#plotArea img'); if (!d || !d.dataset.summary) return false;
+                try { return JSON.parse(d.dataset.summary)[0].fitlines === 1; } catch (e) { return false; } };
+              const obs = new MutationObserver(() => { if (document.documentElement.dataset.scipyState === 'ready' && ok()) { obs.disconnect(); resolve(performance.now() - t0); } });
+              obs.observe(document.getElementById('plotArea'), {childList: true, subtree: true, attributes: true});
+              const m = document.getElementById(`fit-${fid}-model`);
+              m.value = 'custom'; m.dispatchEvent(new Event('change', {bubbles: true}));
+              const e = document.getElementById(`fit-${fid}-expr`);
+              e.value = 'a*x + b'; e.dispatchEvent(new Event('input', {bubbles: true}));
+            })""", [fit_id]))
+        page.close()
+    ctx.close()
+    return out
+
+
 def fmt(name, xs):
     s = stats(xs)
     return f"{name:<44} median {s['median']:9.0f}  min {s['min']:9.0f}  max {s['max']:9.0f}  (ms, n={s['n']})"
@@ -626,7 +751,7 @@ def main():
     ap.add_argument("--reps", type=int, default=5)
     ap.add_argument("--headed", action="store_true")
     ap.add_argument("--json")
-    ap.add_argument("--only", choices=["old", "new", "p5a", "p5b", "p5c"], help="old: Phase 3 までの項目だけ / new: Phase 4 の項目だけ / p5a: Phase 5a の項目だけ / p5b: Phase 5b の項目だけ / p5c: Phase 5c の項目だけ（省略時は全部）")
+    ap.add_argument("--only", choices=["old", "new", "p5a", "p5b", "p5c", "p5d"], help="old: Phase 3 までの項目だけ / new: Phase 4 の項目だけ / p5a: Phase 5a の項目だけ / p5b: Phase 5b の項目だけ / p5c: Phase 5c の項目だけ / p5d: Phase 5d の項目だけ（省略時は全部）")
     a = ap.parse_args()
     serve = Path(os.environ.get("E2E_SERVE_DIR") or REPO)
     srv, url = start_server(serve)
@@ -645,6 +770,8 @@ def main():
     make_band_csv(band_path)
     color_path = tmp / "bench_color_10000x11.csv"
     make_color_csv(color_path)
+    heat_path = tmp / "bench_heatmap_10000x3.csv"
+    make_heatmap_csv(heat_path)
     big_tsv = make_tsv()
     small_tsv = make_tsv(rows=30, ys=2)
     with sync_playwright() as p:
@@ -722,6 +849,25 @@ def main():
                 "hist_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in hist_change],
                 "computed_change_to_plot_ms": comp_change,
                 "computed_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in comp_change],
+            })
+        if a.only in (None, "p5d"):
+            box_change = bench_box_change(browser, url, a.reps, csv_path)
+            violin_change = bench_violin_change(browser, url, a.reps, csv_path)
+            heat_change = bench_heatmap_change(browser, url, a.reps, heat_path)
+            cfit_change = bench_custom_fit_change(browser, url, a.reps, csv_path)
+            scipy_first = bench_scipy_first_load(browser, url, a.reps, csv_path)
+            res.update({
+                # Phase 5d で追加（箱ひげ図・バイオリン図・ヒートマップ・任意の式の近似曲線。デバウンス込みと、250 ms を除いた値）
+                "box_change_to_plot_ms": box_change,
+                "box_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in box_change],
+                "violin_change_to_plot_ms": violin_change,
+                "violin_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in violin_change],
+                "heatmap_change_to_plot_ms": heat_change,
+                "heatmap_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in heat_change],
+                "custom_fit_change_to_plot_ms": cfit_change,
+                "custom_fit_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in cfit_change],
+                # 参考値: scipy の初回読み込み（約 14 MB の取得と import を含む。ネットワークに依存）
+                "scipy_first_load_to_plot_ms": scipy_first,
             })
         browser.close()
     for k, v in res.items():

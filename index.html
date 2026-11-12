@@ -140,6 +140,9 @@
               <option value="barStacked">bar（積み上げ）</option>
               <option value="hist">hist（ヒストグラム）</option>
               <option value="scatterColor">scatter（色分け）</option>
+              <option value="box">box（箱ひげ図）</option>
+              <option value="violin">violin（バイオリン図）</option>
+              <option value="heatmap">heatmap（ヒートマップ）</option>
             </select>
           </div>
 
@@ -161,6 +164,28 @@
             <div class="group inline">
               <input id="histDensity" type="checkbox" />
               <label for="histDensity">縦軸を確率密度にする</label>
+            </div>
+          </div>
+
+          <div id="boxGroup" class="group" hidden>
+            <div class="group inline">
+              <input id="boxFliers" type="checkbox" />
+              <label for="boxFliers">外れ値を表示</label>
+            </div>
+            <div class="group inline">
+              <input id="boxMeans" type="checkbox" />
+              <label for="boxMeans">平均を表示</label>
+            </div>
+          </div>
+
+          <div id="violinGroup" class="group" hidden>
+            <div class="group inline">
+              <input id="violinMedians" type="checkbox" />
+              <label for="violinMedians">中央値の線を表示</label>
+            </div>
+            <div class="group inline">
+              <input id="violinMeans" type="checkbox" />
+              <label for="violinMeans">平均の線を表示</label>
             </div>
           </div>
 
@@ -239,7 +264,7 @@
             <a href="https://matplotlib.org/3.10.8/users/explain/text/mathtext.html" target="_blank" rel="noopener noreferrer">書き方の詳細（matplotlib）</a>
           </div>
 
-          <div class="group">
+          <div id="xScaleGroup" class="group">
             <label for="xScale">X軸スケール</label>
             <select id="xScale">
               <option value="linear">linear</option>
@@ -615,7 +640,7 @@
               <button id="addFitBtn" class="small-btn secondary" type="button">+ 近似曲線を追加</button>
             </div>
             <div id="fitList" class="series-list" role="group" aria-labelledby="fitLabel"></div>
-            <div id="fitBarNote" class="help-text" hidden>棒グラフ・ヒストグラムでは近似曲線を使えません。</div>
+            <div id="fitBarNote" class="help-text" hidden>棒グラフ・ヒストグラム・箱ひげ図・バイオリン図・ヒートマップでは近似曲線を使えません。</div>
             <div class="help-text">系列の点から、最小二乗法で1次式・多項式をあてはめます（X が数値の系列だけ）。対数軸でも、近似は軸の目盛ではなく元の値で行うので、曲線は曲がって見えます。</div>
           </div>
           </div>

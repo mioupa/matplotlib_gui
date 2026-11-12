@@ -9,6 +9,23 @@ const MAX_FITS = 20;
 const esc = (text) =>
   String(text ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+const PARAM_NAMES = ["a", "b", "c", "d", "e"];
+
+// 式の中で使っているパラメータ（単独の a〜e）。exp・abs・cos や 1e3 の中の e は数えない
+export const usedParams = (expr) => {
+  const found = new Set(String(expr || "").match(/(?<![A-Za-z0-9_.])[a-e](?![A-Za-z0-9_])/g) || []);
+  return PARAM_NAMES.filter((p) => found.has(p));
+};
+
+const initialHtml = (f, id) =>
+  PARAM_NAMES.map(
+    (p) => `
+      <div class="fit-initial-item" data-param="${p}" hidden>
+        <label for="${id(`initial-${p}`)}">${p}</label>
+        <input id="${id(`initial-${p}`)}" type="number" step="any" value="${esc((f.initial || {})[p] ?? "")}" />
+      </div>`,
+  ).join("");
+
 const seriesOptions = () =>
   getSettings().series.map((s, i) => {
     const name = seriesDisplayName(s);
@@ -44,12 +61,20 @@ const cardHtml = (f, index) => {
         <select id="${id("model")}">
           <option value="linear">1次式（直線）</option>
           <option value="poly">多項式</option>
+          <option value="custom">任意の式</option>
         </select>
       </div>
       <div class="fit-degree-wrap">
         <label for="${id("degree")}">次数（2〜6）</label>
         <input id="${id("degree")}" type="number" min="2" max="6" step="1" value="${esc(f.degree ?? "")}" />
       </div>
+    </div>
+    <div class="group fit-custom-wrap" hidden>
+      <label for="${id("expr")}">式（y = ）</label>
+      <input id="${id("expr")}" type="text" maxlength="200" value="${esc(f.expr)}" placeholder="例: a*exp(-b*x) + c" autocomplete="off" spellcheck="false" />
+      <div id="${id("expr-help")}" class="help-text">変数は x、パラメータは a〜e です。使える関数: abs sqrt exp log log10 sin cos tan。べき乗は ^ か ** で書きます。</div>
+      <div class="fit-initial-label help-text">パラメータの初期値（収束しないときは変えてみてください）</div>
+      <div class="fit-initial-row">${initialHtml(f, id)}</div>
     </div>
     <div class="group">
       <label for="${id("show")}">式と R² の表示</label>
@@ -108,6 +133,9 @@ const buildCard = (f, index) => {
 
 const syncCard = (item, f) => {
   item.querySelector(".fit-degree-wrap").hidden = f.model !== "poly";
+  item.querySelector(".fit-custom-wrap").hidden = f.model !== "custom";
+  const used = usedParams(f.expr);
+  for (const wrap of item.querySelectorAll(".fit-initial-item")) wrap.hidden = !used.includes(wrap.dataset.param);
   item.querySelector(".fit-color-picker-wrap").hidden = !f.color;
   // 系列の選択肢（系列の追加・削除・並べ替え・名前の変更に追従する）
   const select = item.querySelector(`#fit-${f.id}-series`);
@@ -154,7 +182,11 @@ const onInput = (event) => {
   const name = target.id.replace(`fit-${id}-`, "");
   if (name === "series") updateFit(id, { series: target.value });
   else if (name === "model") updateFit(id, { model: target.value });
-  else if (name === "degree") updateFit(id, { degree: readNumber(target) });
+  else if (name === "expr") updateFit(id, { expr: target.value });
+  else if (name.startsWith("initial-")) {
+    const f = getSettings().fits.find((x) => x.id === id);
+    if (f) updateFit(id, { initial: { ...(f.initial || {}), [name.slice(8)]: readNumber(target) } });
+  } else if (name === "degree") updateFit(id, { degree: readNumber(target) });
   else if (name === "show") updateFit(id, { show: target.value });
   else if (name === "line-style") updateFit(id, { lineStyle: target.value });
   else if (name === "color") {

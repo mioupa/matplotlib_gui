@@ -262,6 +262,12 @@ def _configure_fit_poly_text(page):
     add_fit(page, model="linear", show="text")
 
 
+def _configure_fit_custom(page):
+    _band_base(page)
+    page.fill("#series-s1-legend-name", "温度")
+    add_fit(page, model="custom", expr="a*x^2 + b*x + c")
+
+
 def _configure_fit_y2(page):
     _band_base(page)
     page.click("#addSeriesBtn")
@@ -317,6 +323,31 @@ def _configure_scatter_color(page):
     page.select_option("#series-s2-color-column", "__idx__3")
     page.select_option("#colorMap", "coolwarm")
     page.fill("#colorbarLabel", "電流 (A)")
+
+
+def _configure_box(page):
+    page.select_option("#plotType", "box")
+    page.select_option("#series-s1-y", "__idx__1")
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s2-y", "__idx__5")  # 数値にできない値と空欄を含む
+    page.check("#boxMeans")
+
+
+def _configure_violin(page):
+    page.select_option("#plotType", "violin")
+    page.select_option("#series-s1-y", "__idx__1")
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s2-y", "__idx__2")
+    page.check("#violinMeans")
+
+
+def _configure_heatmap(page):
+    page.select_option("#plotType", "heatmap")
+    page.select_option("#series-s1-x", "__idx__0")
+    page.select_option("#series-s1-y", "__idx__1")
+    page.select_option("#series-s1-color-column", "__idx__2")
+    page.select_option("#colorMap", "coolwarm")
+    page.fill("#colorbarLabel", "値")
 
 
 # --- 計算した列（Phase 5c, G6） ---
@@ -377,12 +408,16 @@ CASES = {
     "annotations_y2": ("band.csv", _configure_annotations_y2),
     "fit_linear_legend": ("band.csv", _configure_fit_linear_legend),
     "fit_poly_text": ("band.csv", _configure_fit_poly_text),
+    "fit_custom": ("band.csv", _configure_fit_custom),
     "fit_y2": ("band.csv", _configure_fit_y2),
     "type_step": ("chart_types.csv", _configure_step),
     "type_barh_err": ("chart_types.csv", _configure_barh_err),
     "type_bar_stacked": ("chart_types.csv", _configure_bar_stacked),
     "type_hist": ("chart_types.csv", _configure_hist),
     "type_scatter_color": ("chart_types.csv", _configure_scatter_color),
+    "type_box": ("chart_types.csv", _configure_box),
+    "type_violin": ("chart_types.csv", _configure_violin),
+    "type_heatmap": ("grid.csv", _configure_heatmap),
     "computed_one_file": ("chart_types.csv", _configure_computed_one_file),
     "computed_two_files": (("chart_types.csv", "band.csv"), _configure_computed_two_files),
     "scatter_paper1": ("utf8.csv", _configure_scatter_paper1),
@@ -412,6 +447,7 @@ EXACT_KEYS = (
     "title", "xlabel", "ylabel", "xscale", "yscale", "lines", "collections", "patches", "legend",
     "bands", "markers", "alphas", "annotations", "fitlines", "fittexts",  # Phase 5b
     "drawstyles", "bars", "colorbar",  # Phase 5c
+    "boxes", "violins", "meshes",  # Phase 5d
 )
 
 
@@ -536,6 +572,9 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
         assert "poly_text(" in script.read_text(encoding="utf-8")
     if case == "fit_poly_text":
         assert browser[0]["fitlines"] == 2 and browser[0]["fittexts"] == 2
+    if case == "fit_custom":
+        assert browser[0]["fitlines"] == 1 and any("a = " in t for t in browser[0]["legend"])
+        assert "from scipy.optimize import curve_fit" in script.read_text(encoding="utf-8")
     if case == "fit_y2":
         assert browser[1]["fitlines"] == 1 and browser[0]["fitlines"] == 1
     if case == "line":

@@ -24,6 +24,8 @@ SCRIPT_NAME = "plot.py"
 
 LINE_ONLY_MARKERS = {"x", "+"}  # 線だけでできた点の形（縁を描かないと見えない）
 XY_TYPES = {"line", "step", "scatter", "scatterColor"}  # X と Y の組で描く種類（X が日時なら日時の軸、エラーバー・帯・近似曲線を使える）
+BOX_TYPES = {"box", "violin"}  # 系列ごとに1つの箱・胴を描く種類（横軸は系列の名前）
+NO_SERIES_LEGEND_TYPES = {"box", "violin", "heatmap"}  # 系列を凡例に出さない種類（名前は目盛に出る・カラーバーで読む）
 
 GENERIC_ERROR_MESSAGE = "グラフを描画できませんでした。X列・Y列に指定した列の値の形式（数値と文字列の混在など）や、設定の値を確認してください。"
 TIGHT_LAYOUT_ERROR = "レイアウトの自動調整に失敗しました。余白を手動で指定するか、図の大きさ・フォントサイズを小さくしてください。"
@@ -179,10 +181,11 @@ def _emit_header(
             f"「{comment_text(src.filename)}」" + ("（貼り付けたデータを保存したもの）" if src.pasted else "") for src in sources
         )
         usage = f"# 使い方: データファイル {names} を、このスクリプトと同じフォルダに置いて、python {SCRIPT_NAME} で実行します。"
+    custom_fit = plan is not None and _uses_custom_fit(plan)
     b.add(
         "# matplotlib GUI が生成したスクリプト",
         usage,
-        "# 必要なライブラリ: pandas, matplotlib, numpy",
+        "# 必要なライブラリ: pandas, matplotlib, numpy" + (", scipy（任意の式の近似曲線。pip install scipy）" if custom_fit else ""),
     )
     if plan is not None and _uses_date_axis(plan):
         b.add("import matplotlib.dates as mdates")
@@ -194,6 +197,10 @@ def _emit_header(
     b.add(
         "import numpy as np",
         "import pandas as pd",
+    )
+    if custom_fit:
+        b.add("from scipy.optimize import curve_fit")
+    b.add(
         "",
         "# 日本語フォント: 一覧の先頭から、見つかったものを使う。",
         "# どれも無い環境では DejaVu Sans になる（日本語は豆腐になるが、実行はできる）",
@@ -219,13 +226,17 @@ def _emit_header(
 
 def _positions_form(plan: PlotPlan) -> bool:
     """棒を位置（0, 1, 2, …）に置き、カテゴリのラベルを付ける形（複数系列の棒・横棒、積み上げ棒）。"""
-    return plan.plot_type == "barStacked" or (plan.plot_type in {"bar", "barh"} and len(plan.series) > 1)
+    return plan.plot_type in {"barStacked"} | BOX_TYPES or (plan.plot_type in {"bar", "barh"} and len(plan.series) > 1)
 
 
 def _scale(settings: Settings, plan: PlotPlan, name: str) -> str:
     """軸のスケール。横棒の縦軸（カテゴリ）は Y のスケールを使わない。"""
     if plan.plot_type == "barh" and name == "y":
         return "linear"
+    if plan.plot_type in BOX_TYPES and name == "x":
+        return "linear"  # 横軸はカテゴリ（系列の名前）
+    if plan.plot_type == "heatmap" and name in {"x", "y"} and getattr(plan.axes, name).kind == "category":
+        return "linear"  # 文字列の列の軸はカテゴリ
     return getattr(settings.axes, name).scale
 
 
@@ -458,7 +469,48 @@ POLY_TEXT_FUNCTION = (
 
 
 def _uses_poly_text(plan: PlotPlan) -> bool:
-    return plan.plot_type in XY_TYPES and any(f.show in {"legend", "text"} for f in plan.fits)
+    return plan.plot_type in XY_TYPES and any(f.show in {"legend", "text"} and f.model != "custom" for f in plan.fits)
+
+
+def _uses_custom_fit(plan: PlotPlan) -> bool:
+    return plan.plot_type in XY_TYPES and any(f.model == "custom" for f in plan.fits)
+
+
+def _custom_label_expr(fit: FitPlan) -> str:
+    """任意の式の近似曲線の凡例・図の中の文字を作る式（パラメータは実行時に fit_params から作る）。"""
+    names = "[" + ", ".join(literal(name) for name in fit.params) + "]"
+    head = literal(f"{fit.label_prefix}: y = {expr_module.model_to_text(fit.node)}（")
+    return f'{head} + ", ".join(f"{{name}} = {{value:.4g}}" for name, value in zip({names}, fit_params)) + f"、$R^2$ = {{r2:.4f}}）"'
+
+
+def _emit_custom_fit(b: _Builder, p: SeriesPlan, fit: FitPlan) -> None:
+    params = ", ".join(fit.params)
+    func = f"fit_model_{fit.number}"
+    body = expr_module.model_to_code(fit.node, lambda v: literal(float(v)))
+    p0 = "[" + ", ".join(literal(float(v)) for v in fit.p0) + "]"
+    b.add(
+        f"# 近似曲線{fit.number}: 系列{p.number}（{comment_text(fit.series_label)}）に任意の式を当てはめる（最小二乗。scipy の curve_fit）",
+        f"def {func}(x, {params}):  # 近似曲線{fit.number}の式: {comment_text(fit.expr)}",
+        f"    return {body}",
+    )
+    with b.step(f"近似曲線{fit.number}: 式を当てはめられませんでした。初期値を変えてみてください。", f"近似曲線{fit.number}の初期値"):
+        b.add(
+            f"fit_params, _ = curve_fit({func}, x[ok], y[ok], p0={p0}, maxfev=10000)  # 初期値 p0 から当てはめる（パラメータは {params} の順）",
+            f"fit_y = {func}(x[ok], *fit_params)  # 当てはめた曲線の、データの X での値",
+            "if not np.all(np.isfinite(fit_y)):  # 初期値のところで計算できない値になると、curve_fit は黙って初期値を返すことがある",
+            '    raise ValueError("当てはめた式の値が有限ではありません")',
+            "r2 = 1 - np.sum((y[ok] - fit_y) ** 2) / np.sum((y[ok] - y[ok].mean()) ** 2)  # 決定係数 R²",
+            "x_fit = np.linspace(x[ok].min(), x[ok].max(), 200)  # 近似曲線を描く X（データの範囲を 200 点）",
+        )
+        style = f"color={literal(fit.color)}, linewidth={literal(fit.line_width)}, linestyle={literal(fit.line_style)}"
+        label = _custom_label_expr(fit) if fit.show == "legend" else '"_fit"'
+        b.add(f"{fit.target}.plot(x_fit, {func}(x_fit, *fit_params), {style}, label={label})")
+        if fit.show == "text":
+            y_pos = literal(round(0.97 - 0.07 * fit.text_index, 2))
+            b.add(
+                f"{fit.target}.text(0.03, {y_pos}, {_custom_label_expr(fit)}, transform={fit.target}.transAxes, va=\"top\", "
+                f"color={literal(fit.color)}, fontsize=FONT_SIZE)  # 近似曲線の式を図の中（左上）に書く"
+            )
 
 
 def _fit_label_expr(fit: FitPlan) -> str:
@@ -469,6 +521,9 @@ def _emit_fits(b: _Builder, plan: PlotPlan, p: SeriesPlan) -> None:
     """系列本体の直後に、その系列の近似曲線を描く（系列と同じ x / y / ok を使う）。"""
     for fit in plan.fits:
         if fit.series_number != p.number:
+            continue
+        if fit.model == "custom":
+            _emit_custom_fit(b, p, fit)
             continue
         with b.step(f"近似曲線{fit.number}を描けませんでした。近似曲線の設定とデータを確認してください。", f"近似曲線{fit.number}"):
             kind = "1 次式" if fit.degree == 1 else f"{fit.degree} 次式"
@@ -856,6 +911,120 @@ def _emit_scatter_color_series(b: _Builder, settings: Settings, plan: PlotPlan) 
         )
 
 
+def _emit_box_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
+    """箱ひげ図（box）・バイオリン図（violin）。系列ごとに Y 列の値の分布を1つ、左から系列の順（0, 1, 2, …）に描く。
+
+    系列の名前は目盛のラベル（x_labels）になる。値が無い系列（バイオリンは2個未満）は、位置を空けたまま描かない。"""
+    violin = plan.plot_type == "violin"
+    n = len(plan.series)
+    plot = settings.plot
+    if violin:
+        b.add("# バイオリン図: 系列ごとに1つの胴を、左から系列の順（0, 1, 2, …）に描く（値が2個未満の系列は描かない）")
+    else:
+        b.add("# 箱ひげ図: 系列ごとに1つの箱を、左から系列の順（0, 1, 2, …）に描く（箱の端はひげまで 1.5×IQR。外れ値は点）")
+    labels = ", ".join(literal(p.legend_label) for p in plan.series)
+    b.add(
+        f"positions = np.arange({n})  # {'胴' if violin else '箱'}の位置（系列の順に 0, 1, 2, …）",
+        f"x_labels = [{labels}]  # 目盛のラベル（系列の凡例名）",
+    )
+    for s, p in zip(settings.series, plan.series):
+        i = p.number - 1
+        b.blank()
+        b.add(f"# 系列{p.number}{'' if p.data_var == 'df' else f'（{p.data_var}）'}: Y = {_column_comment(p, 'y')}")
+        if not p.has_points:
+            b.add(f"# 描ける値が無い（{'2個未満' if violin else '数値の行が無い'}）ため、この系列は描かない（位置は空けておく）")
+            continue
+        width, color = literal(s.line_width), literal(s.color)
+        alpha = f', "alpha": {literal(p.alpha)}' if p.alpha != 1.0 else ""
+        with b.step(GENERIC_ERROR_MESSAGE):
+            b.add(
+                f'values = pd.to_numeric({p.data_var}.iloc[:, {p.y_index}], errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()'
+                "  # 数値にできない値・欠けた値は使わない"
+            )
+            if violin:
+                b.add(
+                    f"vp = ax.violinplot([values], positions=[{i}], widths=0.8, showmedians={literal(plot.violin_medians)}, "
+                    f"showmeans={literal(plot.violin_means)}, showextrema=True)",
+                    'for body in vp["bodies"]:',
+                    f'    body.set(facecolor={color}, edgecolor={color}, linewidth={width}, alpha={literal(p.alpha)}, label="_violin")'
+                    "  # 胴（凡例には出さない）",
+                    'for key in ("cbars", "cmins", "cmaxes"):  # 端の線は系列の色。中央値・平均の線は、胴の上でも見えるように黒',
+                    f"    vp[key].set(color={color}, linewidth={width})",
+                    'for key in ("cmedians", "cmeans"):',
+                    "    if key in vp:",
+                    f'        vp[key].set(color="black", linewidth={width})',
+                )
+            else:
+                line = f'{{"color": "black", "linewidth": {width}}}'
+                b.add(
+                    f"bp = ax.boxplot([values], positions=[{i}], widths=0.6, patch_artist=True, manage_ticks=False, "
+                    f"showfliers={literal(plot.box_fliers)}, showmeans={literal(plot.box_means)},",
+                    f'    boxprops={{"facecolor": {color}, "edgecolor": "black", "linewidth": {width}{alpha}}},',
+                    f"    whiskerprops={line}, capprops={line}, medianprops={line},",
+                    '    flierprops={"marker": "o", "markersize": 4, "markerfacecolor": "none", "markeredgecolor": "black"},',
+                    '    meanprops={"marker": "D", "markersize": 6, "markerfacecolor": "white", "markeredgecolor": "black"})',
+                    'for artists in bp.values():',
+                    '    plt.setp(artists, label="_box")  # 凡例には出さない（ラベルが _ で始まる）',
+                )
+    b.blank()
+    b.add(f"ax.set_xlim(-0.5, {n} - 0.5)  # 横軸は系列の数に合わせる")
+
+
+def _emit_heatmap_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
+    """ヒートマップ（heatmap）。X・Y・値の3列の縦長の表から格子を作り、pcolormesh で描く（系列は1つ）。"""
+    p, hm, colorbar = plan.series[0], plan.heatmap, plan.colorbar
+    assert hm is not None and colorbar is not None
+    cmap = literal(colorbar.colormap)
+    b.add(f"# 系列1: X = {_column_comment(p, 'x')}、Y = {_column_comment(p, 'y')}、値 = {comment_text(p.color_label)}")
+    with b.step("ヒートマップの格子を作れませんでした。X・Y・値の列を確認してください。", "系列1の値の列"):
+        _emit_x_data(b, p)
+        if hm.y_convert:
+            b.add(f'y = pd.to_numeric({p.data_var}.iloc[:, {p.y_index}], errors="coerce")  # 数値にできない値は NaN にする')
+        else:
+            b.add(f"y = {p.data_var}.iloc[:, {p.y_index}]")
+        b.add(
+            f'c = pd.to_numeric({p.data_var}.iloc[:, {p.color_index}], errors="coerce")  # 値の列（数値にできない値は NaN）',
+            "ok = x.notna() & y.notna() & c.notna()  # X・Y・値のどれかが欠けている行は使わない",
+            'heat = pd.DataFrame({"x": x[ok], "y": y[ok], "z": c[ok]})',
+        )
+        if hm.x_text:
+            b.add('heat["x"], x_cats = pd.factorize(heat["x"])  # X が文字列: 現れた順にカテゴリの番号にする')
+            b.add("x_cats = [str(v) for v in x_cats]  # 目盛のラベル")
+        if hm.y_text:
+            b.add('heat["y"], y_cats = pd.factorize(heat["y"])  # Y が文字列: 現れた順にカテゴリの番号にする')
+            b.add("y_cats = [str(v) for v in y_cats]  # 目盛のラベル")
+        b.add('grid = heat.pivot_table(index="y", columns="x", values="z", aggfunc="mean")  # 格子にする（同じ X・Y の組は平均。値の無いマスは NaN）')
+    alpha = f", alpha={literal(p.alpha)}" if p.alpha != 1.0 else ""
+    size = _label_size_expr(settings.plot.font_size)
+    with b.step("ヒートマップを描けませんでした。カラーマップと値の列を確認してください。", "カラーマップ"):
+        b.add(
+            f'mesh = ax.pcolormesh(grid.columns.to_numpy(), grid.index.to_numpy(), grid.to_numpy(), cmap={cmap}, shading="nearest"{alpha})'
+            "  # 値の無いマスは塗らない",
+            "colorbar = fig.colorbar(mesh, ax=ax)",
+            f"colorbar.set_label({literal(colorbar.label)}, fontsize=FONT_SIZE)",
+            f'colorbar.ax.tick_params(which="both", direction="in", labelsize={size})',
+        )
+
+
+def _emit_heatmap_ticks(b: _Builder, plan: PlotPlan) -> None:
+    """ヒートマップで、X・Y が文字列の列のとき、目盛にカテゴリの名前を付ける（主目盛の間隔か、25個を超えるときの間引き）。"""
+    hm = plan.heatmap
+    assert hm is not None
+    for which, text, ap in (("x", hm.x_text, plan.axes.x), ("y", hm.y_text, plan.axes.y)):
+        if not text:
+            continue
+        name = which.upper()
+        if ap.major_step is not None:
+            b.add(f"# {name} の目盛にカテゴリの名前を付ける（{name}軸の主目盛の間隔: {ap.major_step}個おき）", f"{which}_tick_step = {literal(ap.major_step)}")
+        else:
+            b.add(f"# {name} の目盛にカテゴリの名前を付ける（25個を超えるときは間引く）", f"{which}_tick_step = max(1, len({which}_cats) // 25)")
+        b.add(f"ax.set_{which}ticks(np.arange(len({which}_cats))[::{which}_tick_step])")
+        if which == "x":
+            b.add('ax.set_xticklabels(x_cats[::x_tick_step], rotation=45, ha="right")')
+        else:
+            b.add("ax.set_yticklabels(y_cats[::y_tick_step])")
+
+
 SERIES_EMITTERS: dict[str, Callable[[_Builder, Settings, PlotPlan], None]] = {
     "line": _emit_line_series,
     "scatter": _emit_scatter_series,
@@ -865,6 +1034,9 @@ SERIES_EMITTERS: dict[str, Callable[[_Builder, Settings, PlotPlan], None]] = {
     "barStacked": _emit_stacked_series,
     "hist": _emit_hist_series,
     "scatterColor": _emit_scatter_color_series,
+    "box": _emit_box_series,
+    "violin": _emit_box_series,
+    "heatmap": _emit_heatmap_series,
 }
 
 
@@ -1004,8 +1176,8 @@ def _major_lines(blk: _AxisBlock, settings: Settings, plan: PlotPlan) -> list[st
             f"{axis_var}.set_major_formatter({formatter})",
         ]
     if ap.kind == "category":
-        if _positions_form(plan):
-            return []  # 棒の位置に目盛を付ける節（tick_step）で扱う
+        if _positions_form(plan) or plan.plot_type == "heatmap":
+            return []  # 棒（箱）の位置・ヒートマップのカテゴリに目盛を付ける節（tick_step）で扱う
         if ap.major_step is not None:
             return [f"{axis_var}.set_major_locator(ticker.MultipleLocator({literal(ap.major_step)}))  # {label}軸の主目盛: {ap.major_step}個おきにラベルを出す"]
         if plan.plot_type in XY_TYPES and plan.thin_categorical_x:
@@ -1075,6 +1247,10 @@ def _emit_spines(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
         b.add('ax.spines["right"].set_visible(False)  # 右の枠線を消す')
 
 
+def _position_word(plan: PlotPlan) -> str:
+    return {"box": "箱", "violin": "胴"}.get(plan.plot_type, "棒")
+
+
 def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
     b.section("軸（ラベル・スケール・範囲・目盛）")
     plot, axes = settings.plot, settings.axes
@@ -1096,19 +1272,21 @@ def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
             with b.step(tick_error_message(blk.label), f"{blk.label}軸の目盛"):
                 b.add(*ticks)
 
+    if plan.plot_type == "heatmap":
+        _emit_heatmap_ticks(b, plan)
     if _positions_form(plan):
         horizontal = plan.plot_type == "barh"
         axis_name = "Y" if horizontal else "X"
-        what = "カテゴリの値" if horizontal else "X の値"
+        what = "カテゴリの値" if horizontal else ("系列の名前" if plan.plot_type in BOX_TYPES else "X の値")
         step = (plan.axes.y if horizontal else plan.axes.x).major_step
         if step is not None:
             b.add(
-                f"# 棒の位置に {what}を目盛として付ける（{axis_name}軸の主目盛の間隔: {step}個おき）",
+                f"# {_position_word(plan)}の位置に {what}を目盛として付ける（{axis_name}軸の主目盛の間隔: {step}個おき）",
                 f"tick_step = {literal(step)}",
             )
         else:
             b.add(
-                f"# 棒の位置に {what}を目盛として付ける（25個を超えるときは間引く）",
+                f"# {_position_word(plan)}の位置に {what}を目盛として付ける（25個を超えるときは間引く）",
                 "tick_step = max(1, len(positions) // 25)",
             )
         if horizontal:
@@ -1153,7 +1331,9 @@ def _emit_grid_and_legend(b: _Builder, settings: Settings, plan: PlotPlan) -> No
     if plot.legend_location == "none":
         b.add("# 凡例は表示しない")
         return
-    labelled = any(p.has_points and p.legend_label and not p.legend_label.startswith("_") for p in plan.series)
+    labelled = plan.plot_type not in NO_SERIES_LEGEND_TYPES and any(
+        p.has_points and p.legend_label and not p.legend_label.startswith("_") for p in plan.series
+    )
     labelled = labelled or any(a.label and not a.label.startswith("_") for a in plan.annotations)
     labelled = labelled or any(f.show == "legend" for f in plan.fits)
     if not labelled:

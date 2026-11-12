@@ -18,6 +18,7 @@ import { showSheets } from "./ui/loadSection.js";
 import { renderFileList, renderPreviewSource } from "./ui/fileList.js";
 import { setBusy, showProgress } from "./ui/progress.js";
 import { RUNTIME_MESSAGE, watchStartup } from "./startup-progress.js";
+import { usesFits } from "./chart-types.js";
 import { FONT_FIRST_RENDER_WAIT_MS, isFontCached, loadFont } from "./font-cache.js";
 
 const RENDER_DELAY_MS = 250;
@@ -56,6 +57,8 @@ let fontPercent = null;
 let fontTask = null;
 let excelInstalling = false; // 初回の .xlsx 読込前に Excel 用ライブラリを取得中
 let excelReady = false;
+let scipyState = "idle"; // idle | loading | ready | failed。任意の式の近似曲線（G10）を使うときだけ、初めて必要になったときに読み込む
+let scipyTask = null;
 let startupMessage = RUNTIME_MESSAGE; // Python 起動中の段階表示（startup-progress.js）
 let stopStartupWatch = () => {};
 let fontWaitGaveUp = false; // 最初の描画がフォント待ちを打ち切った（以後は待たない）
@@ -105,6 +108,7 @@ const currentCode = () => (isEditMode() ? String(editCodeProvider() || "") : nul
 const canRender = () => api !== null && (isEditMode() || dataReady);
 
 const EXCEL_LOADING_MESSAGE = "Excel 読込用のライブラリを取得中…";
+const SCIPY_LOADING_MESSAGE = "scipy を読み込み中…（初回のみ。約 14 MB）";
 
 const callPython = (name, ...args) => JSON.parse(api[name](...args));
 
@@ -120,6 +124,7 @@ const reportException = (err, context) => {
 const refreshProgress = () => {
   if (!api) showProgress(startupMessage);
   else if (excelInstalling) showProgress(EXCEL_LOADING_MESSAGE);
+  else if (scipyState === "loading") showProgress(SCIPY_LOADING_MESSAGE);
   else if (fontState === "loading") showProgress(fontPercent === null ? FONT_LOADING_MESSAGE : `${FONT_LOADING_MESSAGE} ${fontPercent}%`);
   else if (root.dataset.latinFontState === "loading") showProgress(LATIN_LOADING_MESSAGE);
   else showProgress("");
@@ -237,12 +242,59 @@ const markCodeStale = () => {
   if (!isEditMode() && getGeneratedCode()) setCodeStale(true);
 };
 
+// ---- scipy（G10）。任意の式の近似曲線を使うとき（GUI 同期）、または編集中のコードが scipy を import するときだけ読み込む ----
+const setScipyState = (state) => {
+  scipyState = state;
+  root.dataset.scipyState = state;
+};
+
+const SCIPY_IMPORT = /^[ \t]*(import[ \t]+scipy|from[ \t]+scipy)\b/m;
+
+// 今回の実行（code: GUI 同期なら null、編集モードなら実行するコード）が scipy を必要とするか
+const needsScipy = (code) => {
+  if (typeof code === "string") return SCIPY_IMPORT.test(code);
+  const { fits, plot } = getSettings();
+  return usesFits(plot.type) && fits.some((f) => f.model === "custom");
+};
+
+// 必要なら scipy を読み込む（同時の呼び出しは1つの Promise を共有する）。成功は null、失敗は Python の error を返す。
+// コードだけの更新（script）からは呼ばない。失敗しても、次の要求でもう一度試す。
+const ensureScipyFor = async (code) => {
+  if (!needsScipy(code) || scipyState === "ready") return null;
+  if (!scipyTask) {
+    setScipyState("loading");
+    setStatus(SCIPY_LOADING_MESSAGE);
+    refreshProgress();
+    scipyTask = (async () => {
+      try {
+        const res = JSON.parse(await api.ensureScipy());
+        setScipyState(res.ok ? "ready" : "failed");
+        return res.ok ? null : res.error;
+      } catch (err) {
+        setScipyState("failed");
+        return { message: "scipy を読み込めませんでした。インターネット接続を確かめてから、もう一度試してください。", detail: String(err) };
+      } finally {
+        scipyTask = null;
+        refreshProgress();
+      }
+    })();
+  }
+  return scipyTask;
+};
+
 // ---- 描画 ----
 const executeRender = async (generation) => {
   const stale = () => generation !== latestGeneration || !canRender();
   try {
     await waitForFonts(); // 取得中のフォントがあれば、ここで最大 FONT_FIRST_RENDER_WAIT_MS 待つ（取得済みなら即通過）
     if (stale()) return;
+    const scipyError = await ensureScipyFor(currentCode()); // 読み込み中に設定が変わっても、下の描画は最新の設定で行う
+    if (stale()) return;
+    if (scipyError) {
+      reportError(scipyError);
+      markCodeStale();
+      return;
+    }
     await nextPaint(); // 「描画中…」を先に描かせる（Python の実行は同期でメインスレッドを塞ぐ）
     if (stale()) return;
     const editing = isEditMode();
@@ -760,6 +812,11 @@ export const saveNow = async () => {
   if (!api) return;
   try {
     await waitForFonts();
+    const scipyError = await ensureScipyFor(currentCode());
+    if (scipyError) {
+      reportError(scipyError);
+      return;
+    }
     const result = callPython("save", toJson(), currentCode());
     if (!result.ok) {
       reportError(result.error);
@@ -788,6 +845,11 @@ export const makeClipboardImage = async () => {
   }
   try {
     await waitForFonts();
+    const scipyError = await ensureScipyFor(currentCode());
+    if (scipyError) {
+      reportError(scipyError);
+      throw reportedError(scipyError.message);
+    }
     const result = callPython("copyImage", toJson(), currentCode());
     if (!result.ok) {
       reportError(result.error);
@@ -850,6 +912,7 @@ export const initBridge = () => {
   refreshDataState();
   setRenderState("idle");
   setFontState("idle");
+  setScipyState("idle");
   refreshLatinState();
   root.dataset.loadCount = "0";
   stopStartupWatch = watchStartup((stage, message) => {

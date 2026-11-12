@@ -6,8 +6,16 @@ import { syncAxisTicks } from "./axisTicks.js";
 import { readNumber } from "./forms.js";
 import { computedOfSource, shiftForFileColumnChange } from "../computed-refs.js";
 import {
+  isBoxLike,
+  isHeatmap,
   isLineLike,
+  usesBox,
+  usesColor,
   usesColorColumn,
+  usesColormap,
+  usesLineStyle,
+  usesLineWidth,
+  usesViolin,
   usesFill as typeUsesFill,
   usesGlobalX,
   usesHist,
@@ -53,7 +61,7 @@ const isDatetimeColumn = (columns, value) => !!value && columns.some((c) => c.va
 // X に日時の列を使っているか（line / scatter はどれかの系列の X（その系列のデータ元の列）、bar は X列（系列1のデータ元））
 export const usesDatetimeX = () => {
   const { plot, series } = getSettings();
-  if (usesHist(plot.type)) return false;
+  if (usesHist(plot.type) || isBoxLike(plot.type)) return false;
   if (usesGlobalX(plot.type)) return series.length > 0 && isDatetimeColumn(columnsOf(series[0]), plot.xColumn);
   return series.some((s) => isDatetimeColumn(columnsOf(s), s.x));
 };
@@ -75,10 +83,14 @@ export const xAxisKind = () => {
   const { plot, series, axes } = getSettings();
   const numeric = axes.x.scale === "log" ? "log" : "number";
   const find = (columns, value) => (value ? columns.find((c) => c.value === value) : undefined);
-  if (plot.type === "barStacked") return "category";
+  if (plot.type === "barStacked" || isBoxLike(plot.type)) return "category";
   if (plot.type === "barh" || usesHist(plot.type)) return numeric;
   if (plot.type === "bar") return barCategoryKind(numeric);
   const cols = series.map((s) => find(columnsOf(s), s.x));
+  if (isHeatmap(plot.type)) {
+    // ヒートマップは系列1つ。日時はエラーなので、文字列の列（数値に読めない）ならカテゴリ、それ以外は数値 / 対数
+    return cols[0] && cols[0].kind === "text" && cols[0].numericLike === false ? "category" : numeric;
+  }
   if (cols.some((c) => c && c.kind === "datetime")) return "datetime";
   if (cols.some((c) => c && c.kind === "text" && c.numericLike === false)) return "category";
   return numeric;
@@ -89,6 +101,11 @@ export const xAxisKind = () => {
 export const yAxisKind = () => {
   const { plot, axes } = getSettings();
   if (plot.type === "barh") return barCategoryKind("number");
+  if (isHeatmap(plot.type)) {
+    const { series } = getSettings();
+    const col = series[0] ? columnsOf(series[0]).find((c) => c.value === series[0].y) : undefined;
+    if (col && col.kind === "text" && col.numericLike === false) return "category";
+  }
   return axes.y.scale === "log" ? "log" : "number";
 };
 
@@ -201,7 +218,7 @@ const cardHtml = (series, plotType) => {
       </div>
     </div>
     <div class="row group">
-      <div>
+      <div class="series-color-wrap">
         <label for="${id("color-trigger")}">色</label>
         <div class="series-color-picker">
           <button type="button" id="${id("color-trigger")}" class="series-color-trigger">
@@ -216,13 +233,13 @@ const cardHtml = (series, plotType) => {
         </div>
         <div class="color-value series-color-value">${esc(series.color)}</div>
       </div>
-      <div>
+      <div class="series-line-width-wrap">
         <label for="${id("line-width")}">線幅</label>
         <input id="${id("line-width")}" class="series-line-width" type="number" step="0.1" value="${esc(series.lineWidth ?? "")}" />
       </div>
     </div>
     <div class="row group">
-      <div>
+      <div class="series-line-style-wrap">
         <label for="${id("line-style")}">線種</label>
         <select id="${id("line-style")}" class="series-line-style">
           <option value="solid">solid</option>
@@ -262,7 +279,7 @@ const cardHtml = (series, plotType) => {
       <input id="${id("legend-name")}" class="series-legend-name" type="text" value="${esc(series.label)}" placeholder="自動" />
     </div>
     <div class="group series-color-column-wrap" hidden>
-      <label for="${id("color-column")}">色分けの列</label>
+      <label for="${id("color-column")}" class="series-color-column-label">色分けの列</label>
       <select id="${id("color-column")}" class="series-color-column"></select>
     </div>
     <div class="group series-y2-wrap">
@@ -411,8 +428,11 @@ export const syncVisibility = () => {
   const type = settings.plot.type;
   setHidden("stepGroup", !usesStep(type));
   setHidden("histGroup", !usesHist(type));
-  setHidden("colorMapGroup", !usesColorColumn(type));
-  setHidden("yScaleGroup", type === "barh"); // 横棒の縦軸はカテゴリ（Y のスケールは使わない）
+  setHidden("boxGroup", !usesBox(type));
+  setHidden("violinGroup", !usesViolin(type));
+  setHidden("colorMapGroup", !usesColormap(type));
+  setHidden("xScaleGroup", isBoxLike(type) || (isHeatmap(type) && xAxisKind() === "category")); // 箱ひげ・バイオリンの横軸はカテゴリ（X のスケールは使わない）
+  setHidden("yScaleGroup", type === "barh" || (isHeatmap(type) && yAxisKind() === "category")); // 横棒の縦軸はカテゴリ（Y のスケールは使わない）
   const globalX = document.getElementById("globalXGroup");
   if (globalX) globalX.style.display = usesGlobalX(type) ? "" : "none";
   for (const group of document.querySelectorAll("#seriesList .series-x-wrap")) {
@@ -431,6 +451,11 @@ export const syncVisibility = () => {
     set(".series-fill", !typeUsesFill(type));
     set(".series-y2-wrap", !usesY2(type));
     set(".series-color-column-wrap", !usesColorColumn(type));
+    set(".series-color-wrap", !usesColor(type));
+    set(".series-line-width-wrap", !usesLineWidth(type));
+    set(".series-line-style-wrap", !usesLineStyle(type));
+    const colorLabel = item.querySelector(".series-color-column-label");
+    if (colorLabel) colorLabel.textContent = isHeatmap(type) ? "値の列" : "色分けの列";
     // 点の形が「なし」の折れ線（line / step）は点サイズを使わない
     const size = item.querySelector(".series-marker-size");
     if (size && s) size.disabled = isLineLike(type) && s.marker === "none";

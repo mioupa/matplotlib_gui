@@ -93,7 +93,7 @@ def _offset_text(axis) -> str:
     return str(get_offset()) if get_offset is not None else ""
 
 
-_AUX_LINE_LABELS = {"_errorbar", "_fit"}
+_AUX_LINE_LABELS = {"_errorbar", "_fit", "_box"}  # _box: 箱ひげ図のひげ・端・中央値・外れ値・平均の線
 
 
 def _is_fit_label(label: str) -> bool:
@@ -181,6 +181,9 @@ def _style_summary(ax) -> dict:
         },
         "fitlines": sum(1 for ln in lines if _is_fit_label(ln.get_label())),
         "fittexts": fit_texts,
+        "boxes": sum(1 for p in ax.patches if p.get_label() == "_box"),
+        "violins": sum(1 for c in ax.collections if c.get_label() == "_violin"),
+        "meshes": sum(1 for c in ax.collections if type(c).__name__ == "QuadMesh"),
     }
 
 
@@ -192,7 +195,13 @@ def figure_summary(fig) -> list[dict]:
     - bars: {vertical, horizontal, containers, stacked}。BarContainer の棒の本数（縦向き・横向き）、容器ごとの棒の数、
       棒の下端（横棒は左端）が 0 でない容器の数（積み上げ棒の2系列目以降）。ヒストグラムも BarContainer
     - colorbar: カラーバーが無ければ null、あれば {label, cmap, vmin, vmax}。カラーバーの Axes は軸ごとの一覧に入れず、
-      元の Axes の項目として出す（色分け散布図は第2Y軸が無いので、最初の Axes に付く）
+      元の Axes の項目として出す（色分け散布図・ヒートマップは第2Y軸が無いので、最初の Axes に付く）
+
+    Phase 5d で足したキー（既存のキーの値は変えない）:
+    - boxes: 箱ひげ図の箱の数（ラベルが `_box` の patch。生成コードが箱ひげ図の部品すべてにこのラベルを付ける）。
+      箱ひげ図の線（ひげ・端・中央値・外れ値・平均）も `_box` なので、markers / alphas / drawstyles には数えない（lines には数える）
+    - violins: バイオリン図の胴の数（ラベルが `_violin` の collection。中央値・端の線は LineCollection で collections に数える）
+    - meshes: ヒートマップ（pcolormesh）の QuadMesh の数
     """
     out = []
     colorbar = _colorbar_summary(fig)
@@ -243,8 +252,8 @@ _HINTS: tuple[tuple[type, str], ...] = (
     (SyntaxError, "書き方（文法）が正しくありません"),
     (NameError, "定義されていない名前を使っています"),
     (FileNotFoundError, "ファイルが見つかりません"),
-    (ModuleNotFoundError, "読み込めないライブラリがあります（使えるのは pandas, matplotlib, numpy です）"),
-    (ImportError, "読み込めないライブラリや名前があります（使えるのは pandas, matplotlib, numpy です）"),
+    (ModuleNotFoundError, "読み込めないライブラリがあります（使えるのは pandas, matplotlib, numpy です。scipy は任意の式の近似曲線でも使えます）"),
+    (ImportError, "読み込めないライブラリや名前があります（使えるのは pandas, matplotlib, numpy です。scipy は任意の式の近似曲線でも使えます）"),
     (KeyError, "存在しないキー（列名など）を指定しています"),
     (IndexError, "範囲の外の位置を指定しています"),
     (TypeError, "型が合わない操作をしています"),

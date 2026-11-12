@@ -17,7 +17,7 @@ from . import expr as expr_module
 from .errors import UserError
 from .loader import is_blank_cell as _is_blank_cell
 from .loader import looks_numeric as _looks_numeric
-from .settings import BAR_LIKE_TYPES, MAX_HIST_BINS, AxisSettings, ErrorSpec, Settings, check_axis_range, validate_date_range
+from .settings import HEATMAP_SERIES_MESSAGE, MAX_HEATMAP_SIZE, MAX_HIST_BINS, XY_TYPES, AxisSettings, ErrorSpec, Settings, check_axis_range, validate_date_range
 from .settings import _DATE_EXAMPLE, _date_range_value, _to_float
 
 MAX_EXAMPLES = 3
@@ -205,6 +205,12 @@ class FitPlan:
     label_prefix: str  # 凡例・図の中の文字の先頭（「温度の近似」）
     text_index: int  # show が text の近似曲線のうちの順番（0 始まり。それ以外は -1）
     target: str  # ax / ax2
+    # 任意の式（model が custom）のとき: 解釈済みの式の木・使うパラメータ（a〜e の順）・初期値
+    model: str = "poly"  # linear / poly / custom
+    expr: str = ""
+    node: object = field(default=None, compare=False, repr=False)
+    params: tuple[str, ...] = ()
+    p0: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -230,8 +236,8 @@ class SeriesPlan:
     marker: str = ""  # line は描く点の形（"" = 点なし）、scatter は "" = 既定の丸（引数を足さない）
     alpha: float = 1.0  # 不透明度（1 のときはコードに書かない）
     fill: FillPlan | None = None  # 塗りつぶし帯（line / step / scatter / scatterColor のみ）
-    color_index: int | None = None  # scatterColor の色分けの列番号
-    color_label: str = ""  # scatterColor の色分けの列の表示（「名前 [番号]」）
+    color_index: int | None = None  # scatterColor の色分けの列番号（heatmap では値の列番号）
+    color_label: str = ""  # scatterColor の色分けの列（heatmap では値の列）の表示（「名前 [番号]」）
 
 
 @dataclass(frozen=True)
@@ -245,8 +251,20 @@ class HistPlan:
 
 
 @dataclass(frozen=True)
+class HeatmapPlan:
+    """ヒートマップ（heatmap）。X・Y が文字列の列か（現れた順のカテゴリにする）、数値に変換する列か、格子の大きさ。"""
+
+    x_text: bool
+    y_text: bool
+    y_convert: bool  # Y を pd.to_numeric で変換する（X は SeriesPlan.convert_x）
+    x_count: int  # X の異なる値の数
+    y_count: int
+    duplicates: int  # 同じ X・Y の組の重複の件数（平均を描く）
+
+
+@dataclass(frozen=True)
 class ColorbarPlan:
-    """色分け散布図（scatterColor）のカラーマップとカラーバーのラベル。"""
+    """色分け散布図（scatterColor）・ヒートマップ（heatmap）のカラーマップとカラーバーのラベル。"""
 
     colormap: str
     label: str  # 実際に使うラベル（設定が空なら系列1の色分けの列の表示）
@@ -313,7 +331,8 @@ class PlotPlan:
     annotations: tuple[AnnotationPlan, ...] = ()
     fits: tuple[FitPlan, ...] = ()  # 近似曲線（line / step / scatter / scatterColor のみ）
     hist: HistPlan | None = None  # hist のときだけ
-    colorbar: ColorbarPlan | None = None  # scatterColor のときだけ
+    colorbar: ColorbarPlan | None = None  # scatterColor / heatmap のときだけ
+    heatmap: HeatmapPlan | None = None  # heatmap のときだけ
     computed: tuple["ComputedPlan", ...] = ()  # 計算した列（描画に使うデータ元のものだけ。カードの順）
 
     @property
@@ -335,6 +354,7 @@ class ComputedPlan:
     refs: tuple[tuple[int, str], ...] = ()  # 式が使うファイルの列（番号、コメント用の「列 [i]: 名前」）
 
 
+HEATMAP_DATETIME_MESSAGE = "系列{n}: {what}（{name}）は日時の列です。ヒートマップでは日時の列を使えません。"
 MAX_CATEGORY_TICKS = 25  # X が文字列の列のとき、目盛に出すカテゴリの最大数
 Y_DATETIME_MESSAGE = "系列{n}: Y列（{name}）は日時の列です。Y列には数値の列を選んでください。"
 
@@ -507,7 +527,7 @@ def _plan_fill(df: pd.DataFrame, series, n: int, ok: pd.Series, y_axis: str, ext
 
 def _plan_fits(settings: Settings) -> list[tuple[int, object]]:
     """(近似曲線の番号, FitSettings) を、系列の番号ごとに引けるように並べる。棒グラフでは使わない。"""
-    if settings.plot.type in BAR_LIKE_TYPES:
+    if settings.plot.type not in XY_TYPES:
         return []
     return list(enumerate(settings.fits, start=1))
 
@@ -523,9 +543,16 @@ def _check_fit_data(n: int, fit, p: "SeriesPlan", x: pd.Series, y: pd.Series) ->
     if p.categorical_x:
         raise _fit_error(n, "X が文字列の列の系列は近似できません。")
     distinct = int(pd.Series(x).nunique())
-    need = fit.degree + 1
-    if distinct < need:
-        raise _fit_error(n, f"{fit.degree}次式で近似するには、X の異なる値が{need}個以上必要です（今は{distinct}個）。")
+    if fit.model == "custom":
+        need = len(fit.params) + 1
+        if distinct < need:
+            raise _fit_error(
+                n, f"パラメータが{len(fit.params)}個の式で近似するには、X の異なる値が{need}個以上必要です（今は{distinct}個）。"
+            )
+    else:
+        need = fit.degree + 1
+        if distinct < need:
+            raise _fit_error(n, f"{fit.degree}次式で近似するには、X の異なる値が{need}個以上必要です（今は{distinct}個）。")
     if int(pd.Series(y).nunique()) < 2:
         raise _fit_error(n, "Y の値がすべて同じなので、近似できません（決定係数 R² を計算できません）。")
 
@@ -553,6 +580,11 @@ def _build_fit_plans(settings: Settings, plans: list["SeriesPlan"]) -> tuple[Fit
                 label_prefix=f"{base}の近似",
                 text_index=text_index if fit.show == "text" else -1,
                 target="ax2" if sp.secondary else "ax",
+                model=fit.model,
+                expr=fit.expr,
+                node=fit.expr_node,
+                params=fit.params,
+                p0=fit.initial,
             )
         )
         if fit.show == "text":
@@ -753,6 +785,8 @@ def plan_plot(data, settings: Settings) -> PlotPlan:
     default_id = files[0].id if files else next(iter(data))
     multi = len(files) >= 2
 
+    if plot.type == "heatmap" and len(settings.series) > 1:
+        raise UserError(HEATMAP_SERIES_MESSAGE, field="系列")
     ids: list[str] = []  # 系列ごとのデータ元
     for n, s in enumerate(settings.series, start=1):
         sid = s.source or default_id
@@ -787,6 +821,10 @@ def plan_plot(data, settings: Settings) -> PlotPlan:
         plan = _plan_xy(dfs, settings, y_requests)
     elif plot.type == "hist":
         plan = _plan_hist(dfs, settings, y_requests)
+    elif plot.type in {"box", "violin"}:
+        plan = _plan_box(dfs, settings, y_requests)
+    elif plot.type == "heatmap":
+        plan = _plan_heatmap(dfs[0], settings, y_requests[0])
     else:
         plan = _plan_bar(dfs[0], settings, y_requests)
     series = tuple(replace(sp, data_id=sid, data_var=var_of[sid]) for sp, sid in zip(plan.series, ids))
@@ -931,9 +969,11 @@ def _plan_axis(
 
 
 def _plan_axes(
-    settings: Settings, x_kind: str, uses_secondary: bool, ext: _Extents, categories: int, y_kind: str | None = None
+    settings: Settings, x_kind: str, uses_secondary: bool, ext: _Extents, categories: int, y_kind: str | None = None,
+    y_categories: int | None = None,
 ) -> AxesPlan:
-    """y_kind は Y 軸の種類（横棒の縦軸は category / number。そのとき categories は Y 軸のカテゴリ数）。None なら Y のスケールから決める。"""
+    """y_kind は Y 軸の種類（横棒の縦軸は category / number。そのとき categories は Y 軸のカテゴリ数）。None なら Y のスケールから決める。
+    y_categories があるとき（ヒートマップ）は、categories が X 軸、y_categories が Y 軸のカテゴリ数。"""
     axes = settings.axes
     plot_type = settings.plot.type
     bar = plot_type in {"bar", "barStacked", "hist"}  # 縦向きの棒: Y 軸（値）の範囲に 0 を含める
@@ -941,33 +981,39 @@ def _plan_axes(
     def num_kind(axis: AxisSettings) -> str:
         return "log" if axis.scale == "log" else "number"
 
+    if y_categories is not None:
+        x_cat, y_cat = categories, y_categories
+    else:
+        x_cat, y_cat = (0 if y_kind else categories), (categories if y_kind == "category" else 0)
     return AxesPlan(
-        x=_plan_axis(axes.x, x_kind, "X", ext, "x", categories=0 if y_kind else categories, include_zero=plot_type == "barh"),
-        y=_plan_axis(axes.y, y_kind or num_kind(axes.y), "Y", ext, "y", categories=categories if y_kind == "category" else 0, include_zero=bar),
+        x=_plan_axis(axes.x, x_kind, "X", ext, "x", categories=x_cat, include_zero=plot_type == "barh"),
+        y=_plan_axis(axes.y, y_kind or num_kind(axes.y), "Y", ext, "y", categories=y_cat, include_zero=bar),
         y2=_plan_axis(axes.y2, num_kind(axes.y2), "第2Y", ext, "y2", include_zero=plot_type == "bar") if uses_secondary else None,
     )
 
 
-def _color_column(df: pd.DataFrame, requested: str, n: int) -> int:
-    field_name = f"系列{n}の色分けの列"
+def _color_column(df: pd.DataFrame, requested: str, n: int, what: str = "色分けの列") -> int:
+    field_name = f"系列{n}の{what}"
     idx = parse_column_index(requested)
     if idx is None:
-        raise UserError(f"系列{n}の色分けの列を選んでください。", field=field_name)
+        raise UserError(f"系列{n}の{what}を選んでください。", field=field_name)
     if idx >= len(df.columns):
         raise UserError(_column_out_of_range(idx, len(df.columns)), field=field_name)
     return idx
 
 
-def _color_values(df: pd.DataFrame, idx: int, mask: pd.Series, n: int, load, warnings: list[dict]) -> pd.Series:
-    """色分けの列を数値にする（数値にできない値は NaN。空欄も NaN で、警告しない）。警告の件数と例は、描く行（mask）だけで数える。"""
+def _color_values(
+    df: pd.DataFrame, idx: int, mask: pd.Series, n: int, load, warnings: list[dict], what: str = "色分けの列", skipped: str = "その点は描きません"
+) -> pd.Series:
+    """色分けの列（heatmap では値の列）を数値にする（数値にできない値は NaN。空欄も NaN で、警告しない）。警告の件数と例は、描く行（mask）だけで数える。"""
     raw = df.iloc[:, idx]
     numeric, _, _ = coerce_numeric(raw)
     _, count, examples = coerce_numeric(raw[mask.reindex(df.index, fill_value=False)])
     if count:
         ex = ", ".join(f'"{e}"' for e in examples)
         message = (
-            f"系列{n}: 色分けの列「{df.columns[idx]}」[{idx}] に数値にできない値が{count}件あったため、"
-            f"その点は描きません（例: {ex}）。{load_hint(examples, load)}"
+            f"系列{n}: {what}「{df.columns[idx]}」[{idx}] に数値にできない値が{count}件あったため、"
+            f"{skipped}（例: {ex}）。{load_hint(examples, load)}"
         )
         warnings.append({"series": n, "message": message})
     return numeric
@@ -1267,6 +1313,140 @@ def _plan_hist(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str
     )
 
 
+BOX_NO_VALUES = "系列{n}: 描ける値（数値の行）が無いため、{what}は描きません。"
+VIOLIN_FEW_VALUES = "系列{n}: 値が1個だけなので密度を推定できず、バイオリンは描きません。"
+
+
+def _plan_box(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str]) -> PlotPlan:
+    """箱ひげ図（box）・バイオリン図（violin）。系列ごとに Y 列の値の分布を1つ、左から系列の順（0, 1, 2, …）に描く。
+
+    値が無い系列（バイオリンは2個未満）は、位置を空けたまま描かない（警告）。X 列は使わない。"""
+    violin = settings.plot.type == "violin"
+    what = "バイオリン" if violin else "箱"
+    plans: list[SeriesPlan] = []
+    warnings: list[dict] = []
+    ext = _Extents()
+    for n, (df, series, y_request) in enumerate(zip(dfs, settings.series, y_requests), start=1):
+        y_index = resolve_column_index(df, y_request)
+        y_name, data_label = _label_for(df, y_index)
+        if _is_datetime(df.iloc[:, y_index]):
+            raise UserError(Y_DATETIME_MESSAGE.format(n=n, name=y_name), field=f"系列{n}のY列")
+        numeric, dropped, examples = coerce_numeric(df.iloc[:, y_index])
+        if dropped:
+            warnings.append(dropped_warning(n, f"系列{n}（{y_name}）", dropped, examples, settings.load))
+        vals = numeric.dropna()
+        vals = vals[np.isfinite(vals.to_numpy(dtype=float))]
+        drawable = len(vals) >= (2 if violin else 1)
+        if not drawable:
+            warnings.append({"series": n, "message": (VIOLIN_FEW_VALUES if len(vals) == 1 and violin else BOX_NO_VALUES).format(n=n, what=what)})
+        else:
+            ext.add_values("y", vals)
+        plans.append(
+            SeriesPlan(
+                number=n,
+                y_index=y_index,
+                y_name=y_name,
+                x_index=None,
+                x_label="",
+                data_label=data_label,
+                legend_label=series.label or data_label,
+                convert_x=False,
+                categorical_x=False,
+                marker_size=series.effective_marker_size("bar"),
+                has_points=drawable,
+                secondary=False,
+                alpha=series.alpha,
+            )
+        )
+    if not any(p.has_points for p in plans):
+        raise UserError(_no_data_message(warnings))
+    return _finish(settings, plans, warnings, "", None, axes_args=("category", ext, len(plans)))
+
+
+def _plan_heatmap(df: pd.DataFrame, settings: Settings, y_request: str) -> PlotPlan:
+    """ヒートマップ。X・Y・値（色分けの列）の3列の縦長の表から格子を作る（案 H2）。系列は1つだけ。
+
+    X・Y は数値の列か文字列の列（文字列は現れた順のカテゴリ）。日時の列は使えない。同じ X・Y の組は平均を描く。"""
+    series = settings.series[0]
+    n = 1
+    warnings: list[dict] = []
+    x_index = resolve_column_index(df, series.x) if series.x else None
+    x_label = str(df.columns[x_index]) if x_index is not None else "index"
+    y_index = resolve_column_index(df, y_request)
+    y_name, data_label = _label_for(df, y_index)
+    x_series = df.iloc[:, x_index] if x_index is not None else pd.Series(df.index)
+    y_series = df.iloc[:, y_index]
+    if _is_datetime(x_series):
+        raise UserError(HEATMAP_DATETIME_MESSAGE.format(n=n, what="X列", name=x_label), field=f"系列{n}のX列")
+    if _is_datetime(y_series):
+        raise UserError(HEATMAP_DATETIME_MESSAGE.format(n=n, what="Y列", name=y_name), field=f"系列{n}のY列")
+    convert_x = convert_y = False
+    if x_index is not None and not pd.api.types.is_numeric_dtype(x_series.dtype) and _looks_numeric(x_series):
+        convert_x = True
+        x_series, dropped, examples = coerce_numeric(x_series)
+        if dropped:
+            warnings.append(dropped_warning(n, f"系列{n}のX列（{x_label}）", dropped, examples, settings.load))
+    if not pd.api.types.is_numeric_dtype(y_series.dtype) and _looks_numeric(y_series):
+        convert_y = True
+        y_series, dropped, examples = coerce_numeric(y_series)
+        if dropped:
+            warnings.append(dropped_warning(n, f"系列{n}のY列（{y_name}）", dropped, examples, settings.load))
+    x_text = not pd.api.types.is_numeric_dtype(x_series.dtype)
+    y_text = not pd.api.types.is_numeric_dtype(y_series.dtype)
+
+    value_index = _color_column(df, series.color_column, n, "値の列")
+    value_label = _label_for(df, value_index)[1]
+    if _is_datetime(df.iloc[:, value_index]):
+        raise UserError(
+            f"系列{n}の値の列（{df.columns[value_index]}）は日時の列です。値の列には数値の列を選んでください。", field=f"系列{n}の値の列"
+        )
+    present = y_series.notna() & x_series.notna()
+    values = _color_values(df, value_index, present, n, settings.load, warnings, "値の列", "その行は使いません")
+    ok = present & values.notna()
+    if not bool(ok.any()):
+        raise UserError(_no_data_message(warnings))
+    heat = pd.DataFrame({"x": x_series[ok], "y": y_series[ok]})
+    x_count, y_count = int(heat["x"].nunique()), int(heat["y"].nunique())
+    for count, which, field_name in ((x_count, "X", f"系列{n}のX列"), (y_count, "Y", f"系列{n}のY列")):
+        if count > MAX_HEATMAP_SIZE:
+            raise UserError(
+                f"ヒートマップの{which}の異なる値が{count}種類あります（{MAX_HEATMAP_SIZE}種類まで）。"
+                f"{which}列に格子の軸になる列を選んでいるか確認してください。",
+                field=field_name,
+            )
+    duplicates = int(heat.duplicated(["x", "y"]).sum())
+    if duplicates:
+        warnings.append({"series": n, "message": f"系列{n}: 同じ X・Y の組が{duplicates}件重複していたため、その平均を描きます。"})
+    ext = _Extents()
+    if not x_text:
+        ext.add_values("x", x_series[ok])
+    if not y_text:
+        ext.add_values("y", y_series[ok])
+    x_kind = "category" if x_text else ("log" if settings.axes.x.scale == "log" else "number")
+    y_kind = "category" if y_text else ("log" if settings.axes.y.scale == "log" else "number")
+    plan = SeriesPlan(
+        number=n,
+        y_index=y_index,
+        y_name=y_name,
+        x_index=x_index,
+        x_label=x_label,
+        data_label=data_label,
+        legend_label=series.label or data_label,
+        convert_x=convert_x,
+        categorical_x=x_text,
+        marker_size=series.effective_marker_size("bar"),
+        has_points=True,
+        secondary=False,
+        alpha=series.alpha,
+        color_index=value_index,
+        color_label=value_label,
+    )
+    return _finish(
+        settings, [plan], warnings, x_label, None, axes_args=(x_kind, ext, x_count if x_text else 0, y_kind, y_count if y_text else 0),
+        heatmap=HeatmapPlan(x_text=x_text, y_text=y_text, y_convert=convert_y, x_count=x_count, y_count=y_count, duplicates=duplicates),
+    )
+
+
 def _finish(
     settings: Settings,
     plans: list[SeriesPlan],
@@ -1277,15 +1457,17 @@ def _finish(
     datetime_x: bool = False,
     thin_categorical_x: bool = False,
     bar_date_format: str | None = None,
-    axes_args: tuple | None = None,  # (X の軸の種類, _Extents, カテゴリ数[, Y の軸の種類（横棒の縦軸）])
+    axes_args: tuple | None = None,  # (X の軸の種類, _Extents, カテゴリ数[, Y の軸の種類（横棒の縦軸・ヒートマップ）[, Y のカテゴリ数（ヒートマップ）]])
     fits: tuple[FitPlan, ...] = (),
     hist: HistPlan | None = None,
+    heatmap: HeatmapPlan | None = None,
 ) -> PlotPlan:
     primary = [p.data_label for p in plans if not p.secondary]
     secondary = [p.data_label for p in plans if p.secondary]
     uses_secondary = any(p.secondary and p.has_points for p in plans)
     x_kind, ext, categories, *rest = axes_args or ("number", _Extents(), 0)
     y_kind = rest[0] if rest else None
+    y_categories = rest[1] if len(rest) > 1 else None
     annotations = _plan_annotations(settings, x_kind, uses_secondary, ext, y_kind)  # 範囲を ext に足すので、軸の計画より前
     plot_type = settings.plot.type
     y_label = primary[0] if len(primary) == 1 else "values"
@@ -1294,8 +1476,10 @@ def _finish(
         x_label, y_label = plans[0].data_label, x_label
     elif plot_type == "hist":
         x_label, y_label = plans[0].data_label, "確率密度" if settings.plot.hist_density else "度数"
-    elif plot_type == "scatterColor":
+    elif plot_type in {"scatterColor", "heatmap"}:
         colorbar = ColorbarPlan(settings.plot.colormap, settings.plot.colorbar_label or plans[0].color_label)
+    elif plot_type in {"box", "violin"}:  # 横軸は系列の名前（目盛）。縦軸は、系列が1つならその Y 列の名前
+        x_label, y_label = "", plans[0].data_label if len(plans) == 1 else ""
     return PlotPlan(
         skip_rows=settings.plot.skip_rows,
         plot_type=settings.plot.type,
@@ -1310,9 +1494,10 @@ def _finish(
         datetime_x=datetime_x,
         thin_categorical_x=thin_categorical_x,
         bar_date_format=bar_date_format,
-        axes=_plan_axes(settings, x_kind, uses_secondary, ext, categories, y_kind),
+        axes=_plan_axes(settings, x_kind, uses_secondary, ext, categories, y_kind, y_categories),
         annotations=annotations,
         fits=fits,
         hist=hist,
         colorbar=colorbar,
+        heatmap=heatmap,
     )

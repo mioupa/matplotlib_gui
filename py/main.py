@@ -72,6 +72,45 @@ async def _ensure_excel():
         return json.dumps({"ok": False, "error": err.to_dict()}, ensure_ascii=False)
 
 
+_SCIPY_STATE = {"ready": False, "task": None}
+
+
+def _scipy_available():
+    import importlib.util
+
+    return importlib.util.find_spec("scipy") is not None
+
+
+async def _install_scipy():
+    import pyodide_js
+
+    # scipy は Pyodide 同梱のパッケージなので、名前だけで読み込める（初回は約 14 MB を取得する）
+    await pyodide_js.loadPackage(to_js(["scipy"]))
+
+
+async def _ensure_scipy():
+    """任意の式の近似曲線を使う前に JS から呼ぶ。2回目以降は何もしない。戻り値は JSON 文字列。"""
+    if _SCIPY_STATE["ready"] or _scipy_available():
+        _SCIPY_STATE["ready"] = True
+        return json.dumps({"ok": True})
+    try:
+        if _SCIPY_STATE["task"] is None:
+            _SCIPY_STATE["task"] = asyncio.ensure_future(_install_scipy())
+        await _SCIPY_STATE["task"]
+        if not _scipy_available():
+            raise RuntimeError("scipy を導入後も import できません")
+        _SCIPY_STATE["ready"] = True
+        return json.dumps({"ok": True})
+    except Exception as exc:
+        _SCIPY_STATE["task"] = None  # 次回は再試行する
+        err = UserError(
+            "scipy を読み込めませんでした。インターネット接続を確かめてから、もう一度試してください。",
+            field="近似曲線",
+            detail=f"{type(exc).__name__}: {exc}",
+        )
+        return json.dumps({"ok": False, "error": err.to_dict()}, ensure_ascii=False)
+
+
 def _load_file(name, data, load_settings_json, source_id=None, pasted=None):
     # source_id / pasted は JS が渡さない（null / undefined）ときは既定値
     return api.load_file_json(
@@ -121,6 +160,7 @@ def _script_filename(save_filename):
 # create_proxy の参照を保持しておく（GC されると JS から呼べなくなる）
 _PROXIES = {
     "ensureExcel": create_proxy(_ensure_excel),
+    "ensureScipy": create_proxy(_ensure_scipy),
     "loadFile": create_proxy(_load_file),
     "removeSource": create_proxy(_remove_source),
     "clearSources": create_proxy(_clear_sources),
