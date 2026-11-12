@@ -665,6 +665,7 @@ ax.plot(x_fit, fit(x_fit), color="#FF4B00", linewidth=2.0, linestyle="dashed", l
   ```
   - 関数の本体は、解釈した木から決まった形で書く（`to_code`）。利用者が書いた式の文字列は、`comment_text()` を通してコメントにだけ入る。
   - `from scipy.optimize import curve_fit` は、任意の式の近似曲線があるときだけ冒頭の import に足す。「使い方」に scipy が要ることを書く。
+  - 実装時の追加: `curve_fit` は、初期値のところで式が有限でない値になると、収束したように見せて初期値を黙って返すことがある。そこで `fit_y = fit_model_N(x[ok], *fit_params)` が有限か確かめ（`np.isfinite`）、有限でなければ ValueError にして、上の手順のメッセージに置き換える。
 - 表示: 「温度の近似: y = a*exp(-b*x) + c（a = 1.234, b = 0.5678, c = 9.012、R² = 0.9981）」。
   - 式は、解釈した木から整えた形で書く（利用者の文字列そのままではない）。
   - パラメータは有効数字4桁で、実行時に `fit_params` から作る。
