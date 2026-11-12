@@ -10,12 +10,13 @@ import math
 import re
 from dataclasses import dataclass, field, replace
 
+import numpy as np
 import pandas as pd
 
 from .errors import UserError
 from .loader import is_blank_cell as _is_blank_cell
 from .loader import looks_numeric as _looks_numeric
-from .settings import AxisSettings, ErrorSpec, Settings, check_axis_range, validate_date_range
+from .settings import BAR_LIKE_TYPES, MAX_HIST_BINS, AxisSettings, ErrorSpec, Settings, check_axis_range, validate_date_range
 from .settings import _DATE_EXAMPLE, _date_range_value, _to_float
 
 MAX_EXAMPLES = 3
@@ -227,7 +228,27 @@ class SeriesPlan:
     cap_size: float = 3.0  # エラーバーの端の線の長さ
     marker: str = ""  # line は描く点の形（"" = 点なし）、scatter は "" = 既定の丸（引数を足さない）
     alpha: float = 1.0  # 不透明度（1 のときはコードに書かない）
-    fill: FillPlan | None = None  # 塗りつぶし帯（line / scatter のみ）
+    fill: FillPlan | None = None  # 塗りつぶし帯（line / step / scatter / scatterColor のみ）
+    color_index: int | None = None  # scatterColor の色分けの列番号
+    color_label: str = ""  # scatterColor の色分けの列の表示（「名前 [番号]」）
+
+
+@dataclass(frozen=True)
+class HistPlan:
+    """ヒストグラム（hist）。区間の端は生成コードが np.histogram_bin_edges で決める（ここでは検査と軸の範囲の見積もりだけ）。"""
+
+    bins: int | None  # None = 自動（"auto"）
+    density: bool
+    bin_count: int  # 実際の区間の数
+    max_height: float  # 度数（density なら確率密度）の最大
+
+
+@dataclass(frozen=True)
+class ColorbarPlan:
+    """色分け散布図（scatterColor）のカラーマップとカラーバーのラベル。"""
+
+    colormap: str
+    label: str  # 実際に使うラベル（設定が空なら系列1の色分けの列の表示）
 
 
 @dataclass(frozen=True)
@@ -289,7 +310,9 @@ class PlotPlan:
     multi_source: bool = False  # load.files が2つ以上（生成コードで DATA_FILE_N / dfN と書く）
     axes: AxesPlan = field(default_factory=AxesPlan)  # 軸ごとの目盛の設定（効くものだけ）
     annotations: tuple[AnnotationPlan, ...] = ()
-    fits: tuple[FitPlan, ...] = ()  # 近似曲線（line / scatter のみ）
+    fits: tuple[FitPlan, ...] = ()  # 近似曲線（line / step / scatter / scatterColor のみ）
+    hist: HistPlan | None = None  # hist のときだけ
+    colorbar: ColorbarPlan | None = None  # scatterColor のときだけ
 
     @property
     def plotted(self) -> tuple[SeriesPlan, ...]:
@@ -413,9 +436,9 @@ def _marker_plan(series, plot_type: str) -> tuple[str, float]:
 
     形を選んで点サイズが自動のときは、散布図と同じ面積 24 で描く。scatter の「自動」は引数を足さない。"""
     shape = series.marker
-    if plot_type == "scatter":
+    if plot_type in {"scatter", "scatterColor"}:
         return ("" if shape == "auto" else shape), series.effective_marker_size("scatter")
-    size = series.effective_marker_size("line")
+    size = series.effective_marker_size("line")  # line と step
     if shape == "auto":
         return ("o" if size > 0 else ""), size
     if shape == "none":
@@ -468,7 +491,7 @@ def _plan_fill(df: pd.DataFrame, series, n: int, ok: pd.Series, y_axis: str, ext
 
 def _plan_fits(settings: Settings) -> list[tuple[int, object]]:
     """(近似曲線の番号, FitSettings) を、系列の番号ごとに引けるように並べる。棒グラフでは使わない。"""
-    if settings.plot.type == "bar":
+    if settings.plot.type in BAR_LIKE_TYPES:
         return []
     return list(enumerate(settings.fits, start=1))
 
@@ -558,7 +581,10 @@ def _looks_like_date(text: str) -> bool:
     return True
 
 
-def _plan_annotations(settings: Settings, x_kind: str, uses_secondary: bool, ext: "_Extents") -> tuple[AnnotationPlan, ...]:
+def _plan_annotations(
+    settings: Settings, x_kind: str, uses_secondary: bool, ext: "_Extents", y_kind: str | None = None
+) -> tuple[AnnotationPlan, ...]:
+    """y_kind は Y 軸の種類（横棒の縦軸は category / number）。None なら Y のスケール（number / log）から決める。"""
     out = []
     y_log = {"y": settings.axes.y.scale == "log", "y2": settings.axes.y2.scale == "log"}
     for n, a in enumerate(settings.annotations, start=1):
@@ -574,7 +600,8 @@ def _plan_annotations(settings: Settings, x_kind: str, uses_secondary: bool, ext
             return _annotation_value(text, n, what, kind=x_kind, log=False)
 
         def yval(text: str, what: str = "Y") -> float:
-            return _annotation_value(text, n, what, kind="log" if y_log[y_axis] else "number", log=False)  # type: ignore[return-value]
+            kind = y_kind or ("log" if y_log[y_axis] else "number")
+            return _annotation_value(text, n, what, kind=kind, log=False)  # type: ignore[return-value]
 
         def add_x(*values) -> None:
             if x_kind in {"number", "log"}:
@@ -646,7 +673,7 @@ def plan_plot(data, settings: Settings) -> PlotPlan:
                 NOT_LOADED_MESSAGE.format(n=numbers.get(sid, 1), name=names.get(sid, "")), field=f"系列{n}のデータ元"
             )
         ids.append(sid)
-    if plot.type == "bar" and len(set(ids)) > 1:
+    if plot.type in {"bar", "barh", "barStacked"} and len(set(ids)) > 1:
         raise UserError(BAR_SOURCE_MESSAGE, field="データ元")
 
     order = [f.id for f in files if f.id in set(ids)] if files else list(dict.fromkeys(ids))
@@ -667,8 +694,10 @@ def plan_plot(data, settings: Settings) -> PlotPlan:
         for i, r in zip(idx, resolved):
             y_requests[i] = r
     dfs = [frames[sid] for sid in ids]
-    if plot.type in {"line", "scatter"}:
+    if plot.type in {"line", "step", "scatter", "scatterColor"}:
         plan = _plan_xy(dfs, settings, y_requests)
+    elif plot.type == "hist":
+        plan = _plan_hist(dfs, settings, y_requests)
     else:
         plan = _plan_bar(dfs[0], settings, y_requests)
     series = tuple(replace(sp, data_id=sid, data_var=var_of[sid]) for sp, sid in zip(plan.series, ids))
@@ -805,18 +834,47 @@ def _plan_axis(
     )
 
 
-def _plan_axes(settings: Settings, x_kind: str, uses_secondary: bool, ext: _Extents, categories: int) -> AxesPlan:
+def _plan_axes(
+    settings: Settings, x_kind: str, uses_secondary: bool, ext: _Extents, categories: int, y_kind: str | None = None
+) -> AxesPlan:
+    """y_kind は Y 軸の種類（横棒の縦軸は category / number。そのとき categories は Y 軸のカテゴリ数）。None なら Y のスケールから決める。"""
     axes = settings.axes
-    bar = settings.plot.type == "bar"
+    plot_type = settings.plot.type
+    bar = plot_type in {"bar", "barStacked", "hist"}  # 縦向きの棒: Y 軸（値）の範囲に 0 を含める
 
     def num_kind(axis: AxisSettings) -> str:
         return "log" if axis.scale == "log" else "number"
 
     return AxesPlan(
-        x=_plan_axis(axes.x, x_kind, "X", ext, "x", categories=categories),
-        y=_plan_axis(axes.y, num_kind(axes.y), "Y", ext, "y", include_zero=bar),
-        y2=_plan_axis(axes.y2, num_kind(axes.y2), "第2Y", ext, "y2", include_zero=bar) if uses_secondary else None,
+        x=_plan_axis(axes.x, x_kind, "X", ext, "x", categories=0 if y_kind else categories, include_zero=plot_type == "barh"),
+        y=_plan_axis(axes.y, y_kind or num_kind(axes.y), "Y", ext, "y", categories=categories if y_kind == "category" else 0, include_zero=bar),
+        y2=_plan_axis(axes.y2, num_kind(axes.y2), "第2Y", ext, "y2", include_zero=plot_type == "bar") if uses_secondary else None,
     )
+
+
+def _color_column(df: pd.DataFrame, requested: str, n: int) -> int:
+    field_name = f"系列{n}の色分けの列"
+    idx = parse_column_index(requested)
+    if idx is None:
+        raise UserError(f"系列{n}の色分けの列を選んでください。", field=field_name)
+    if idx >= len(df.columns):
+        raise UserError(_column_out_of_range(idx, len(df.columns)), field=field_name)
+    return idx
+
+
+def _color_values(df: pd.DataFrame, idx: int, mask: pd.Series, n: int, load, warnings: list[dict]) -> pd.Series:
+    """色分けの列を数値にする（数値にできない値は NaN。空欄も NaN で、警告しない）。警告の件数と例は、描く行（mask）だけで数える。"""
+    raw = df.iloc[:, idx]
+    numeric, _, _ = coerce_numeric(raw)
+    _, count, examples = coerce_numeric(raw[mask.reindex(df.index, fill_value=False)])
+    if count:
+        ex = ", ".join(f'"{e}"' for e in examples)
+        message = (
+            f"系列{n}: 色分けの列「{df.columns[idx]}」[{idx}] に数値にできない値が{count}件あったため、"
+            f"その点は描きません（例: {ex}）。{load_hint(examples, load)}"
+        )
+        warnings.append({"series": n, "message": message})
+    return numeric
 
 
 def _plan_xy(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str]) -> PlotPlan:
@@ -847,7 +905,21 @@ def _plan_xy(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str])
         if y_dropped:
             warnings.append(dropped_warning(n, f"系列{n}（{y_name}）", y_dropped, y_examples, settings.load))
 
-        has_points = bool((y_numeric.notna() & pd.notna(x_series)).any())
+        point_ok = y_numeric.notna() & pd.notna(x_series)
+        color_index = None
+        color_label = ""
+        color_numeric = None
+        if plot_type == "scatterColor":
+            color_index = _color_column(df, series.color_column, n)
+            color_label = _label_for(df, color_index)[1]
+            if _is_datetime(df.iloc[:, color_index]):
+                raise UserError(
+                    f"系列{n}の色分けの列（{df.columns[color_index]}）は日時の列です。色分けの列には数値の列を選んでください。",
+                    field=f"系列{n}の色分けの列",
+                )
+            color_numeric = _color_values(df, color_index, point_ok, n, settings.load, warnings)
+            point_ok = point_ok & color_numeric.notna()
+        has_points = bool(point_ok.any())
         marker, marker_size = _marker_plan(series, plot_type)
         plans.append(
             SeriesPlan(
@@ -869,10 +941,12 @@ def _plan_xy(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str])
                 datetime_x=datetime_x,
                 marker=marker,
                 alpha=series.alpha,
+                color_index=color_index,
+                color_label=color_label,
             )
         )
         if has_points:
-            ok = y_numeric.notna() & pd.notna(x_series)
+            ok = point_ok
             y_axis = "y2" if series.secondary_axis else "y"
             fill_plan = _plan_fill(df, series, n, ok, y_axis, ext, settings.load, warnings)
             for k, fit in fits_of[series.id]:
@@ -934,7 +1008,11 @@ def _check_datetime_x(settings: Settings, plans: list[SeriesPlan]) -> None:
 
 
 def _plan_bar(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> PlotPlan:
+    """bar / barh / barStacked。barh は軸を入れ替えて描く（値は横軸 = X 軸、カテゴリは縦軸 = Y 軸）。"""
     plot = settings.plot
+    horizontal = plot.type == "barh"
+    stacked = plot.type == "barStacked"
+    val_axis, cat_axis = ("x", "y") if horizontal else ("y", "x")  # 値の軸・カテゴリの軸（物理的な軸）
     x_req = plot.x_column.strip()
     if x_req:
         bar_x_index = resolve_column_index(df, x_req)
@@ -984,21 +1062,28 @@ def _plan_bar(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> Pl
     if frame.empty:
         raise UserError(_no_data_message(warnings))
 
-    if len(plans) == 1:
+    positions_form = stacked or len(plans) > 1  # 棒の位置（0, 1, 2, …）にカテゴリのラベルを付ける形
+    if len(plans) == 1 and not stacked:
         has_points = bool((frame["y_0"].notna() & pd.notna(frame["x"])).any())
         if not has_points:
             raise UserError(NO_DRAWABLE_DATA)
     bar_date_format = None
     if datetime_x:
         bar_date_format = settings.axes.x.date_format or auto_bar_date_format(x)
-    # 棒の位置（複数系列）か、文字列・日時の X はカテゴリの軸。数値の X・X なしの1系列は数値の軸
+    # 棒の位置（複数系列・積み上げ）か、文字列・日時の X はカテゴリの軸。数値の X・X なしの1系列は数値の軸
     ext = _Extents()
-    if len(plans) == 1:
+    if not positions_form:
         ok = frame["y_0"].notna() & frame["x"].notna()  # 描く棒の行
     else:
         ok = frame[y_keys].notna().any(axis=1)
-    for k in y_keys:
-        ext.add_values("y2" if plans[int(k[2:])].secondary else "y", frame[k][ok])
+    if stacked:
+        values = frame[y_keys][ok].fillna(0.0)  # 欠けた値は 0 として積む
+        positive = values.where(values > 0, 0.0).sum(axis=1)
+        negative = values.where(values < 0, 0.0).sum(axis=1)
+        ext.add(val_axis, min(float(negative.min()), 0.0), max(float(positive.max()), 0.0))
+    else:
+        for k in y_keys:
+            ext.add_values(val_axis if horizontal else ("y2" if plans[int(k[2:])].secondary else "y"), frame[k][ok])
     for i, series in enumerate(settings.series):
         spec = series.error_bars.y
         if spec.mode == "none":
@@ -1006,19 +1091,83 @@ def _plan_bar(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> Pl
         k = f"y_{i}"
         rows = ok & frame[k].notna()  # 棒を描く行（欠けた行は棒も誤差も描かない）
         y_err, plus, minus = _plan_error(df, spec, "y", i + 1, rows, settings.load, warnings)
-        _add_error_extent(ext, "y2" if plans[i].secondary else "y", frame[k][rows], _take(plus, rows), _take(minus, rows))
+        axis = val_axis if horizontal else ("y2" if plans[i].secondary else "y")
+        _add_error_extent(ext, axis, frame[k][rows], _take(plus, rows), _take(minus, rows))
         plans[i] = replace(plans[i], y_err=y_err, cap_size=series.error_bars.cap_size)
     x_text = datetime_x or not pd.api.types.is_numeric_dtype(x.dtype)
-    if len(plans) > 1 or x_text:
-        x_kind = "category"
-        categories = len(frame) if len(plans) > 1 else int(frame["x"][ok].nunique())
+    if positions_form or x_text:
+        cat_kind = "category"
+        categories = len(frame) if positions_form else int(frame["x"][ok].nunique())
     else:
-        x_kind = "log" if settings.axes.x.scale == "log" else "number"
+        cat_kind = "number" if horizontal else ("log" if settings.axes.x.scale == "log" else "number")
         categories = 0
-        ext.add_values("x", frame["x"][ok])
+        ext.add_values(cat_axis, frame["x"][ok])
+    if horizontal:
+        axes_args = ("log" if settings.axes.x.scale == "log" else "number", ext, categories, cat_kind)  # 縦軸はカテゴリ。Y のスケールは使わない
+    else:
+        axes_args = (cat_kind, ext, categories)
     return _finish(
         settings, plans, warnings, x_label, bar_x_index, datetime_x=datetime_x, bar_date_format=bar_date_format,
-        axes_args=(x_kind, ext, categories),
+        axes_args=axes_args,
+    )
+
+
+HIST_AUTO_BINS_MESSAGE = "区間の数が自動で{n} 個になりました（{limit} 個まで）。「区間の数」を指定してください。"
+
+
+def _plan_hist(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str]) -> PlotPlan:
+    """ヒストグラム。各系列の Y 列の値の分布（X 列は使わない）。区間は全系列で共通。"""
+    plot = settings.plot
+    plans: list[SeriesPlan] = []
+    warnings: list[dict] = []
+    values: list[pd.Series] = []
+    for n, (df, series, y_request) in enumerate(zip(dfs, settings.series, y_requests), start=1):
+        y_index = resolve_column_index(df, y_request)
+        y_name, data_label = _label_for(df, y_index)
+        if _is_datetime(df.iloc[:, y_index]):
+            raise UserError(Y_DATETIME_MESSAGE.format(n=n, name=y_name), field=f"系列{n}のY列")
+        numeric, dropped, examples = coerce_numeric(df.iloc[:, y_index])
+        if dropped:
+            warnings.append(dropped_warning(n, f"系列{n}（{y_name}）", dropped, examples, settings.load))
+        vals = numeric.dropna()
+        if len(vals):
+            values.append(vals)
+        plans.append(
+            SeriesPlan(
+                number=n,
+                y_index=y_index,
+                y_name=y_name,
+                x_index=None,
+                x_label="",
+                data_label=data_label,
+                legend_label=series.label or data_label,
+                convert_x=False,
+                categorical_x=False,
+                marker_size=series.effective_marker_size("bar"),
+                has_points=bool(len(vals)),
+                secondary=False,
+                alpha=series.alpha,
+            )
+        )
+    if not values:
+        raise UserError(_no_data_message(warnings))
+    bins = plot.hist_bins
+    try:
+        edges = np.histogram_bin_edges(np.concatenate([v.to_numpy(dtype=float) for v in values]), bins=bins or "auto")
+    except ValueError as exc:
+        raise UserError(
+            "ヒストグラムの区間を決められませんでした（無限大の値が含まれていないか確認してください）。", field="区間の数", detail=str(exc)
+        ) from exc
+    bin_count = len(edges) - 1
+    if bins is None and bin_count > MAX_HIST_BINS:
+        raise UserError(HIST_AUTO_BINS_MESSAGE.format(n=bin_count, limit=MAX_HIST_BINS), field="区間の数")
+    max_height = max(float(np.histogram(v.to_numpy(dtype=float), bins=edges, density=plot.hist_density)[0].max()) for v in values)
+    ext = _Extents()
+    ext.add("x", float(edges[0]), float(edges[-1]))
+    ext.add("y", 0.0, max_height)
+    return _finish(
+        settings, plans, warnings, "", None, axes_args=("log" if settings.axes.x.scale == "log" else "number", ext, 0),
+        hist=HistPlan(bins=bins, density=plot.hist_density, bin_count=bin_count, max_height=max_height),
     )
 
 
@@ -1032,20 +1181,31 @@ def _finish(
     datetime_x: bool = False,
     thin_categorical_x: bool = False,
     bar_date_format: str | None = None,
-    axes_args: tuple[str, _Extents, int] | None = None,
+    axes_args: tuple | None = None,  # (X の軸の種類, _Extents, カテゴリ数[, Y の軸の種類（横棒の縦軸）])
     fits: tuple[FitPlan, ...] = (),
+    hist: HistPlan | None = None,
 ) -> PlotPlan:
     primary = [p.data_label for p in plans if not p.secondary]
     secondary = [p.data_label for p in plans if p.secondary]
     uses_secondary = any(p.secondary and p.has_points for p in plans)
-    x_kind, ext, categories = axes_args or ("number", _Extents(), 0)
-    annotations = _plan_annotations(settings, x_kind, uses_secondary, ext)  # 範囲を ext に足すので、軸の計画より前
+    x_kind, ext, categories, *rest = axes_args or ("number", _Extents(), 0)
+    y_kind = rest[0] if rest else None
+    annotations = _plan_annotations(settings, x_kind, uses_secondary, ext, y_kind)  # 範囲を ext に足すので、軸の計画より前
+    plot_type = settings.plot.type
+    y_label = primary[0] if len(primary) == 1 else "values"
+    colorbar = None
+    if plot_type == "barh":  # 軸ラベルの自動の値だけ入れ替える: 横軸 = 系列1のY列、縦軸 = X列
+        x_label, y_label = plans[0].data_label, x_label
+    elif plot_type == "hist":
+        x_label, y_label = plans[0].data_label, "確率密度" if settings.plot.hist_density else "度数"
+    elif plot_type == "scatterColor":
+        colorbar = ColorbarPlan(settings.plot.colormap, settings.plot.colorbar_label or plans[0].color_label)
     return PlotPlan(
         skip_rows=settings.plot.skip_rows,
         plot_type=settings.plot.type,
         series=tuple(plans),
         x_label=x_label,
-        y_label=primary[0] if len(primary) == 1 else "values",
+        y_label=y_label,
         y2_label=(secondary[0] if len(secondary) == 1 else "values") if uses_secondary else None,
         bar_x_index=bar_x_index,
         plotted_count=sum(1 for p in plans if p.has_points),
@@ -1054,7 +1214,9 @@ def _finish(
         datetime_x=datetime_x,
         thin_categorical_x=thin_categorical_x,
         bar_date_format=bar_date_format,
-        axes=_plan_axes(settings, x_kind, uses_secondary, ext, categories),
+        axes=_plan_axes(settings, x_kind, uses_secondary, ext, categories, y_kind),
         annotations=annotations,
         fits=fits,
+        hist=hist,
+        colorbar=colorbar,
     )

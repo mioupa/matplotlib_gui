@@ -39,6 +39,7 @@ export const DEFAULT_SERIES = {
   marker: "auto",
   alpha: 1,
   fill: { lower: "", upper: "", alpha: 0.25 },
+  colorColumn: "",
 };
 
 // 注釈（annotations[]）1つの既定値。id は追加するときに a1, a2, ... を振る（削除しても再利用しない）
@@ -88,6 +89,10 @@ export const DEFAULT_SETTINGS = {
     grid: { major: false, minor: false },
     margins: { left: null, right: null, bottom: null, top: null },
     spines: { top: true, right: true },
+    step: { where: "post" },
+    hist: { bins: null, density: false },
+    colormap: "viridis",
+    colorbarLabel: "",
   },
   axes: {
     x: { label: "", scale: "linear", min: null, max: null, dateFormat: "", ...defaultTicks(), majorStepUnit: "day", dateMin: "", dateMax: "" },

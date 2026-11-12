@@ -21,6 +21,8 @@ from .settings import AxisSettings, SeriesSettings, Settings
 
 SCRIPT_NAME = "plot.py"
 
+XY_TYPES = {"line", "step", "scatter", "scatterColor"}  # X と Y の組で描く種類（X が日時なら日時の軸、エラーバー・帯・近似曲線を使える）
+
 GENERIC_ERROR_MESSAGE = "グラフを描画できませんでした。X列・Y列に指定した列の値の形式（数値と文字列の混在など）や、設定の値を確認してください。"
 TIGHT_LAYOUT_ERROR = "レイアウトの自動調整に失敗しました。余白を手動で指定するか、図の大きさ・フォントサイズを小さくしてください。"
 MARGIN_ERROR = "余白の設定を適用できませんでした。左 < 右、下 < 上 になるように、0〜1の値で指定してください。"
@@ -213,8 +215,20 @@ def _emit_header(
             b.add(f'plt.rcParams["mathtext.fontset"] = {literal(latin.mathtext_fontset)}  # 数式（$...$）も Times 系の字形にする（STIX は matplotlib に同梱）')
 
 
+def _positions_form(plan: PlotPlan) -> bool:
+    """棒を位置（0, 1, 2, …）に置き、カテゴリのラベルを付ける形（複数系列の棒・横棒、積み上げ棒）。"""
+    return plan.plot_type == "barStacked" or (plan.plot_type in {"bar", "barh"} and len(plan.series) > 1)
+
+
+def _scale(settings: Settings, plan: PlotPlan, name: str) -> str:
+    """軸のスケール。横棒の縦軸（カテゴリ）は Y のスケールを使わない。"""
+    if plan.plot_type == "barh" and name == "y":
+        return "linear"
+    return getattr(settings.axes, name).scale
+
+
 def _uses_date_axis(plan: PlotPlan) -> bool:
-    return plan.datetime_x and plan.plot_type in {"line", "scatter"}
+    return plan.datetime_x and plan.plot_type in XY_TYPES
 
 
 def _font_list_literal() -> str:
@@ -372,7 +386,7 @@ def _alpha_arg(p: SeriesPlan) -> str:
 # ---- band (G3) ----
 
 
-def _emit_band(b: _Builder, s: SeriesSettings, p: SeriesPlan) -> None:
+def _emit_band(b: _Builder, s: SeriesSettings, p: SeriesPlan, step: str = "") -> None:
     """塗りつぶし帯（fill_between）。エラーバーと系列本体より先に描く（系列本体が上に来る）。"""
     fill = p.fill
     if fill is None:
@@ -384,7 +398,8 @@ def _emit_band(b: _Builder, s: SeriesSettings, p: SeriesPlan) -> None:
             f'fill_upper = pd.to_numeric({p.data_var}.iloc[:, {fill.upper_index}], errors="coerce")'
             f"  # 塗りつぶし帯の上端: {comment_text(fill.upper_label)}",
             f"{_target(p)}.fill_between(x[ok], fill_lower[ok], fill_upper[ok], color={literal(s.color)}, alpha={literal(fill.alpha)}, "
-            'linewidth=0, label="_fill")  # 塗りつぶし帯（凡例には出さない）',
+            + (f"step={literal(step)}, " if step else "")
+            + 'linewidth=0, label="_fill")  # 塗りつぶし帯（凡例には出さない）' + ("（段に合わせる）" if step else ""),
         )
 
 
@@ -410,7 +425,7 @@ POLY_TEXT_FUNCTION = (
 
 
 def _uses_poly_text(plan: PlotPlan) -> bool:
-    return plan.plot_type in {"line", "scatter"} and any(f.show in {"legend", "text"} for f in plan.fits)
+    return plan.plot_type in XY_TYPES and any(f.show in {"legend", "text"} for f in plan.fits)
 
 
 def _fit_label_expr(fit: FitPlan) -> str:
@@ -466,7 +481,7 @@ ERROR_BAR_FUNCTION = (
 
 
 def _uses_error_function(plan: PlotPlan) -> bool:
-    return plan.plot_type in {"line", "scatter"} and any(p.has_points and (p.y_err or p.x_err) for p in plan.series)
+    return plan.plot_type in XY_TYPES and any(p.has_points and (p.y_err or p.x_err) for p in plan.series)
 
 
 def _error_names(err: ErrorPlan, owner: str = "") -> tuple[str, str]:
@@ -536,18 +551,21 @@ def _bar_yerr_expr(err: ErrorPlan, owner: str = "") -> str:
     return plus if err.symmetric else f"[{minus}, {plus}]"
 
 
-def _bar_error_args(s: SeriesSettings, p: SeriesPlan, owner: str = "") -> str:
+def _bar_error_args(s: SeriesSettings, p: SeriesPlan, owner: str = "", *, horizontal: bool = False) -> str:
+    """ax.bar / ax.barh のエラーバーの引数。横棒（barh）は、Y 方向の指定を値の誤差として xerr で描く。"""
     if p.y_err is None:
         return ""
     width = literal(s.line_width)
+    keyword = "xerr" if horizontal else "yerr"
     return (
-        f", yerr={_bar_yerr_expr(p.y_err, owner)}, capsize={literal(p.cap_size)}, ecolor=\"black\", "
+        f", {keyword}={_bar_yerr_expr(p.y_err, owner)}, capsize={literal(p.cap_size)}, ecolor=\"black\", "
         f'error_kw={{"elinewidth": {width}, "capthick": {width}}}'
     )
 
 
 def _emit_line_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
     ax2 = _Axes2State()
+    drawstyle = settings.plot.step_where if plan.plot_type == "step" else ""  # step: 段の付き方（pre / mid / post）
     for i, (s, p) in enumerate(zip(settings.series, plan.series)):
         if i > 0:
             b.blank()  # 系列ごとに1行あける
@@ -560,12 +578,14 @@ def _emit_line_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
             _emit_x_data(b, p)
             _emit_y_data(b, p)
             _emit_ok_mask(b)
-            _emit_band(b, s, p)
+            _emit_band(b, s, p, drawstyle)
             _emit_line_error_bars(b, s, p)
             marker = ""
             if p.marker:
                 b.add("# 点の大きさ: 面積（scatter の s と同じ単位）の平方根を markersize（直径）にする")
                 marker = f", marker={literal(p.marker)}, markersize={literal(p.marker_size)} ** 0.5"
+            if drawstyle:
+                marker += f", drawstyle={literal('steps-' + drawstyle)}"
             b.add(f"{_target(p)}.plot(x[ok], y[ok], {_style_args(s)}{marker}{_alpha_arg(p)}, label={literal(p.legend_label)})")
         _emit_fits(b, plan, p)
 
@@ -608,6 +628,10 @@ def _emit_bar_x(b: _Builder, plan: PlotPlan) -> None:
 
 
 def _emit_bar_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
+    """bar / barh。barh は同じ並べ方を横向きにする（ax.barh。複数系列は縦方向にずらし、エラーバーは xerr）。"""
+    horizontal = plan.plot_type == "barh"
+    func = "barh" if horizontal else "bar"
+    size_arg = "height" if horizontal else "width"
     ax2 = _Axes2State()
     if len(plan.series) == 1:
         s, p = settings.series[0], plan.series[0]
@@ -620,49 +644,183 @@ def _emit_bar_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
             if p.y_err is not None:
                 with b.step(*_error_step(p, p.y_err)):
                     _emit_error_columns(b, p, p.y_err)
-            b.add(f"{_target(p)}.bar(x[ok], y[ok], {_style_args(s)}{_alpha_arg(p)}, label={literal(p.legend_label)}{_bar_error_args(s, p)})")
+            b.add(
+                f"{_target(p)}.{func}(x[ok], y[ok], {_style_args(s)}{_alpha_arg(p)}, label={literal(p.legend_label)}"
+                f"{_bar_error_args(s, p, horizontal=horizontal)})"
+            )
         return
 
     n = len(plan.series)
-    b.add("# 複数の系列を、X の値ごとに横に並べた棒グラフにする（X は共通）")
+    if horizontal:
+        b.add("# 複数の系列を、カテゴリごとに縦に並べた横棒グラフにする（カテゴリは X列で共通。下から上へ並ぶ）")
+    else:
+        b.add("# 複数の系列を、X の値ごとに横に並べた棒グラフにする（X は共通）")
     with b.step(GENERIC_ERROR_MESSAGE):
-        _emit_bar_x(b, plan)
-        for p in plan.series:
-            if p.y_err is not None:
-                with b.step(*_error_step(p, p.y_err)):
-                    _emit_error_columns(b, p, p.y_err, f"y{p.number}")
-        b.add("bar_data = pd.DataFrame({")
-        b.add('    "x": x,')
-        for p in plan.series:
-            b.add(f'    "y{p.number}": pd.to_numeric({p.data_var}.iloc[:, {p.y_index}], errors="coerce"),  # {_column_comment(p, "y")}')
-            if p.y_err is not None and p.y_err.mode == "column":
-                for name in dict.fromkeys(_error_names(p.y_err, f"y{p.number}")):
-                    b.add(f'    "{name}": {name},')
-        b.add("})")
-        keys = ", ".join(literal(f"y{p.number}") for p in plan.series)
-        b.add(f'bar_data = bar_data.dropna(subset=[{keys}], how="all")  # 全ての系列が欠けている行は描かない')
-        for p in plan.series:
-            if p.y_err is not None and p.y_err.mode == "column":
-                for name in dict.fromkeys(_error_names(p.y_err, f"y{p.number}")):
-                    b.add(f'bar_data["{name}"] = bar_data["{name}"].where(bar_data["y{p.number}"].notna())  # 棒を描かない行のエラーバーも描かない')
-        b.add("x_labels = [str(v) for v in bar_data[\"x\"]]")
-        b.add("positions = np.arange(len(x_labels))")
-        b.add(f"width = 0.8 / {n}  # 棒1本の幅")
+        _emit_bar_data(b, plan, error_bars=True)
+        b.add(f"{size_arg} = 0.8 / {n}  # 棒1本の{'高さ' if horizontal else '幅'}")
         for i, (s, p) in enumerate(zip(settings.series, plan.series)):
             b.blank()
             b.add(_series_comment(p))
             ax2.ensure(b, p)
-            b.add(f"offset = -0.4 + (width / 2.0) + ({i} * width)")
+            b.add(f"offset = -0.4 + ({size_arg} / 2.0) + ({i} * {size_arg})")
             b.add(
-                f'{_target(p)}.bar(positions + offset, bar_data["y{p.number}"].fillna(0.0), width=width, '
-                f"{_style_args(s)}{_alpha_arg(p)}, label={literal(p.legend_label)}{_bar_error_args(s, p, f'y{p.number}')})"
+                f'{_target(p)}.{func}(positions + offset, bar_data["y{p.number}"].fillna(0.0), {size_arg}={size_arg}, '
+                f"{_style_args(s)}{_alpha_arg(p)}, label={literal(p.legend_label)}"
+                f"{_bar_error_args(s, p, f'y{p.number}', horizontal=horizontal)})"
             )
+
+
+def _emit_bar_data(b: _Builder, plan: PlotPlan, *, error_bars: bool) -> None:
+    """棒の位置（positions）とカテゴリのラベル（x_labels）、系列ごとの値（bar_data）を作る。全系列が欠けている行は描かない。"""
+    _emit_bar_x(b, plan)
+    if error_bars:
+        for p in plan.series:
+            if p.y_err is not None:
+                with b.step(*_error_step(p, p.y_err)):
+                    _emit_error_columns(b, p, p.y_err, f"y{p.number}")
+    b.add("bar_data = pd.DataFrame({")
+    b.add('    "x": x,')
+    for p in plan.series:
+        b.add(f'    "y{p.number}": pd.to_numeric({p.data_var}.iloc[:, {p.y_index}], errors="coerce"),  # {_column_comment(p, "y")}')
+        if error_bars and p.y_err is not None and p.y_err.mode == "column":
+            for name in dict.fromkeys(_error_names(p.y_err, f"y{p.number}")):
+                b.add(f'    "{name}": {name},')
+    b.add("})")
+    keys = ", ".join(literal(f"y{p.number}") for p in plan.series)
+    b.add(f'bar_data = bar_data.dropna(subset=[{keys}], how="all")  # 全ての系列が欠けている行は描かない')
+    if error_bars:
+        for p in plan.series:
+            if p.y_err is not None and p.y_err.mode == "column":
+                for name in dict.fromkeys(_error_names(p.y_err, f"y{p.number}")):
+                    b.add(f'bar_data["{name}"] = bar_data["{name}"].where(bar_data["y{p.number}"].notna())  # 棒を描かない行のエラーバーも描かない')
+    b.add("x_labels = [str(v) for v in bar_data[\"x\"]]")
+    b.add("positions = np.arange(len(x_labels))")
+
+
+def _emit_stacked_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
+    """積み上げ棒（barStacked）。正の値と負の値は別に積む（段が重ならない）。欠けた値は 0 として積む。"""
+    b.add("# 複数の系列を、X の値ごとに縦に積んだ棒グラフにする（X は共通。正の値と負の値は別に積む。欠けた値は 0）")
+    with b.step(GENERIC_ERROR_MESSAGE):
+        _emit_bar_data(b, plan, error_bars=False)
+        b.add(
+            "stack_pos = np.zeros(len(positions))  # 正の値を積んだ高さ",
+            "stack_neg = np.zeros(len(positions))  # 負の値を積んだ深さ",
+        )
+        for s, p in zip(settings.series, plan.series):
+            b.blank()
+            b.add(_series_comment(p))
+            b.add(
+                f'v = bar_data["y{p.number}"].fillna(0.0).to_numpy()',
+                f"ax.bar(positions, v, bottom=np.where(v >= 0, stack_pos, stack_neg), width=0.8, "
+                f"{_style_args(s)}{_alpha_arg(p)}, label={literal(p.legend_label)})",
+                "stack_pos += np.where(v >= 0, v, 0.0)",
+                "stack_neg += np.where(v < 0, v, 0.0)",
+            )
+
+
+def _emit_hist_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
+    """ヒストグラム（hist）。系列の Y 列の値の分布。区間は全系列で共通、複数系列は区間ごとに横に並べる。"""
+    hist = plan.hist
+    assert hist is not None
+    drawn: list[tuple[SeriesSettings, SeriesPlan]] = []
+    for i, (s, p) in enumerate(zip(settings.series, plan.series)):
+        if i > 0:
+            b.blank()
+        b.add(f"# 系列{p.number}{'' if p.data_var == 'df' else f'（{p.data_var}）'}: Y = {_column_comment(p, 'y')}")
+        if not p.has_points:
+            b.add("# 描ける値（数値の行）が無いため、この系列は描かない")
+            continue
+        with b.step(GENERIC_ERROR_MESSAGE):
+            b.add(
+                f'hist_{p.number} = pd.to_numeric({p.data_var}.iloc[:, {p.y_index}], errors="coerce").dropna()'
+                "  # 数値にできない値・欠けた値は数えない"
+            )
+        drawn.append((s, p))
+    names = [f"hist_{p.number}" for _, p in drawn]
+    bins = literal(hist.bins) if hist.bins is not None else '"auto"'
+    values = names[0] if len(names) == 1 else f"np.concatenate([{', '.join(names)}])"
+    b.blank()
+    with b.step(GENERIC_ERROR_MESSAGE):
+        b.add(f"hist_bins = np.histogram_bin_edges({values}, bins={bins})  # 区間は全系列で共通")
+        density = literal(hist.density)
+        if len(drawn) == 1:
+            s, p = drawn[0]
+            b.add(
+                f"ax.hist({names[0]}, bins=hist_bins, density={density}, {_style_args(s)}{_alpha_arg(p)}, "
+                f"label={literal(p.legend_label)})"
+            )
+            return
+        colors = "[" + ", ".join(literal(s.color) for s, _ in drawn) + "]"
+        labels = "[" + ", ".join(literal(p.legend_label) for _, p in drawn) + "]"
+        b.add(
+            f"_, _, hist_bars = ax.hist([{', '.join(names)}], bins=hist_bins, density={density}, color={colors}, label={labels})"
+            "  # 区間ごとに系列を横に並べる"
+        )
+        for k, (s, p) in enumerate(drawn):
+            b.add(
+                f"plt.setp(hist_bars[{k}], linewidth={literal(s.line_width)}, linestyle={literal(s.line_style)}{_alpha_arg(p)})"
+                f"  # 系列{p.number}の棒の縁・不透明度"
+            )
+
+
+def _emit_scatter_color_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
+    """色分け散布図（scatterColor）。点を色分けの列の値で塗る。色の範囲は全系列で共通、カラーバーは1本。
+
+    凡例は系列を点の形で見分けるもの。点は色分けの値で塗るので、凡例用に灰色の見本（空の scatter）を足す。"""
+    colorbar = plan.colorbar
+    assert colorbar is not None
+    cmap = literal(colorbar.colormap)
+    ax2 = _Axes2State()
+    b.add(
+        "# 色の範囲: 全系列で共通（下で、描いた点の色の値の最小〜最大に決める）",
+        "color_norm = plt.Normalize()",
+        "color_all = []  # 系列ごとの、描いた点の色の値",
+    )
+    for s, p in zip(settings.series, plan.series):
+        b.blank()
+        b.add(_series_comment(p) + f"、色 = {comment_text(p.color_label)}")
+        if not p.has_points:
+            b.add("# 描ける点（X・Y・色の値とも数値の行）が無いため、この系列は描かない")
+            continue
+        with b.step(GENERIC_ERROR_MESSAGE, f"系列{p.number}の色分けの列"):
+            ax2.ensure(b, p)
+            _emit_x_data(b, p)
+            _emit_y_data(b, p)
+            b.add(f'c = pd.to_numeric({p.data_var}.iloc[:, {p.color_index}], errors="coerce")  # 色分けの列（数値にできない値は NaN）')
+            b.add("ok = x.notna() & y.notna() & c.notna()  # X・Y・色の値のどれかが欠けている行は描かない")
+            _emit_band(b, s, p)
+            _emit_line_error_bars(b, s, p, zorder=1)
+            marker = f", marker={literal(p.marker)}" if p.marker else ""
+            b.add(
+                f"{_target(p)}.scatter(x[ok], y[ok], c=c[ok], cmap={cmap}, norm=color_norm, s={literal(p.marker_size)}{marker}"
+                f'{_alpha_arg(p)}, label="_color")  # 点は色の値で塗る（凡例には出さない）',
+                f'{_target(p)}.scatter([], [], color="gray", s={literal(p.marker_size)}{marker}{_alpha_arg(p)}, '
+                f"label={literal(p.legend_label)})  # 凡例用の見本（灰色。色はカラーバーで読む）",
+                "color_all.append(c[ok])",
+            )
+        _emit_fits(b, plan, p)
+    b.blank()
+    size = _label_size_expr(settings.plot.font_size)
+    with b.step("カラーバーを描けませんでした。カラーマップと色分けの列を確認してください。", "カラーマップ"):
+        b.add(
+            "# 色の範囲を、描いた点の色の値の最小〜最大に決めて、カラーバーを1本付ける",
+            "color_values = pd.concat(color_all)",
+            "color_norm.vmin, color_norm.vmax = float(color_values.min()), float(color_values.max())",
+            f"colorbar = fig.colorbar(plt.cm.ScalarMappable(norm=color_norm, cmap={cmap}), ax=ax)",
+            f"colorbar.set_label({literal(colorbar.label)}, fontsize=FONT_SIZE)",
+            f'colorbar.ax.tick_params(which="both", direction="in", labelsize={size})',
+        )
 
 
 SERIES_EMITTERS: dict[str, Callable[[_Builder, Settings, PlotPlan], None]] = {
     "line": _emit_line_series,
     "scatter": _emit_scatter_series,
     "bar": _emit_bar_series,
+    "step": _emit_line_series,  # line と同じ書き方に drawstyle を足す
+    "barh": _emit_bar_series,  # bar を横向きにする
+    "barStacked": _emit_stacked_series,
+    "hist": _emit_hist_series,
+    "scatterColor": _emit_scatter_color_series,
 }
 
 
@@ -769,7 +927,7 @@ def _uses_ticker(settings: Settings, plan: PlotPlan) -> bool:
     return any("ticker." in line for blk in _axis_blocks(settings, plan) for line in _axis_tick_lines(blk, settings, plan))
 
 
-def _scale_lines(blk: _AxisBlock, plan: PlotPlan) -> list[str]:
+def _scale_lines(blk: _AxisBlock, settings: Settings, plan: PlotPlan) -> list[str]:
     """スケールと範囲。X が日時の列のときは、日時の範囲（pd.Timestamp）。"""
     var, which, axis = blk.var, blk.which, blk.axis
     if blk.plan.kind == "datetime":
@@ -777,7 +935,7 @@ def _scale_lines(blk: _AxisBlock, plan: PlotPlan) -> list[str]:
             f"{k}=pd.Timestamp({literal(v)})" for k, v in (("left", blk.plan.date_min), ("right", blk.plan.date_max)) if v
         ]
         return [f"{var}.set_xlim({', '.join(limits)})"] if limits else []
-    return _axis_lines(var, which, axis.scale, axis.min, axis.max)
+    return _axis_lines(var, which, _scale(settings, plan, blk.name), axis.min, axis.max)
 
 
 def _major_lines(blk: _AxisBlock, settings: Settings, plan: PlotPlan) -> list[str]:
@@ -802,11 +960,11 @@ def _major_lines(blk: _AxisBlock, settings: Settings, plan: PlotPlan) -> list[st
             f"{axis_var}.set_major_formatter({formatter})",
         ]
     if ap.kind == "category":
-        if plan.plot_type == "bar" and len(plan.series) > 1:
-            return []  # 複数系列の棒は、棒の位置に目盛を付ける節（tick_step）で扱う
+        if _positions_form(plan):
+            return []  # 棒の位置に目盛を付ける節（tick_step）で扱う
         if ap.major_step is not None:
             return [f"{axis_var}.set_major_locator(ticker.MultipleLocator({literal(ap.major_step)}))  # {label}軸の主目盛: {ap.major_step}個おきにラベルを出す"]
-        if plan.plot_type in {"line", "scatter"} and plan.thin_categorical_x:
+        if plan.plot_type in XY_TYPES and plan.thin_categorical_x:
             return [
                 "# X が文字列の列: 目盛に X の値を出す（25個を超えるので間引く）",
                 f"{axis_var}.set_major_locator(ticker.MaxNLocator(nbins=25, integer=True))",
@@ -885,7 +1043,7 @@ def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
 
     # 軸ごとに: スケール → 範囲 → 主目盛・書式 → 副目盛 → 反転（スケールを変えると目盛の設定が戻るので、この順）
     for blk in _axis_blocks(settings, plan):
-        lines = _scale_lines(blk, plan)
+        lines = _scale_lines(blk, settings, plan)
         if lines:
             with b.step(axis_error_message(blk.label), f"{blk.label}軸の範囲"):
                 b.add(*lines)
@@ -894,22 +1052,28 @@ def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
             with b.step(tick_error_message(blk.label), f"{blk.label}軸の目盛"):
                 b.add(*ticks)
 
-    if plan.plot_type == "bar" and len(plan.series) > 1:
-        step = plan.axes.x.major_step
+    if _positions_form(plan):
+        horizontal = plan.plot_type == "barh"
+        axis_name = "Y" if horizontal else "X"
+        what = "カテゴリの値" if horizontal else "X の値"
+        step = (plan.axes.y if horizontal else plan.axes.x).major_step
         if step is not None:
             b.add(
-                f"# 棒の位置に X の値を目盛として付ける（X軸の主目盛の間隔: {step}個おき）",
+                f"# 棒の位置に {what}を目盛として付ける（{axis_name}軸の主目盛の間隔: {step}個おき）",
                 f"tick_step = {literal(step)}",
             )
         else:
             b.add(
-                "# 棒の位置に X の値を目盛として付ける（25個を超えるときは間引く）",
+                f"# 棒の位置に {what}を目盛として付ける（25個を超えるときは間引く）",
                 "tick_step = max(1, len(positions) // 25)",
             )
-        b.add(
-            "ax.set_xticks(positions[::tick_step])",
-            'ax.set_xticklabels(x_labels[::tick_step], rotation=45, ha="right")',
-        )
+        if horizontal:
+            b.add("ax.set_yticks(positions[::tick_step])", "ax.set_yticklabels(x_labels[::tick_step])")
+        else:
+            b.add(
+                "ax.set_xticks(positions[::tick_step])",
+                'ax.set_xticklabels(x_labels[::tick_step], rotation=45, ha="right")',
+            )
 
     size = _label_size_expr(plot.font_size)
     b.add("# 目盛は内向きにする", f'ax.tick_params(which="both", direction="in", labelsize={size})')
@@ -917,7 +1081,7 @@ def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
         b.add(f'ax2.tick_params(which="both", direction="in", labelsize={size})')
 
     if not plot.grid_minor and not _per_axis_minor(plan):
-        if axes.x.scale == "log" or axes.y.scale == "log":
+        if _scale(settings, plan, "x") == "log" or _scale(settings, plan, "y") == "log":
             b.add("ax.minorticks_off()  # 対数軸の補助目盛は出さない")
         if plan.uses_secondary and axes.y2.scale == "log":
             b.add("ax2.minorticks_off()")

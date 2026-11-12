@@ -864,3 +864,30 @@ def test_annotation_and_fit_lists_must_be_lists():
 def test_annotation_ids_are_made_unique():
     s = parse_settings({"annotations": [{"id": "a1", "y": 1}, {"id": "a1", "y": 2}, {"y": 3}]})
     assert len({a.id for a in s.annotations}) == 3
+
+
+# ---------------------------------------------------------------- Phase 5c: グラフの種類（G7）の項目
+
+
+def test_5c_plot_defaults():
+    d = default_settings()
+    assert d["plot"]["step"] == {"where": "post"}
+    assert d["plot"]["hist"] == {"bins": None, "density": False}
+    assert (d["plot"]["colormap"], d["plot"]["colorbarLabel"]) == ("viridis", "")
+    assert d["series"][0]["colorColumn"] == ""
+
+
+def test_5c_new_types_and_hidden_settings():
+    for t in ("step", "barh", "barStacked", "hist"):
+        raw = default_settings()
+        raw["plot"]["type"] = t
+        assert parse_settings(raw).plot.type == t
+    raw = default_settings()
+    raw["plot"]["type"] = "line"
+    raw["plot"].update(step={"where": "x"}, hist={"bins": -1}, colormap="zzz")  # 隠れているので検証しない
+    s = parse_settings(raw).plot
+    assert (s.step_where, s.hist_bins, s.colormap) == ("post", None, "viridis")
+    raw["plot"]["type"] = "scatterColor"
+    with pytest.raises(UserError) as e:
+        parse_settings(raw)
+    assert e.value.field == "カラーマップ"

@@ -109,6 +109,39 @@ def _transform_kind(artist, ax) -> tuple[bool, bool]:
     return tuple(bool(v) for v in artist.get_transform().contains_branch_seperately(ax.transData))
 
 
+def _is_colorbar_axes(ax) -> bool:
+    """カラーバーの Axes か（fig.colorbar が作る Axes は `_colorbar` を持つ）。"""
+    return getattr(ax, "_colorbar", None) is not None
+
+
+def _colorbar_summary(fig):
+    """カラーバー（あれば1本目）の {label, cmap, vmin, vmax}。無ければ None。"""
+    for ax in fig.axes:
+        cb = getattr(ax, "_colorbar", None)
+        if cb is not None:
+            return {"label": cb.ax.get_ylabel(), "cmap": cb.cmap.name, "vmin": float(cb.norm.vmin), "vmax": float(cb.norm.vmax)}
+    return None
+
+
+def _bar_summary(ax) -> dict:
+    """棒（BarContainer）の要約: 向き別の棒の本数、容器ごとの棒の数、段になっている容器（棒の下端が 0 でないもの）の数。"""
+    vertical = horizontal = stacked = 0
+    containers = []
+    for c in ax.containers:
+        if type(c).__name__ != "BarContainer":
+            continue
+        horizontal_bars = getattr(c, "orientation", "vertical") == "horizontal"
+        patches = list(c.patches)
+        containers.append(len(patches))
+        if horizontal_bars:
+            horizontal += len(patches)
+            stacked += any(abs(p.get_x()) > 1e-12 for p in patches)
+        else:
+            vertical += len(patches)
+            stacked += any(abs(p.get_y()) > 1e-12 for p in patches)
+    return {"vertical": vertical, "horizontal": horizontal, "containers": containers, "stacked": int(stacked)}
+
+
 def _series_lines(ax) -> list:
     """系列の線（エラーバー・近似曲線・注釈の線を除く）。"""
     return [
@@ -134,6 +167,8 @@ def _style_summary(ax) -> dict:
     series_lines = _series_lines(ax)
     scatters = [c for c in ax.collections if type(c).__name__ == "PathCollection" and not c.get_label().startswith("_")]
     return {
+        "drawstyles": [ln.get_drawstyle() for ln in series_lines],
+        "bars": _bar_summary(ax),
         "bands": sum(1 for c in ax.collections if c.get_label() == "_fill"),
         "markers": [str(ln.get_marker()) for ln in series_lines],
         "alphas": [ln.get_alpha() for ln in series_lines] + [c.get_alpha() for c in scatters],
@@ -150,9 +185,20 @@ def _style_summary(ax) -> dict:
 
 
 def figure_summary(fig) -> list[dict]:
-    """Figure の中身の要約（軸ごと）。JSON にできる値だけで、E2E と生成コードの一致確認に使う。"""
+    """Figure の中身の要約（軸ごと）。JSON にできる値だけで、E2E と生成コードの一致確認に使う。
+
+    Phase 5c で足したキー（既存のキーの値は変えない）:
+    - drawstyles: 系列の線の drawstyle（"default" / "steps-pre" / "steps-mid" / "steps-post"。markers と同じ絞り込み）
+    - bars: {vertical, horizontal, containers, stacked}。BarContainer の棒の本数（縦向き・横向き）、容器ごとの棒の数、
+      棒の下端（横棒は左端）が 0 でない容器の数（積み上げ棒の2系列目以降）。ヒストグラムも BarContainer
+    - colorbar: カラーバーが無ければ null、あれば {label, cmap, vmin, vmax}。カラーバーの Axes は軸ごとの一覧に入れず、
+      元の Axes の項目として出す（色分け散布図は第2Y軸が無いので、最初の Axes に付く）
+    """
     out = []
+    colorbar = _colorbar_summary(fig)
     for ax in fig.axes:
+        if _is_colorbar_axes(ax):
+            continue
         legend = ax.get_legend()
         out.append(
             {
@@ -183,6 +229,7 @@ def figure_summary(fig) -> list[dict]:
                 "errorbars": sum(1 for line in ax.lines if line.get_label() == "_errorbar")
                 + sum(1 for c in ax.containers if type(c).__name__ == "ErrorbarContainer"),
                 **_style_summary(ax),
+                "colorbar": colorbar if not out else None,
             }
         )
     return out
