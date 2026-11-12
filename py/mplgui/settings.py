@@ -19,14 +19,19 @@ from .errors import UserError
 
 SCHEMA_VERSION = 4
 
-PLOT_TYPES = ("line", "scatter", "bar", "step", "barh", "barStacked", "hist", "scatterColor")
-# 種類ごとに画面で隠す設定は、検証せず使わない（要件 §2.2。docs/PHASE5_DESIGN.md §6.2）
-BAR_LIKE_TYPES = ("bar", "barh", "barStacked", "hist")  # 点の形・塗りつぶし帯・X 方向のエラーバー・近似曲線を使わない
-NO_Y2_TYPES = ("barh", "barStacked", "hist", "scatterColor")  # 第2Y軸を使わない
-NO_Y_ERROR_TYPES = ("barStacked", "hist")  # Y 方向のエラーバーを使わない
+PLOT_TYPES = ("line", "scatter", "bar", "step", "barh", "barStacked", "hist", "scatterColor", "box", "violin", "heatmap")
+# 種類ごとに画面で隠す設定は、検証せず使わない（要件 §2.2。docs/PHASE5_DESIGN.md §6.2・§7.3）。js/chart-types.js と揃えること
+XY_TYPES = ("line", "step", "scatter", "scatterColor")  # 点の形・塗りつぶし帯・X 方向のエラーバー・近似曲線を使う（系列ごとの X と Y の組で描く）
+BOX_TYPES = ("box", "violin")  # 系列ごとに1つの箱・胴を描く（横軸は系列の名前）
+CATEGORY_BAR_TYPES = ("bar", "barStacked", "barh")  # 全系列共通の X列（plot.xColumn）を使う
+SERIES_X_TYPES = XY_TYPES + ("heatmap",)  # 系列ごとの X 列を使う
+NO_Y2_TYPES = ("barh", "barStacked", "hist", "scatterColor") + BOX_TYPES + ("heatmap",)  # 第2Y軸を使わない
+NO_Y_ERROR_TYPES = ("barStacked", "hist") + BOX_TYPES + ("heatmap",)  # Y 方向のエラーバーを使わない
+COLOR_COLUMN_TYPES = ("scatterColor", "heatmap")  # 色分けの列（ヒートマップでは値の列）を使う
 STEP_WHERE_CHOICES = ("pre", "mid", "post")
 COLORMAPS = ("viridis", "cividis", "plasma", "inferno", "magma", "coolwarm", "RdBu_r", "gray")
 MAX_HIST_BINS = 1000
+MAX_HEATMAP_SIZE = 500  # ヒートマップの X・Y の異なる値の上限（それぞれ）
 LINE_STYLES = ("solid", "dashed", "dashdot", "dotted")
 SCALES = ("linear", "log")
 SAVE_FORMATS = ("png", "jpg", "svg", "pdf")
@@ -175,6 +180,8 @@ def default_settings() -> dict:
             "hist": {"bins": None, "density": False},
             "colormap": "viridis",
             "colorbarLabel": "",
+            "box": {"fliers": True, "means": False},
+            "violin": {"medians": True, "means": False},
         },
         "axes": {
             "x": {
@@ -277,8 +284,12 @@ class PlotSettings:
     step_where: str = "post"  # step のときだけ使う: pre / mid / post
     hist_bins: int | None = None  # hist のときだけ使う: None = 自動（numpy の "auto"）
     hist_density: bool = False  # hist のときだけ使う: 縦軸を確率密度にする
-    colormap: str = "viridis"  # scatterColor のときだけ使う
-    colorbar_label: str = ""  # scatterColor のときだけ使う（"" = 系列1の色分けの列の名前）
+    colormap: str = "viridis"  # scatterColor / heatmap のときだけ使う
+    colorbar_label: str = ""  # scatterColor / heatmap のときだけ使う（"" = 系列1の色分けの列（値の列）の名前）
+    box_fliers: bool = True  # box のときだけ使う: 外れ値の点を描く
+    box_means: bool = False  # box のときだけ使う: 平均の印を描く
+    violin_medians: bool = True  # violin のときだけ使う: 中央値の線を描く
+    violin_means: bool = False  # violin のときだけ使う: 平均の線を描く
 
 
 @dataclass(frozen=True)
@@ -336,7 +347,7 @@ class SeriesSettings:
     marker: str = "auto"  # auto / none / o / s / ^ / v / D / x / + / *（棒グラフでは使わない）
     alpha: float = 1.0  # 不透明度（1 = 透けない）
     fill: FillSettings = field(default_factory=FillSettings)  # 棒グラフでは使わない
-    color_column: str = ""  # "__idx__N"。scatterColor のときだけ使う（必須）
+    color_column: str = ""  # "__idx__N"。scatterColor / heatmap（値の列）のときだけ使う（必須）
 
     def effective_marker_size(self, plot_type: str) -> float:
         """自動(None)は line / step=0 / それ以外=24。scatter / scatterColor で 0 以下なら 24 に補正する。"""
@@ -769,12 +780,12 @@ def _parse_error_spec(raw: dict, axis: str, owner: str) -> ErrorSpec:
 
 
 def _parse_error_bars(raw: dict, plot_type: str, owner: str) -> ErrorBarSettings:
-    if plot_type in NO_Y_ERROR_TYPES:  # 積み上げ棒・ヒストグラムはエラーバーを両方向とも隠すので、何も検証しない
+    if plot_type in NO_Y_ERROR_TYPES:  # 積み上げ棒・ヒストグラム・箱ひげ・バイオリン・ヒートマップはエラーバーを両方向とも隠すので、何も検証しない
         return ErrorBarSettings()
     cap = _number(raw["capSize"], "エラーバーの端の長さ", default=3.0, minimum=0, maximum=MAX_CAP_SIZE, owner=owner)
     return ErrorBarSettings(
         y=ErrorSpec() if plot_type in NO_Y_ERROR_TYPES else _parse_error_spec(raw["y"], "Y", owner),  # 積み上げ棒・ヒストグラムでは Y 方向を隠す
-        x=ErrorSpec() if plot_type in BAR_LIKE_TYPES else _parse_error_spec(raw["x"], "X", owner),  # 棒グラフ・ヒストグラムでは X 方向を隠す
+        x=_parse_error_spec(raw["x"], "X", owner) if plot_type in XY_TYPES else ErrorSpec(),  # X 方向は XY の種類だけ
         cap_size=cap,
     )
 
@@ -802,13 +813,13 @@ def _parse_fill(raw: dict, owner: str) -> FillSettings:
     return FillSettings(lower=lower, upper=upper, alpha=alpha)
 
 
-def _parse_color_column(value: Any, owner: str) -> str:
-    """色分けの列（scatterColor のときだけ。必須）。"""
-    field_name = f"{owner}色分けの列"
+def _parse_color_column(value: Any, owner: str, what: str = "色分けの列") -> str:
+    """色分けの列（scatterColor では「色分けの列」、heatmap では「値の列」。どちらも必須）。"""
+    field_name = f"{owner}{what}"
     if value is None or (isinstance(value, str) and not value.strip()):
-        raise UserError(f"{owner}色分けの列を選んでください。", field=field_name)
+        raise UserError(f"{owner}{what}を選んでください。", field=field_name)
     if not isinstance(value, str) or not _COLUMN_RE.fullmatch(value.strip()):
-        raise UserError(f"{owner}「色分けの列」の指定が正しくありません。列を選び直してください。", field=field_name)
+        raise UserError(f"{owner}「{what}」の指定が正しくありません。列を選び直してください。", field=field_name)
     return value.strip()
 
 
@@ -825,21 +836,29 @@ def _parse_series(raw_series: Any, plot_type: str = "line") -> tuple[SeriesSetti
         while sid in used_ids:
             sid += "_"
         used_ids.add(sid)
-        color = _string(s["color"], "色", owner=owner).strip() or _DEFAULT_SERIES["color"]
-        if not is_color_like(color):
-            raise UserError(f"{owner}「色」が不正です。", field="色")
-        line_width = _number(s["lineWidth"], "線幅", default=2.0, exclusive_min=0, owner=owner)
-        marker = _number(s["markerSize"], "点サイズ", default=None, minimum=0, owner=owner)
+        heat = plot_type == "heatmap"  # ヒートマップは色・線幅・線種・点サイズを隠す（カラーマップを使う）。検証せず使わない
+        box = plot_type in BOX_TYPES  # 箱ひげ・バイオリンは点サイズ・線種を隠す
+        color = _DEFAULT_SERIES["color"]
+        line_width = 2.0
+        if not heat:
+            color = _string(s["color"], "色", owner=owner).strip() or _DEFAULT_SERIES["color"]
+            if not is_color_like(color):
+                raise UserError(f"{owner}「色」が不正です。", field="色")
+            line_width = _number(s["lineWidth"], "線幅", default=2.0, exclusive_min=0, owner=owner)
+        marker = None if (heat or box) else _number(s["markerSize"], "点サイズ", default=None, minimum=0, owner=owner)
+        line_style = "solid" if (heat or box) else _choice(s["lineStyle"], "線種", LINE_STYLES, owner=owner)
         marker_shape = "auto"
         fill = FillSettings()
-        if plot_type not in BAR_LIKE_TYPES:  # 棒グラフ・ヒストグラムでは点の形と塗りつぶし帯を隠すので、検証せず使わない
+        if plot_type in XY_TYPES:  # 点の形と塗りつぶし帯は XY の種類だけ。ほかは隠すので、検証せず使わない
             marker_shape = _choice(s["marker"], "点の形", MARKERS, owner=owner, field_name=f"{owner}点の形")
             if plot_type in {"scatter", "scatterColor"} and marker_shape == "none":
                 raise UserError(
                     f"{owner}「点の形」を「なし」にすると、散布図の点が見えなくなります。点の形を選んでください。", field=f"{owner}点の形"
                 )
             fill = _parse_fill(s["fill"], owner)
-        color_column = _parse_color_column(s["colorColumn"], owner) if plot_type == "scatterColor" else ""
+        color_column = ""
+        if plot_type in COLOR_COLUMN_TYPES:
+            color_column = _parse_color_column(s["colorColumn"], owner, "値の列" if heat else "色分けの列")
         out.append(
             SeriesSettings(
                 id=sid,
@@ -847,7 +866,7 @@ def _parse_series(raw_series: Any, plot_type: str = "line") -> tuple[SeriesSetti
                 y=_string(s["y"], "Y列", owner=owner).strip(),
                 color=color,
                 line_width=line_width,
-                line_style=_choice(s["lineStyle"], "線種", LINE_STYLES, owner=owner),
+                line_style=line_style,
                 marker_size=marker,
                 label=_string(s["label"], "凡例名", owner=owner).strip(),
                 # 横棒・積み上げ棒・ヒストグラム・色分け散布図では第2Y軸を隠す（false として扱い、検証しない）
@@ -1056,6 +1075,7 @@ def parse_settings(raw: dict | None) -> Settings:
 
     plot_type = _choice(p["type"], "プロット種別", PLOT_TYPES)
     step_where, hist_bins, hist_density, colormap, colorbar_label = "post", None, False, "viridis", ""
+    box_fliers, box_means, violin_medians, violin_means = True, False, True, False
     if plot_type == "step":
         step = p["step"] if isinstance(p["step"], dict) else {}
         step_where = _choice(step.get("where", "post"), "段の付き方", STEP_WHERE_CHOICES)
@@ -1063,14 +1083,22 @@ def parse_settings(raw: dict | None) -> Settings:
         hist = p["hist"] if isinstance(p["hist"], dict) else {}
         hist_bins = _int_range(hist.get("bins"), "区間の数", 1, MAX_HIST_BINS, default=None)
         hist_density = _boolean(hist.get("density", False), "確率密度")
-    elif plot_type == "scatterColor":
+    elif plot_type in COLOR_COLUMN_TYPES:
         colormap = _choice(p["colormap"], "カラーマップ", COLORMAPS)
         colorbar_label = _string(p["colorbarLabel"], "カラーバーのラベル").strip()
+    elif plot_type == "box":
+        box = p["box"] if isinstance(p["box"], dict) else {}
+        box_fliers = _boolean(box.get("fliers", True), "外れ値の点")
+        box_means = _boolean(box.get("means", False), "平均の印")
+    elif plot_type == "violin":
+        violin = p["violin"] if isinstance(p["violin"], dict) else {}
+        violin_medians = _boolean(violin.get("medians", True), "中央値の線")
+        violin_means = _boolean(violin.get("means", False), "平均の線")
 
     plot = PlotSettings(
         type=plot_type,
         skip_rows=_integer(p["skipRows"], "除外する先頭行数", default=0, minimum=0),
-        x_column="" if plot_type == "hist" else _string(p["xColumn"], "X列").strip(),  # ヒストグラムは X列を隠す
+        x_column="" if plot_type in {"hist", "box", "violin", "heatmap"} else _string(p["xColumn"], "X列").strip(),  # ヒストグラム・箱ひげ・バイオリン・ヒートマップは X列を隠す
         title=_string(p["title"], "タイトル").strip(),
         font_size=_number(p["fontSize"], "フォントサイズ", default=15.0, exclusive_min=0),
         figure=figure,
@@ -1087,6 +1115,10 @@ def parse_settings(raw: dict | None) -> Settings:
         hist_density=hist_density,
         colormap=colormap,
         colorbar_label=colorbar_label,
+        box_fliers=box_fliers,
+        box_means=box_means,
+        violin_medians=violin_medians,
+        violin_means=violin_means,
     )
 
     ax = merged["axes"]
@@ -1097,7 +1129,7 @@ def parse_settings(raw: dict | None) -> Settings:
         and any(isinstance(s, dict) and s.get("secondaryAxis") is True for s in raw_series)
     )
     axes = AxesSettings(
-        x=_parse_axis(ax, "x", "X"),
+        x=_parse_axis(ax, "x", "X", linear=plot.type in BOX_TYPES),  # 箱ひげ・バイオリンの横軸はカテゴリなので、X のスケールは使わない
         y=_parse_axis(ax, "y", "Y", linear=plot.type == "barh"),  # 横棒の縦軸はカテゴリなので、Y のスケールは使わない
         y2=_parse_axis(ax, "y2", "第2Y", ticks=y2_used),
     )
@@ -1112,8 +1144,8 @@ def parse_settings(raw: dict | None) -> Settings:
         check_axis_range(axes.y2, "第2Y")
 
     annotations = _parse_annotations(raw.get("annotations"), any(s.secondary_axis for s in series))
-    # 棒グラフ・ヒストグラムでは近似曲線を使わない（隠れているので検証しない）
-    fits = () if plot.type in BAR_LIKE_TYPES else _parse_fits(raw.get("fits"), {s.id for s in series})
+    # XY の種類以外では近似曲線を使わない（隠れているので検証しない）
+    fits = _parse_fits(raw.get("fits"), {s.id for s in series}) if plot.type in XY_TYPES else ()
 
     # 計算した列は常に表示されるので、グラフの種類によらず検証する
     computed = _parse_computed(raw.get("computed"), file_ids)

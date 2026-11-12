@@ -96,6 +96,8 @@ export const DEFAULT_SETTINGS = {
     hist: { bins: null, density: false },
     colormap: "viridis",
     colorbarLabel: "",
+    box: { fliers: true, means: false },
+    violin: { medians: true, means: false },
   },
   axes: {
     x: { label: "", scale: "linear", min: null, max: null, dateFormat: "", ...defaultTicks(), majorStepUnit: "day", dateMin: "", dateMax: "" },
