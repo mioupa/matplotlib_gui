@@ -148,6 +148,7 @@ def main():
     make_datetime_fixtures(fixed)
     make_errorbar_fixture()
     make_band_fixture()
+    make_chart_types_fixture()
 
 
 def make_errorbar_fixture():
@@ -177,6 +178,19 @@ def make_band_fixture():
         day = (datetime(2026, 1, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
         lines.append(f"{i},{mean},{lo},{round(mean + 1.2, 3)},{day},{round(100 - 3 * i, 2)}")
     (OUT / "band.csv").write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+
+
+def make_chart_types_fixture():
+    """グラフの種類（5c, G7）。category（文字列）/ a（正の値）/ b（正負が混ざる）/ c（色分け用の数値）/ err（誤差。0 以上）/ m（4行目が `n/a`、8行目が空欄）。"""
+    lines = ["category,a,b,c,err,m"]
+    for i in range(12):
+        a = round(5 + 3 * math.sin(i / 2) + i * 0.3, 3)
+        b = round(4 * math.cos(i / 2), 3)  # 正負が混ざる
+        c = round(i * 1.5 - 3, 2)
+        err = round(0.3 + 0.05 * i, 3)
+        m = "n/a" if i == 3 else ("" if i == 7 else str(round(i * 0.7, 2)))
+        lines.append(f"項目{i + 1},{a},{b},{c},{err},{m}")
+    (OUT / "chart_types.csv").write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
 
 
 def make_datetime_fixtures(fixed):

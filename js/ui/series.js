@@ -4,6 +4,19 @@ import { addNote } from "../bridge.js";
 import { bindSeriesColorControls } from "./colorPicker.js";
 import { syncAxisTicks } from "./axisTicks.js";
 import { readNumber } from "./forms.js";
+import {
+  isLineLike,
+  usesColorColumn,
+  usesFill as typeUsesFill,
+  usesGlobalX,
+  usesHist,
+  usesMarker,
+  usesSeriesX,
+  usesStep,
+  usesXErrors,
+  usesY2,
+  usesYErrors,
+} from "../chart-types.js";
 
 // データ元（ファイル id）ごとの列の選択肢: [{value: "__idx__0", label: "時間 [0]", kind: "number"}]（読込のたびに更新。kind: datetime / number / text）
 const columnsById = new Map();
@@ -18,26 +31,43 @@ const isDatetimeColumn = (columns, value) => !!value && columns.some((c) => c.va
 // X に日時の列を使っているか（line / scatter はどれかの系列の X（その系列のデータ元の列）、bar は X列（系列1のデータ元））
 export const usesDatetimeX = () => {
   const { plot, series } = getSettings();
-  if (plot.type === "bar") return series.length > 0 && isDatetimeColumn(columnsOf(series[0]), plot.xColumn);
+  if (usesHist(plot.type)) return false;
+  if (usesGlobalX(plot.type)) return series.length > 0 && isDatetimeColumn(columnsOf(series[0]), plot.xColumn);
   return series.some((s) => isDatetimeColumn(columnsOf(s), s.x));
+};
+
+// 棒グラフのカテゴリ側の軸の種類。系列が複数、または X 列が数値でない（日時を含む）ならカテゴリ。X 列なし・数値なら numeric
+const barCategoryKind = (numeric) => {
+  const { plot, series } = getSettings();
+  if (series.length > 1) return "category";
+  const col = series[0] && plot.xColumn ? columnsOf(series[0]).find((c) => c.value === plot.xColumn) : undefined;
+  return col && col.kind !== "number" ? "category" : numeric;
 };
 
 // X 軸の種類（Python の dataprep と同じ規則。number / log / datetime / category）
 //  bar: 系列が複数、または X 列が数値でない（日時を含む）ならカテゴリ。X 列なし・数値なら数値
+//  step / scatterColor: line / scatter と同じ
+//  barStacked: 常にカテゴリ。barh: 横軸（X 軸の設定）は値なので数値 / 対数（縦軸は yAxisKind）。hist: 横軸は値（数値 / 対数）
 //  line / scatter: どれかの系列の X が日時なら日時、数値でない文字列の列（numericLike でない）ならカテゴリ。X 列なし（行番号）は数値
 export const xAxisKind = () => {
   const { plot, series, axes } = getSettings();
   const numeric = axes.x.scale === "log" ? "log" : "number";
   const find = (columns, value) => (value ? columns.find((c) => c.value === value) : undefined);
-  if (plot.type === "bar") {
-    if (series.length > 1) return "category";
-    const col = series[0] ? find(columnsOf(series[0]), plot.xColumn) : undefined;
-    return col && col.kind !== "number" ? "category" : numeric;
-  }
+  if (plot.type === "barStacked") return "category";
+  if (plot.type === "barh" || usesHist(plot.type)) return numeric;
+  if (plot.type === "bar") return barCategoryKind(numeric);
   const cols = series.map((s) => find(columnsOf(s), s.x));
   if (cols.some((c) => c && c.kind === "datetime")) return "datetime";
   if (cols.some((c) => c && c.kind === "text" && c.numericLike === false)) return "category";
   return numeric;
+};
+
+// Y 軸の種類（number / log / category）。横棒（barh）の縦軸はカテゴリ（bar の X と同じ規則。1系列で X 列が数値なら number。対数にはならない）。
+// それ以外は Y のスケールで決める
+export const yAxisKind = () => {
+  const { plot, axes } = getSettings();
+  if (plot.type === "barh") return barCategoryKind("number");
+  return axes.y.scale === "log" ? "log" : "number";
 };
 
 // 系列の表示名（凡例名があればそれ、無ければ Y 列の表示）。近似曲線の系列の選択肢に使う
@@ -54,7 +84,7 @@ export const addVisibilityHook = (fn) => visibilityHooks.push(fn);
 const esc = (text) =>
   String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-const defaultMarkerSize = (plotType) => (plotType === "line" ? 0 : 24);
+const defaultMarkerSize = (plotType) => (isLineLike(plotType) ? 0 : 24);
 const displayMarkerSize = (series, plotType) => (series.markerSize === null ? defaultMarkerSize(plotType) : series.markerSize);
 
 const fillSelect = (selectEl, options, selected) => {
@@ -68,6 +98,7 @@ const fillSelect = (selectEl, options, selected) => {
   selectEl.value = options.some((o) => o.value === selected) ? selected : "";
 };
 
+const colorColumnOptions = (columns) => [{ value: "", label: "（選択してください）" }, ...columns];
 const xOptions = (columns) => [{ value: "", label: "(index)" }, ...columns];
 const yOptions = (columns) => [{ value: "", label: "(自動)" }, ...columns];
 const sourceOptions = () => loadedFiles().map((f, i) => ({ value: f.id, label: `データ${i + 1}: ${f.name}` }));
@@ -178,7 +209,7 @@ const cardHtml = (series, plotType) => {
           <option value="dotted">dotted</option>
         </select>
       </div>
-      <div>
+      <div class="series-marker-size-wrap">
         <label for="${id("marker-size")}">点サイズ</label>
         <input id="${id("marker-size")}" class="series-marker-size" type="number" step="1" value="${esc(displayMarkerSize(series, plotType))}" />
       </div>
@@ -208,7 +239,11 @@ const cardHtml = (series, plotType) => {
       <label for="${id("legend-name")}">凡例名（任意）</label>
       <input id="${id("legend-name")}" class="series-legend-name" type="text" value="${esc(series.label)}" placeholder="自動" />
     </div>
-    <div class="group">
+    <div class="group series-color-column-wrap" hidden>
+      <label for="${id("color-column")}">色分けの列</label>
+      <select id="${id("color-column")}" class="series-color-column"></select>
+    </div>
+    <div class="group series-y2-wrap">
       <label class="inline check-label">
         <input id="${id("use-y2")}" class="series-use-y2" type="checkbox" ${series.secondaryAxis ? "checked" : ""} />
         <span>第2軸を使用</span>
@@ -278,7 +313,7 @@ const fillErrorControls = (item, series, columns) => {
 };
 
 // エラーバーの欄の表示（カードを作り直さない。入力中の欄のフォーカスを保つ）
-const syncErrorVisibility = (item, series, usePerSeriesX) => {
+const syncErrorVisibility = (item, series, plotType) => {
   if (!series || !series.errorBars) return;
   const eb = series.errorBars;
   for (const dir of ["y", "x"]) {
@@ -299,7 +334,9 @@ const syncErrorVisibility = (item, series, usePerSeriesX) => {
     column.querySelector(".err-column-label").textContent = sym ? "列" : plus;
   }
   const xWrap = item.querySelector(".err-x-wrap");
-  if (xWrap) xWrap.hidden = !usePerSeriesX;
+  if (xWrap) xWrap.hidden = !usesXErrors(plotType);
+  const details = item.querySelector(".series-errorbars");
+  if (details) details.hidden = !usesYErrors(plotType); // 積み上げ棒・ヒストグラムはエラーバーを使わない
   const cap = item.querySelector(".err-capsize-wrap");
   if (cap) cap.hidden = !usesErrorBars(series);
 };
@@ -313,6 +350,7 @@ const buildCard = (series, plotType) => {
   fillSelect(item.querySelector(".series-x"), xOptions(columns), series.x);
   fillSelect(item.querySelector(".series-y"), yOptions(columns), series.y);
   fillSelect(item.querySelector(".series-source"), sourceOptions(), sourceIdOf(series));
+  fillSelect(item.querySelector(".series-color-column"), colorColumnOptions(columns), series.colorColumn);
   item.querySelector(".series-source-wrap").hidden = !hasManySources();
   item.querySelector(".series-line-style").value = series.lineStyle;
   fillErrorControls(item, series, columns);
@@ -340,30 +378,44 @@ const buildCard = (series, plotType) => {
   return item;
 };
 
+// 種類ごとの欄の出し分け（規則は chart-types.js。Python と同じ。値は消さない）
+const setHidden = (id, hidden) => {
+  const el = document.getElementById(id);
+  if (el) el.hidden = hidden;
+};
+
 export const syncVisibility = () => {
   const settings = getSettings();
-  const usePerSeriesX = settings.plot.type !== "bar";
+  const type = settings.plot.type;
+  setHidden("stepGroup", !usesStep(type));
+  setHidden("histGroup", !usesHist(type));
+  setHidden("colorMapGroup", !usesColorColumn(type));
+  setHidden("yScaleGroup", type === "barh"); // 横棒の縦軸はカテゴリ（Y のスケールは使わない）
   const globalX = document.getElementById("globalXGroup");
-  if (globalX) globalX.style.display = usePerSeriesX ? "none" : "";
+  if (globalX) globalX.style.display = usesGlobalX(type) ? "" : "none";
   for (const group of document.querySelectorAll("#seriesList .series-x-wrap")) {
-    group.style.display = usePerSeriesX ? "block" : "none";
+    group.style.display = usesSeriesX(type) ? "block" : "none";
   }
   for (const wrap of document.querySelectorAll("#seriesList .series-source-wrap")) wrap.hidden = !hasManySources();
   for (const item of document.querySelectorAll("#seriesList .series-item")) {
     const s = settings.series.find((x) => x.id === item.dataset.seriesId);
-    syncErrorVisibility(item, s, usePerSeriesX);
-    // 棒グラフでは点の形と塗りつぶし帯は使わない（隠す）。点の形が「なし」の折れ線は点サイズを使わない
-    const isBar = settings.plot.type === "bar";
-    const markerWrap = item.querySelector(".series-marker-wrap");
-    if (markerWrap) markerWrap.hidden = isBar;
-    const fill = item.querySelector(".series-fill");
-    if (fill) fill.hidden = isBar;
+    syncErrorVisibility(item, s, type);
+    const set = (selector, hidden) => {
+      const el = item.querySelector(selector);
+      if (el) el.hidden = hidden;
+    };
+    set(".series-marker-wrap", !usesMarker(type));
+    set(".series-marker-size-wrap", !usesMarker(type));
+    set(".series-fill", !typeUsesFill(type));
+    set(".series-y2-wrap", !usesY2(type));
+    set(".series-color-column-wrap", !usesColorColumn(type));
+    // 点の形が「なし」の折れ線（line / step）は点サイズを使わない
     const size = item.querySelector(".series-marker-size");
-    if (size && s) size.disabled = !isBar && settings.plot.type === "line" && s.marker === "none";
+    if (size && s) size.disabled = isLineLike(type) && s.marker === "none";
   }
   const dateGroup = document.getElementById("xDateFormatGroup");
   if (dateGroup) dateGroup.hidden = !usesDatetimeX();
-  syncAxisTicks(xAxisKind());
+  syncAxisTicks(xAxisKind(), yAxisKind());
   const hasY2 = hasSecondaryAxis();
   for (const id of ["y2LabelGroup", "y2AxisSettingsGroup"]) {
     const el = document.getElementById(id);
@@ -449,7 +501,7 @@ const refreshXColumnSelect = () => {
 // ファイルの追加・削除などで、データ元の選択肢と各系列の列の選択肢を描き直す
 export const refreshSources = () => {
   refreshXColumnSelect();
-  syncAxisTicks(xAxisKind());
+  syncAxisTicks(xAxisKind(), yAxisKind());
   // データ元と列の選択肢が変わっていなければ、カードは描き直さない（入力中の欄や開いている選択肢を保つ）
   if (renderedStructure === structureOf() && cardsMatchSettings()) return;
   renderSeriesList();
@@ -494,6 +546,7 @@ export const reconcileColumns = () => {
       }
       if (next) patch.errorBars = next;
     }
+    if (s.colorColumn && !valid.has(s.colorColumn)) patch.colorColumn = ""; // 色分けの列も同じ（Python が列を選ぶよう案内する）
     // 塗りつぶし帯の列も同じ（もう無い列なら解除し、帯が消えることを知らせる）
     if (s.fill && ["lower", "upper"].some((k) => s.fill[k] && !valid.has(s.fill[k]))) {
       const fill = { ...s.fill };
@@ -516,6 +569,7 @@ const FIELD_BY_CLASS = [
   ["series-marker-size", "markerSize", "number"],
   ["series-marker", "marker", "text"],
   ["series-alpha", "alpha", "number"],
+  ["series-color-column", "colorColumn", "text"],
   ["series-legend-name", "label", "text"],
   ["series-use-y2", "secondaryAxis", "checkbox"],
 ];
@@ -528,7 +582,7 @@ const onSourceChange = (seriesId, source) => {
   if (series[0] && series[0].id === seriesId && plot.xColumn) setPath("plot.xColumn", "");
   const errorBars = cloneErrorBars(current.errorBars);
   for (const dir of ["y", "x"]) Object.assign(errorBars[dir], { column: "", columnMinus: "" });
-  const patch = { source, x: "", y: "", errorBars };
+  const patch = { source, x: "", y: "", errorBars, colorColumn: "" };
   if (usesFill(current)) {
     patch.fill = { ...current.fill, lower: "", upper: "" };
     addNote(`系列${series.indexOf(current) + 1}: データ元を替えたため、塗りつぶし帯の列を空に戻しました（帯は描きません）。`);

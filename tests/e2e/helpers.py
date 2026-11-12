@@ -575,3 +575,20 @@ def add_fit(page, **fields) -> str:
     for name, value in fields.items():
         set_card_field(page, f"#fit-{new}-{name.replace('_', '-')}", value)
     return new
+
+
+# --- グラフの種類（Phase 5c, G7） ---
+def set_plot_type(page, plot_type):
+    """プロット種別を変え、読込・描画が一段落するまで待つ（エラー終了を含む）。"""
+    page.select_option("#plotType", plot_type)
+    wait_settled(page)
+
+
+def plot_settings(page) -> dict:
+    """state の plot 設定（隠した設定の値が残っているかの確認に使う）。"""
+    return page.evaluate("import(new URL('js/state.js', document.baseURI)).then((m) => m.getSettings().plot)")
+
+
+def visible_ids(page, ids) -> dict:
+    """要素 id → 画面に出ているか。"""
+    return {i: not is_hidden_by_id(page, i) for i in ids}

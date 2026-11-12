@@ -29,12 +29,12 @@ const syncOneAxis = (prefix, kind, axis) => {
   setHidden(`${prefix}TickDecimalsWrap`, !(formatVisible && (axis.tickFormat === "fixed" || axis.tickFormat === "sci")));
 };
 
-// xKind: X 軸の種類（series.js が列の種類から決める）
-export const syncAxisTicks = (xKind) => {
+// xKind / yKind: X・Y 軸の種類（series.js が列の種類とグラフの種類から決める。yKind は横棒の縦軸のカテゴリ用）
+export const syncAxisTicks = (xKind, yKind) => {
   const { axes } = getSettings();
   const kind = xKind || (axes.x.scale === "log" ? "log" : "number");
   syncOneAxis("x", kind, axes.x);
-  syncOneAxis("y", axes.y.scale === "log" ? "log" : "number", axes.y);
+  syncOneAxis("y", yKind || (axes.y.scale === "log" ? "log" : "number"), axes.y);
   syncOneAxis("y2", axes.y2.scale === "log" ? "log" : "number", axes.y2);
   setHidden("xMajorStepUnitWrap", kind !== "datetime");
   setHidden("xRangeGroup", kind === "datetime");

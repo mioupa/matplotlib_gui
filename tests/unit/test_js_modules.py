@@ -51,7 +51,7 @@ def test_new_series_color_is_first_unused_palette_color(tmp_path):
     out.cycledExpected = PALETTE[getSettings().series.length % PALETTE.length];
     console.log(JSON.stringify(out));
     """
-    files = {"state.mjs": "js/state.js", "defaults.js": "js/defaults.js", "palettes.js": "js/palettes.js", "presets.js": "js/presets.js"}
+    files = {"state.mjs": "js/state.js", "defaults.js": "js/defaults.js", "palettes.js": "js/palettes.js", "presets.js": "js/presets.js", "chart-types.js": "js/chart-types.js"}
     res = run_node(tmp_path, files, script)
     assert res["first"] == "#FF4B00"
     assert res["second"] == "#03AF7A"
@@ -97,7 +97,7 @@ def test_preset_marker_rules(tmp_path):
       names: Object.keys(PRESETS),
     }));
     """
-    res = run_node(tmp_path, {"presets.js": "js/presets.js"}, script)
+    res = run_node(tmp_path, {"presets.js": "js/presets.js", "chart-types.js": "js/chart-types.js"}, script)
     assert res["lineAuto"] == [{"lineWidth": 1}, {"lineWidth": 1, "markerSize": 9}]  # 自動の折れ線に点を出さない
     assert res["scatter"] == [{"lineWidth": 1, "markerSize": 9}, {"lineWidth": 1, "markerSize": 9}]
     assert res["standardLine"] == [{"lineWidth": 2, "markerSize": None}] * 2  # 標準は自動に戻す
@@ -141,7 +141,7 @@ def test_palettes_and_state_use_current_palette(tmp_path):
     """
     files = {
         "state.js": "js/state.js", "defaults.js": "js/defaults.js",
-        "palettes.js": "js/palettes.js", "presets.js": "js/presets.js",
+        "palettes.js": "js/palettes.js", "presets.js": "js/presets.js", "chart-types.js": "js/chart-types.js",
     }
     res = run_node(tmp_path, files, script)
     assert res["udSame"] is True
@@ -160,12 +160,12 @@ def test_add_series_without_preset_is_unchanged(tmp_path):
     import { addSeries } from "./state.js";
     console.log(JSON.stringify(addSeries()));
     """
-    files = {"state.js": "js/state.js", "defaults.js": "js/defaults.js", "palettes.js": "js/palettes.js", "presets.js": "js/presets.js"}
+    files = {"state.js": "js/state.js", "defaults.js": "js/defaults.js", "palettes.js": "js/palettes.js", "presets.js": "js/presets.js", "chart-types.js": "js/chart-types.js"}
     res = run_node(tmp_path, files, script)
     assert res["lineWidth"] == 2 and res["markerSize"] is None and res["color"] == "#005AFF"
 
 
-STATE_FILES = {"state.js": "js/state.js", "defaults.js": "js/defaults.js", "palettes.js": "js/palettes.js", "presets.js": "js/presets.js"}
+STATE_FILES = {"state.js": "js/state.js", "defaults.js": "js/defaults.js", "palettes.js": "js/palettes.js", "presets.js": "js/presets.js", "chart-types.js": "js/chart-types.js"}
 
 
 @needs_node

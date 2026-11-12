@@ -2,6 +2,7 @@
 import { addFit, getSettings, removeFit, updateFit } from "../state.js";
 import { bindSeriesColorControls, colorPickerHtml } from "./colorPicker.js";
 import { readNumber } from "./forms.js";
+import { usesFits } from "../chart-types.js";
 import { seriesDisplayName } from "./series.js";
 
 const MAX_FITS = 20;
@@ -119,7 +120,7 @@ const syncCard = (item, f) => {
 
 export const syncFits = () => {
   const { fits, plot } = getSettings();
-  const isBar = plot.type === "bar";
+  const isBar = !usesFits(plot.type); // 棒グラフ・ヒストグラムでは使わない（一覧と追加ボタンを隠す）
   const list = document.getElementById("fitList");
   const add = document.getElementById("addFitBtn");
   const note = document.getElementById("fitBarNote");

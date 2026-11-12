@@ -2,6 +2,7 @@
 // DOM には触れない。変更は subscribe で購読する。
 import { DEFAULT_ANNOTATION, DEFAULT_FIT, DEFAULT_SERIES, DEFAULT_SETTINGS } from "./defaults.js";
 import { getPalette, paletteColor } from "./palettes.js";
+import { usesY2 } from "./chart-types.js";
 import { newSeriesDefaults } from "./presets.js";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -193,4 +194,4 @@ export const removeFit = (id) => {
   notify({ kind: "fit-list", origin: "user" });
 };
 
-export const hasSecondaryAxis = () => settings.series.some((s) => s.secondaryAxis);
+export const hasSecondaryAxis = () => usesY2(settings.plot.type) && settings.series.some((s) => s.secondaryAxis); // 第2Y軸を使わない種類では、値を残しても使わない

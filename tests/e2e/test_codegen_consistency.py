@@ -272,6 +272,53 @@ def _configure_fit_y2(page):
     add_fit(page, series="s1", show="none")
 
 
+# --- グラフの種類（Phase 5c, G7）。fixture は chart_types.csv（0 category / 1 a / 2 b / 3 c / 4 err / 5 m） ---
+def _configure_step(page):
+    page.select_option("#plotType", "step")
+    page.select_option("#stepWhere", "mid")
+    page.select_option("#series-s1-x", "__idx__1")
+    page.select_option("#series-s1-y", "__idx__2")
+
+
+def _configure_barh_err(page):
+    page.select_option("#plotType", "barh")
+    page.select_option("#xColumn", "__idx__0")
+    page.select_option("#series-s1-y", "__idx__1")
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s2-y", "__idx__2")
+    set_errorbars(page, "s1", "y", mode="column", column="__idx__4")
+
+
+def _configure_bar_stacked(page):
+    page.select_option("#plotType", "barStacked")
+    page.select_option("#xColumn", "__idx__0")
+    page.select_option("#series-s1-y", "__idx__1")
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s2-y", "__idx__2")  # 正負が混ざる
+
+
+def _configure_hist(page):
+    page.select_option("#plotType", "hist")
+    page.select_option("#series-s1-y", "__idx__1")
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s2-y", "__idx__5")  # 数値にできない値と空欄を含む
+    page.fill("#histBins", "6")
+    page.check("#histDensity")
+
+
+def _configure_scatter_color(page):
+    page.select_option("#plotType", "scatterColor")
+    page.select_option("#series-s1-x", "__idx__1")
+    page.select_option("#series-s1-y", "__idx__2")
+    page.select_option("#series-s1-color-column", "__idx__3")
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s2-x", "__idx__1")
+    page.select_option("#series-s2-y", "__idx__4")
+    page.select_option("#series-s2-color-column", "__idx__3")
+    page.select_option("#colorMap", "coolwarm")
+    page.fill("#colorbarLabel", "電流 (A)")
+
+
 # 読込の設定を変えた場合: 生成スクリプトの読込部が、GUI の読み方と同じ図を作る
 PRE_STEPS = {"preamble_csv": _pre_preamble, "european_csv": _pre_european}
 
@@ -313,6 +360,11 @@ CASES = {
     "fit_linear_legend": ("band.csv", _configure_fit_linear_legend),
     "fit_poly_text": ("band.csv", _configure_fit_poly_text),
     "fit_y2": ("band.csv", _configure_fit_y2),
+    "type_step": ("chart_types.csv", _configure_step),
+    "type_barh_err": ("chart_types.csv", _configure_barh_err),
+    "type_bar_stacked": ("chart_types.csv", _configure_bar_stacked),
+    "type_hist": ("chart_types.csv", _configure_hist),
+    "type_scatter_color": ("chart_types.csv", _configure_scatter_color),
     "scatter_paper1": ("utf8.csv", _configure_scatter_paper1),
     "scatter_arimo_paper2_pdf": ("utf8.csv", _configure_scatter_arimo_paper2_pdf),
 }
@@ -339,6 +391,7 @@ def l_ax_summary(summary, key):
 EXACT_KEYS = (
     "title", "xlabel", "ylabel", "xscale", "yscale", "lines", "collections", "patches", "legend",
     "bands", "markers", "alphas", "annotations", "fitlines", "fittexts",  # Phase 5b
+    "drawstyles", "bars", "colorbar",  # Phase 5c
 )
 
 
