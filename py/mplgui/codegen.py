@@ -22,6 +22,7 @@ from .settings import AxisSettings, SeriesSettings, Settings
 
 SCRIPT_NAME = "plot.py"
 
+LINE_ONLY_MARKERS = {"x", "+"}  # 線だけでできた点の形（縁を描かないと見えない）
 XY_TYPES = {"line", "step", "scatter", "scatterColor"}  # X と Y の組で描く種類（X が日時なら日時の軸、エラーバー・帯・近似曲線を使える）
 
 GENERIC_ERROR_MESSAGE = "グラフを描画できませんでした。X列・Y列に指定した列の値の形式（数値と文字列の混在など）や、設定の値を確認してください。"
@@ -808,6 +809,7 @@ def _emit_scatter_color_series(b: _Builder, settings: Settings, plan: PlotPlan) 
         "color_norm = plt.Normalize()",
         "color_all = []  # 系列ごとの、描いた点の色の値",
     )
+    edge_note = False  # 縁を描かない理由のコメントは、最初の1回だけ書く
     for s, p in zip(settings.series, plan.series):
         b.blank()
         b.add(_series_comment(p) + f"、色 = {comment_text(p.color_label)}")
@@ -823,10 +825,20 @@ def _emit_scatter_color_series(b: _Builder, settings: Settings, plan: PlotPlan) 
             _emit_band(b, s, p)
             _emit_line_error_bars(b, s, p, zorder=1)
             marker = f", marker={literal(p.marker)}" if p.marker else ""
+            if p.marker in LINE_ONLY_MARKERS:
+                point_size, edge = literal(p.marker_size), ""  # x / + は線だけの点なので、縁を描く（消すと点が見えない）
+            else:
+                if not edge_note:
+                    b.add(
+                        "# 点の縁は描かない（点ごとに色が違うと、縁を1点ずつ描くため遅い）。"
+                        "縁の太さ（1.5 pt）の分だけ点を大きくして、見た目の大きさを普通の散布図にそろえる"
+                    )
+                    edge_note = True
+                point_size, edge = f"({literal(p.marker_size)} ** 0.5 + 1.5) ** 2", ", linewidths=0"
             b.add(
-                f"{_target(p)}.scatter(x[ok], y[ok], c=c[ok], cmap={cmap}, norm=color_norm, s={literal(p.marker_size)}{marker}"
+                f"{_target(p)}.scatter(x[ok], y[ok], c=c[ok], cmap={cmap}, norm=color_norm, s={point_size}{marker}{edge}"
                 f'{_alpha_arg(p)}, label="_color")  # 点は色の値で塗る（凡例には出さない）',
-                f'{_target(p)}.scatter([], [], color="gray", s={literal(p.marker_size)}{marker}{_alpha_arg(p)}, '
+                f'{_target(p)}.scatter([], [], color="gray", s={point_size}{marker}{edge}{_alpha_arg(p)}, '
                 f"label={literal(p.legend_label)})  # 凡例用の見本（灰色。色はカラーバーで読む）",
                 "color_all.append(c[ok])",
             )

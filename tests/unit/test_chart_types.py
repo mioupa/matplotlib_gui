@@ -730,3 +730,23 @@ def test_scatter_color_series_without_points_is_skipped_everywhere(tmp_path):
     s = bt.check(fn)
     assert s[0]["colorbar"]["vmin"] == 1.0
     assert bt.script.text.count("ax.scatter([]") == 1
+
+
+def test_scatter_color_points_have_no_edge_and_compensated_size(tmp_path):
+    # 点ごとに色が違うと縁を1点ずつ描くため遅い。縁は描かず、縁の太さ（1.5 pt）の分だけ点を大きくする（見た目の大きさは同じ）
+    sl = [colored(), series(y=2, x=4, colorColumn="__idx__3", marker="x")]
+    bt = Built(tmp_path, df=cf(), series_list=sl, plot_type="scatterColor")
+    assert bt.script.text.count("点の縁は描かない") == 1
+
+    def fn(fig):
+        ax = fig.axes[0]
+        filled, crosses = [c for c in ax.collections if c.get_label() == "_color"]
+        assert list(filled.get_linewidths()) == [0.0]
+        assert filled.get_sizes()[0] == pytest.approx((24 ** 0.5 + 1.5) ** 2)
+        # x / + は線だけの点なので、縁を描き、大きさもそのまま
+        assert crosses.get_linewidths()[0] > 0 and crosses.get_sizes()[0] == pytest.approx(24.0)
+        # 凡例の見本も同じ大きさ・縁
+        proxies = [c for c in ax.collections if c.get_label() not in ("_color",) and len(c.get_offsets()) == 0]
+        assert proxies[0].get_sizes()[0] == pytest.approx((24 ** 0.5 + 1.5) ** 2) and list(proxies[0].get_linewidths()) == [0.0]
+
+    bt.check(fn)
