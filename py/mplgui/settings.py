@@ -14,6 +14,7 @@ from typing import Any
 
 from matplotlib.colors import is_color_like
 
+from . import expr as expr_module
 from .errors import UserError
 
 SCHEMA_VERSION = 4
@@ -72,6 +73,8 @@ FIT_MODELS = ("linear", "poly")
 FIT_SHOWS = ("legend", "text", "none")
 MAX_ANNOTATIONS = 50
 MAX_FITS = 20
+MAX_COMPUTED = 20
+MAX_COMPUTED_NAME = 50
 MAX_ANNOTATION_TEXT = 200
 _DATE_INPUT_RE = re.compile(r"(\d{4})([-/])(\d{1,2})\2(\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?")
 DATE_RANGE_LABEL = "X軸の範囲（日時）"
@@ -104,6 +107,7 @@ _DEFAULT_ANNOTATION = {
     "fontSize": None,
     "label": "",
 }
+_DEFAULT_COMPUTED = {"id": "", "source": "", "name": "", "expr": ""}
 _DEFAULT_FIT = {"id": "f1", "series": "s1", "model": "linear", "degree": 2, "show": "legend", "color": "", "lineStyle": "dashed"}
 
 _DEFAULT_SERIES = {
@@ -128,6 +132,11 @@ _DEFAULT_SERIES = {
 def default_annotation() -> dict:
     """注釈1つの既定値（js/defaults.js の DEFAULT_ANNOTATION と同一）。"""
     return copy.deepcopy(_DEFAULT_ANNOTATION)
+
+
+def default_computed() -> dict:
+    """計算した列1つの既定値（js/defaults.js の DEFAULT_COMPUTED と同一）。"""
+    return copy.deepcopy(_DEFAULT_COMPUTED)
 
 
 def default_fit() -> dict:
@@ -178,6 +187,7 @@ def default_settings() -> dict:
         "series": [copy.deepcopy(_DEFAULT_SERIES)],
         "annotations": [],
         "fits": [],
+        "computed": [],
         "save": {"filename": "", "format": "png", "transparent": False, "dpi": DEFAULT_DPI, "svgText": "path"},
     }
 
@@ -371,6 +381,17 @@ class FitSettings:
 
 
 @dataclass(frozen=True)
+class ComputedSettings:
+    """計算した列1つ。式は解釈済み（expr_node）で、設定の検証の時点で構文の誤りを UserError にする。"""
+
+    id: str = "c1"
+    source: str = ""  # "" = load.files の先頭
+    name: str = ""  # "" = 「計算N」
+    expr: str = ""
+    expr_node: Any = field(default=None, compare=False, repr=False)
+
+
+@dataclass(frozen=True)
 class SaveSettings:
     filename: str = ""
     format: str = "png"
@@ -389,6 +410,7 @@ class Settings:
     save: SaveSettings = field(default_factory=SaveSettings)
     annotations: tuple[AnnotationSettings, ...] = ()
     fits: tuple[FitSettings, ...] = ()
+    computed: tuple[ComputedSettings, ...] = ()
 
     @property
     def uses_secondary_axis(self) -> bool:
@@ -958,6 +980,40 @@ def _parse_fits(raw: Any, series_ids: set[str]) -> tuple[FitSettings, ...]:
     return tuple(out)
 
 
+def _parse_computed(raw: Any, file_ids: set[str]) -> tuple[ComputedSettings, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise UserError("「計算した列」の値が不正です。", field="計算した列")
+    if len(raw) > MAX_COMPUTED:
+        raise UserError(f"計算した列は{MAX_COMPUTED}個までです。", field="計算した列")
+    out = []
+    used_ids: set[str] = set()
+    for i, given in enumerate(raw):
+        n = i + 1
+        owner = f"計算した列{n}の"
+        c = _merge(_DEFAULT_COMPUTED, given)
+        cid = c["id"] if isinstance(c["id"], str) and c["id"] and c["id"] not in used_ids else f"c{n}"
+        while cid in used_ids:
+            cid += "_"
+        used_ids.add(cid)
+        source = _string(c["source"], "データ元", owner=owner)
+        if source and source not in file_ids:
+            raise UserError(f"計算した列{n}のデータ元が見つかりません。データ元を選び直してください。", field=f"計算した列{n}のデータ元")
+        name = _string(c["name"], "名前", owner=owner).strip()
+        if len(name) > MAX_COMPUTED_NAME:
+            raise UserError(f"{owner}「名前」は{MAX_COMPUTED_NAME}文字以内で入力してください。", field=f"計算した列{n}の名前")
+        expr = _string(c["expr"], "式", owner=owner)
+        if not expr.strip():
+            raise UserError(f"計算した列{n}の式を入力してください。", field=f"計算した列{n}の式")
+        try:
+            node = expr_module.parse(expr)
+        except expr_module.ExprError as e:
+            raise UserError(f"計算した列{n}の式: {e}", field=f"計算した列{n}の式") from None
+        out.append(ComputedSettings(id=cid, source=source, name=name, expr=expr, expr_node=node))
+    return tuple(out)
+
+
 def parse_settings(raw: dict | None) -> Settings:
     """設定 dict を検証し、型付きの Settings にする。欠けているキーは既定値で補う。
 
@@ -1059,8 +1115,14 @@ def parse_settings(raw: dict | None) -> Settings:
     # 棒グラフ・ヒストグラムでは近似曲線を使わない（隠れているので検証しない）
     fits = () if plot.type in BAR_LIKE_TYPES else _parse_fits(raw.get("fits"), {s.id for s in series})
 
+    # 計算した列は常に表示されるので、グラフの種類によらず検証する
+    computed = _parse_computed(raw.get("computed"), file_ids)
+
     save = _parse_save(merged["save"])
-    return Settings(version=SCHEMA_VERSION, load=load, plot=plot, axes=axes, series=series, save=save, annotations=annotations, fits=fits)
+    return Settings(
+        version=SCHEMA_VERSION, load=load, plot=plot, axes=axes, series=series, save=save,
+        annotations=annotations, fits=fits, computed=computed,
+    )
 
 
 def _figure_length(value: Any, label: str, default: float, unit: str) -> float:

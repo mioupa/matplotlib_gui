@@ -20,7 +20,7 @@ pytestmark = pytest.mark.unit
 def test_defaults_are_complete_and_parse():
     d = default_settings()
     assert d["version"] == SCHEMA_VERSION == 4
-    assert set(d) == {"version", "load", "plot", "axes", "series", "annotations", "fits", "save"}
+    assert set(d) == {"version", "load", "plot", "axes", "series", "annotations", "fits", "computed", "save"}
     assert set(d["axes"]) == {"x", "y", "y2"}
     s = parse_settings(d)
     assert s.plot.type == "line" and s.plot.font_size == 15 and s.plot.figure.width == 8 and s.plot.figure.height == 6

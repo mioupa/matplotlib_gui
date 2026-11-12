@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 import pandas as pd
 
+from . import expr as expr_module
 from .errors import UserError
 from .loader import is_blank_cell as _is_blank_cell
 from .loader import looks_numeric as _looks_numeric
@@ -313,10 +314,25 @@ class PlotPlan:
     fits: tuple[FitPlan, ...] = ()  # 近似曲線（line / step / scatter / scatterColor のみ）
     hist: HistPlan | None = None  # hist のときだけ
     colorbar: ColorbarPlan | None = None  # scatterColor のときだけ
+    computed: tuple["ComputedPlan", ...] = ()  # 計算した列（描画に使うデータ元のものだけ。カードの順）
 
     @property
     def plotted(self) -> tuple[SeriesPlan, ...]:
         return tuple(s for s in self.series if s.has_points)
+
+
+@dataclass(frozen=True)
+class ComputedPlan:
+    """計算した列1つ（描画に使うデータ元のものだけ）。codegen が「計算した列」の節を書くのに使う。"""
+
+    number: int  # カード番号（computed の位置 + 1）
+    name: str  # 列の見出し（名前、無ければ「計算N」）
+    expr: str  # 利用者が書いた式（コメントにだけ使う）
+    node: object  # expr.parse の結果
+    data_id: str
+    data_var: str  # "df" または "dfN"
+    index: int  # 計算後の列番号（ファイルの列の後ろ）
+    refs: tuple[tuple[int, str], ...] = ()  # 式が使うファイルの列（番号、コメント用の「列 [i]: 名前」）
 
 
 MAX_CATEGORY_TICKS = 25  # X が文字列の列のとき、目盛に出すカテゴリの最大数
@@ -650,6 +666,78 @@ NOT_LOADED_MESSAGE = "データ{n}（{name}）を読み込めていません。�
 BAR_SOURCE_MESSAGE = "棒グラフでは、すべての系列に同じデータ元を選んでください。"
 
 
+COMPUTED_REF_COMPUTED = "計算した列{n}の式: {pos}文字目: 計算した列（[{k}]）は、ほかの計算した列の式には使えません。"
+COMPUTED_REF_MISSING = "計算した列{n}の式: {pos}文字目: 列 [{k}] はありません（データの列は [0]〜[{last}] です）。"
+COMPUTED_REF_DATETIME = "計算した列{n}の式: {pos}文字目: 列 [{k}]（{name}）は日時の列なので、計算に使えません。"
+COMPUTED_INVALID = "計算した列{n}（{name}）: 0 での割り算・負の数の平方根などで計算できなかった値が{count}件あったため、欠損として扱います。"
+
+
+def _apply_computed(
+    frames: dict[str, pd.DataFrame], default_id: str, settings: Settings, var_of: dict[str, str]
+) -> tuple[tuple[ComputedPlan, ...], list[dict]]:
+    """データ元ごとに（skipRows を除いた）DataFrame の末尾へ、計算した列をカードの順に足す（frames を書き換える）。
+
+    描画に使わないデータ元の計算した列は計算しない。計算した列は、ファイルの列だけを参照できる。"""
+    items = [(n, c, c.source or default_id) for n, c in enumerate(settings.computed, start=1)]
+    file_count = {sid: frame.shape[1] for sid, frame in frames.items()}
+    count_of: dict[str, int] = {}
+    for _, _, sid in items:
+        count_of[sid] = count_of.get(sid, 0) + 1
+    plans: list[ComputedPlan] = []
+    warnings: list[dict] = []
+    done: dict[str, int] = {}
+    for n, c, sid in items:
+        if sid not in frames:
+            continue
+        frame = frames[sid]
+        total = file_count[sid]
+        index = total + done.get(sid, 0)
+        done[sid] = done.get(sid, 0) + 1
+        name = c.name or f"計算{n}"
+        field_name = f"計算した列{n}の式"
+        refs = expr_module.column_refs(c.expr_node)
+        for k, pos in sorted(refs, key=lambda r: r[1]):
+            if k >= total + count_of[sid]:
+                raise UserError(COMPUTED_REF_MISSING.format(n=n, pos=pos, k=k, last=total - 1), field=field_name)
+            if k >= total:
+                raise UserError(COMPUTED_REF_COMPUTED.format(n=n, pos=pos, k=k), field=field_name)
+            if _is_datetime(frame.iloc[:, k]):
+                raise UserError(
+                    COMPUTED_REF_DATETIME.format(n=n, pos=pos, k=k, name=str(frame.columns[k])), field=field_name
+                )
+        columns: dict[int, pd.Series] = {}
+        for k in expr_module.column_indices(c.expr_node):
+            raw = frame.iloc[:, k]
+            _, count, examples = coerce_numeric(raw)
+            if count:
+                ex = ", ".join(f'"{e}"' for e in examples)
+                warnings.append(
+                    {
+                        "series": 0,
+                        "message": f"計算した列{n}（{name}）: 列「{frame.columns[k]}」[{k}] に数値にできない値が{count}件あったため、"
+                        f"欠損として計算します（例: {ex}）。{load_hint(examples, settings.load)}",
+                    }
+                )
+            columns[k] = pd.to_numeric(raw, errors="coerce").astype(float)
+        result, invalid = expr_module.evaluate(c.expr_node, columns, frame.index)
+        if invalid:
+            warnings.append({"series": 0, "message": COMPUTED_INVALID.format(n=n, name=name, count=invalid)})
+        frame.insert(frame.shape[1], name, result, allow_duplicates=True)
+        plans.append(
+            ComputedPlan(
+                number=n,
+                name=name,
+                expr=c.expr,
+                node=c.expr_node,
+                data_id=sid,
+                data_var=var_of[sid],
+                index=index,
+                refs=tuple((k, f"列 [{k}]: {frame.columns[k]}") for k in expr_module.column_indices(c.expr_node)),
+            )
+        )
+    return tuple(plans), warnings
+
+
 def plan_plot(data, settings: Settings) -> PlotPlan:
     """データと設定から描画計画を作る。データ由来の問題は UserError にする。
 
@@ -688,11 +776,12 @@ def plan_plot(data, settings: Settings) -> PlotPlan:
     var_of = {src.id: src.var for src in sources}
 
     y_requests = [""] * len(settings.series)
-    for sid in order:
+    for sid in order:  # Y の自動割り当ては、ファイルの列だけを見る（計算した列を足す前）
         idx = [i for i, x in enumerate(ids) if x == sid]
         resolved = resolve_y_indices(frames[sid], [settings.series[i].y for i in idx])
         for i, r in zip(idx, resolved):
             y_requests[i] = r
+    computed, computed_warnings = _apply_computed(frames, default_id, settings, var_of)
     dfs = [frames[sid] for sid in ids]
     if plot.type in {"line", "step", "scatter", "scatterColor"}:
         plan = _plan_xy(dfs, settings, y_requests)
@@ -701,7 +790,14 @@ def plan_plot(data, settings: Settings) -> PlotPlan:
     else:
         plan = _plan_bar(dfs[0], settings, y_requests)
     series = tuple(replace(sp, data_id=sid, data_var=var_of[sid]) for sp, sid in zip(plan.series, ids))
-    return replace(plan, series=series, sources=sources, multi_source=multi)
+    return replace(
+        plan,
+        series=series,
+        sources=sources,
+        multi_source=multi,
+        computed=computed,
+        warnings=tuple(computed_warnings) + tuple(plan.warnings),
+    )
 
 
 # ---------------------------------------------------------------- axes (ticks)

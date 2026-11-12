@@ -13,6 +13,7 @@ import math
 from dataclasses import dataclass
 from typing import Callable
 
+from . import expr as expr_module
 from .dataprep import AnnotationPlan, AxisPlan, ErrorPlan, FitPlan, PlotPlan, SeriesPlan
 from .fonts import LATIN_FONTS, SANS_SERIF_PRIORITY
 from .formats import FORMATS, build_filename, savefig_kwargs, savefig_rc
@@ -313,6 +314,37 @@ def _emit_skip_rows(b: _Builder, plan: PlotPlan) -> None:
             b.add(f"{v} = {v}.iloc[{literal(plan.skip_rows)}:].reset_index(drop=True)  # 先頭の{plan.skip_rows}行を描画から除外する")
     else:
         b.add("# 先頭の行は除外しない（全ての行を使う）")
+
+
+def _emit_computed(b: _Builder, plan: PlotPlan) -> None:
+    """「計算した列」の節（計算した列があるときだけ）。式と名前はコメントにだけ comment_text() を通して写し、
+    コードには式の木から決まった形で書く（名前は literal()）。"""
+    b.section("計算した列")
+    b.add(
+        'with np.errstate(divide="ignore", invalid="ignore", over="ignore"):'
+        "  # 0 での割り算などは警告を出さず、下で NaN にする"
+    )
+    for i, c in enumerate(plan.computed):
+        if i > 0:
+            b.add("")
+        v = c.data_var
+        where = f"データ{next(s.number for s in plan.sources if s.id == c.data_id)}の" if plan.multi_source else ""
+        message = f"計算した列{c.number}（{c.name}）を計算できませんでした。式を確認してください。"
+        with b.step(message, f"計算した列{c.number}の式"):
+            b.add(
+                f"    # 計算した列{c.number}: {comment_text(c.name)}（式: {comment_text(c.expr)}）→ {where}列 [{c.index}]"
+            )
+            for k, label in c.refs:
+                b.add(f"    col{k} = pd.to_numeric({v}.iloc[:, {k}], errors=\"coerce\").astype(float)  # {comment_text(label)}")
+            code = expr_module.to_code(c.node, lambda k: f"col{k}", lambda x: literal(float(x)))
+            if expr_module.is_series(c.node):
+                b.add(f"    calc = {code}")
+            else:
+                b.add(f"    calc = pd.Series({code}, index={v}.index, dtype=float)")
+            b.add(
+                f"    {v}.insert({v}.shape[1], {literal(c.name)}, "
+                "calc.replace([np.inf, -np.inf], np.nan), allow_duplicates=True)"
+            )
 
 
 def _emit_figure(b: _Builder, settings: Settings) -> None:
@@ -1195,6 +1227,8 @@ def generate_script(settings: Settings, source, plan: PlotPlan) -> GeneratedScri
         b.add(*POLY_TEXT_FUNCTION)
     _emit_load(b, plan, infos)
     _emit_skip_rows(b, plan)
+    if plan.computed:
+        _emit_computed(b, plan)
     _emit_figure(b, settings)
     _emit_series(b, settings, plan)
     if plan.annotations:
