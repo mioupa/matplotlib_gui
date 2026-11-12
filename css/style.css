@@ -1208,6 +1208,8 @@ button.series-color-chip.active {
 .ann-field[hidden],
 .ann-help[hidden],
 .fit-degree-wrap[hidden],
+.fit-custom-wrap[hidden],
+.fit-initial-item[hidden],
 .fit-color-picker-wrap[hidden],
 #fitList[hidden],
 #addFitBtn[hidden],
@@ -1244,4 +1246,15 @@ button.series-color-chip.active {
 .computed-item select {
   max-width: 100%;
   box-sizing: border-box;
+}
+
+.fit-initial-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+.fit-initial-item {
+  flex: 1 1 64px;
+  min-width: 64px;
 }

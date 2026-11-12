@@ -262,6 +262,12 @@ def _configure_fit_poly_text(page):
     add_fit(page, model="linear", show="text")
 
 
+def _configure_fit_custom(page):
+    _band_base(page)
+    page.fill("#series-s1-legend-name", "温度")
+    add_fit(page, model="custom", expr="a*x^2 + b*x + c")
+
+
 def _configure_fit_y2(page):
     _band_base(page)
     page.click("#addSeriesBtn")
@@ -402,6 +408,7 @@ CASES = {
     "annotations_y2": ("band.csv", _configure_annotations_y2),
     "fit_linear_legend": ("band.csv", _configure_fit_linear_legend),
     "fit_poly_text": ("band.csv", _configure_fit_poly_text),
+    "fit_custom": ("band.csv", _configure_fit_custom),
     "fit_y2": ("band.csv", _configure_fit_y2),
     "type_step": ("chart_types.csv", _configure_step),
     "type_barh_err": ("chart_types.csv", _configure_barh_err),
@@ -565,6 +572,9 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
         assert "poly_text(" in script.read_text(encoding="utf-8")
     if case == "fit_poly_text":
         assert browser[0]["fitlines"] == 2 and browser[0]["fittexts"] == 2
+    if case == "fit_custom":
+        assert browser[0]["fitlines"] == 1 and any("a = " in t for t in browser[0]["legend"])
+        assert "from scipy.optimize import curve_fit" in script.read_text(encoding="utf-8")
     if case == "fit_y2":
         assert browser[1]["fitlines"] == 1 and browser[0]["fitlines"] == 1
     if case == "line":

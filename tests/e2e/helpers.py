@@ -618,3 +618,13 @@ def option_labels(page, select_id) -> dict:
     return page.evaluate(
         "(id) => Object.fromEntries([...document.querySelectorAll(`#${id} option`)].map(o => [o.value, o.textContent.trim()]))", select_id
     )
+
+
+# ---- Phase 5d (G10)
+def scipy_state(page) -> str:
+    """<html data-scipy-state>（idle / loading / ready / failed）。"""
+    return page.evaluate("document.documentElement.dataset.scipyState || ''")
+
+
+def wait_scipy_state(page, state, timeout=300_000):
+    page.wait_for_function("(s) => document.documentElement.dataset.scipyState === s", arg=state, timeout=timeout)
