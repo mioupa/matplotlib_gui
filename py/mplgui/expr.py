@@ -27,6 +27,11 @@ _DEPTH_MESSAGE = f"入れ子が深すぎます（{MAX_DEPTH} 段まで）"
 _NAME_HINT = "列は [N] か大文字の列記号（A, B, …）で、関数は max( のように書いてください"
 _CONST_MESSAGE = "計算できない定数があります（0 での割り算など）"
 
+MODEL_VARIABLE = "x"
+MODEL_PARAMS = ("a", "b", "c", "d", "e")
+_MODEL_NAME_HINT = "使える名前は x と a〜e です"
+_MODEL_COLUMN_MESSAGE = "近似の式では列は使えません（変数は x、パラメータは a〜e です）。"
+
 _KIND_ORDER = {"const": 0, "scalar": 1, "series": 2}
 
 
@@ -86,7 +91,16 @@ class Call:
     kind: str = field(default="const", compare=False, repr=False)
 
 
-Node = Number | Column | Unary | Binary | Call
+@dataclass(frozen=True)
+class Var:
+    """近似の式（モデル）の変数 x とパラメータ a〜e。"""
+
+    name: str
+    pos: int
+    kind: str = field(default="scalar", compare=False, repr=False)
+
+
+Node = Number | Column | Unary | Binary | Call | Var
 
 
 # ---- 字句解析 ---------------------------------------------------------------
@@ -128,7 +142,7 @@ def _excel_index(letters: str) -> int:
     return n - 1
 
 
-def _tokenize(s: str) -> list[_Tok]:
+def _tokenize(s: str, model: bool = False) -> list[_Tok]:
     toks: list[_Tok] = []
     n = len(s)
     i = 0
@@ -142,6 +156,8 @@ def _tokenize(s: str) -> list[_Tok]:
             toks.append(_Tok("num", m.group(), pos, float(m.group())))
             i = m.end()
         elif c == "[":
+            if model:
+                raise ExprError(_MODEL_COLUMN_MESSAGE, pos)
             m = _COLUMN.match(s, i)
             if m is None:
                 raise ExprError("列は [0] のように、角括弧の中に番号を書いてください", pos)
@@ -154,6 +170,10 @@ def _tokenize(s: str) -> list[_Tok]:
             while j < n and s[j] in " \t":
                 j += 1
             paren = j < n and s[j] == "("
+            if model:
+                _model_ident(toks, name, pos, paren)
+                i = m.end()
+                continue
             if name.isalpha() and name.isupper():
                 if paren:
                     raise ExprError(f"関数名は小文字で書いてください（{name.lower()}）", pos)
@@ -193,6 +213,29 @@ def _tokenize(s: str) -> list[_Tok]:
             raise ExprError(f"「{_show(c)}」は使えません", pos)
     toks.append(_Tok("eof", "", n + 1))
     return toks
+
+
+def _model_ident(toks: list[_Tok], name: str, pos: int, paren: bool) -> None:
+    if name.isalpha() and name.isupper() and not paren and len(name) <= 3:
+        raise ExprError(_MODEL_COLUMN_MESSAGE, pos)
+    if name in ELEMENTWISE:
+        if not paren:
+            raise ExprError(
+                f"「{name}」は関数です。{name}( のように、括弧で値を指定してください", pos
+            )
+        toks.append(_Tok("func", name, pos, name))
+    elif name in AGGREGATES or name in SERIES_FUNCS:
+        raise ExprError(
+            f"「{name}」は近似の式では使えません。使える関数: {', '.join(ELEMENTWISE)}", pos
+        )
+    elif paren:
+        raise ExprError(
+            f"「{name}」という関数はありません。使える関数: {', '.join(ELEMENTWISE)}", pos
+        )
+    elif name == MODEL_VARIABLE or name in MODEL_PARAMS:
+        toks.append(_Tok("var", name, pos, name))
+    else:
+        raise ExprError(f"「{name}」は使えません。{_MODEL_NAME_HINT}", pos)
 
 
 # ---- ノードの生成（種類の判定と定数の畳み込み） --------------------------------
@@ -293,7 +336,7 @@ class _Parser:
         self.depth -= 1
 
     def _is_value_start(self, t: _Tok) -> bool:
-        return t.kind in ("num", "col", "func", "(")
+        return t.kind in ("num", "col", "func", "var", "(")
 
     def _unexpected(self, lparen: _Tok | None) -> ExprError:
         """式の途中で、演算子や閉じ括弧でないものが来たときの誤り。"""
@@ -368,6 +411,9 @@ class _Parser:
         if t.kind == "col":
             self.advance()
             return Column(t.value, t.pos)
+        if t.kind == "var":
+            self.advance()
+            return Var(t.value, t.pos, "series" if t.value == MODEL_VARIABLE else "scalar")
         if t.kind == "func":
             self.advance()
             lp = self.advance()  # tokenizer guarantees "("
@@ -411,6 +457,26 @@ def parse(text: str) -> Node:
     return node
 
 
+def parse_model(text: str) -> Node:
+    """近似の式（変数 x、パラメータ a〜e）を解釈する。"""
+    if len(text) > MAX_LENGTH:
+        raise ExprError(f"式は{MAX_LENGTH}文字までです")
+    s = _normalize(text)
+    if not s.strip(" \t"):
+        raise ExprError("式を入力してください")
+    toks = _tokenize(s, model=True)
+    try:
+        node = _Parser(toks).parse_top()
+    except RecursionError:
+        raise ExprError(_DEPTH_MESSAGE) from None
+    names = _var_names(node)
+    if MODEL_VARIABLE not in names:
+        raise ExprError("式に x を含めてください。")
+    if not any(p in names for p in MODEL_PARAMS):
+        raise ExprError("式にパラメータ（a〜e）を1つ以上含めてください。")
+    return node
+
+
 # ---- 木の調査 ---------------------------------------------------------------
 
 
@@ -422,6 +488,23 @@ def _children(node: Node) -> tuple:
     if isinstance(node, Call):
         return node.args
     return ()
+
+
+def _var_names(node: Node) -> set[str]:
+    names: set[str] = set()
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if isinstance(n, Var):
+            names.add(n.name)
+        stack.extend(_children(n))
+    return names
+
+
+def model_params(node: Node) -> tuple[str, ...]:
+    """式で使っているパラメータ（a〜e の順。1つにつき1回）。"""
+    names = _var_names(node)
+    return tuple(p for p in MODEL_PARAMS if p in names)
 
 
 def column_refs(node: Node) -> tuple[tuple[int, int], ...]:
@@ -540,6 +623,8 @@ def to_code(
         if isinstance(nd, Number):
             s = number(float(nd.value))
             return s, (_P_UNARY if s.startswith("-") else _P_ATOM)
+        if isinstance(nd, Var):
+            return nd.name, _P_ATOM
         if isinstance(nd, Column):
             return column_var(nd.index), _P_ATOM
         if isinstance(nd, Unary):
@@ -577,3 +662,68 @@ def to_code(
         return f"{base}.{name}()", _P_ATOM
 
     return go(node)[0]
+
+
+def model_to_code(node: Node, number: Callable[[float], str]) -> str:
+    """近似の式の numpy コード（名前は x, a〜e のまま。入力文字列は写さない）。"""
+    return to_code(node, lambda i: "", number)
+
+
+def _format_number(v: float) -> str:
+    return "%.15g" % v
+
+
+def model_to_text(node: Node) -> str:
+    """図のラベル用の、木から整えた式（ASCII だけ。例: a*exp(-b*x) + c）。"""
+
+    def go(nd: Node) -> tuple[str, int]:
+        if isinstance(nd, Number):
+            s = _format_number(float(nd.value))
+            return s, (_P_UNARY if s.startswith("-") else _P_ATOM)
+        if isinstance(nd, Var):
+            return nd.name, _P_ATOM
+        if isinstance(nd, Unary):
+            s, p = go(nd.operand)
+            if p <= _P_UNARY:
+                s = f"({s})"
+            return f"-{s}", _P_UNARY
+        if isinstance(nd, Binary):
+            op = nd.op
+            prec = _OP_PREC[op]
+            ls, lp = go(nd.left)
+            rs, rp = go(nd.right)
+            if op == "**":
+                lparen, rparen = lp <= _P_POW, rp < _P_UNARY
+            else:
+                lparen, rparen = lp < prec, rp <= prec
+            if lparen:
+                ls = f"({ls})"
+            if rparen:
+                rs = f"({rs})"
+            if op in ("+", "-"):
+                return f"{ls} {op} {rs}", prec
+            return f"{ls}{'^' if op == '**' else op}{rs}", prec
+        s, _ = go(nd.args[0])
+        return f"{nd.name}({s})", _P_ATOM
+
+    return go(node)[0]
+
+
+def evaluate_model(node: Node, x, params: Mapping[str, float]) -> np.ndarray:
+    """近似の式を numpy で評価する（model_to_code と同じ意味）。"""
+    xs = np.asarray(x, dtype=float)
+    ps = {k: np.float64(v) for k, v in params.items()}
+
+    def go(nd: Node):
+        if isinstance(nd, Number):
+            return float(nd.value)
+        if isinstance(nd, Var):
+            return xs if nd.name == MODEL_VARIABLE else ps[nd.name]
+        if isinstance(nd, Unary):
+            return -go(nd.operand)
+        if isinstance(nd, Binary):
+            return _BINARY_OPS[nd.op](go(nd.left), go(nd.right))
+        return getattr(np, nd.name)(go(nd.args[0]))
+
+    with np.errstate(all="ignore"):
+        return np.broadcast_to(np.asarray(go(node), dtype=float), xs.shape).copy()
