@@ -155,6 +155,24 @@ def test_reload_with_extra_column_keeps_computed_reference(page, app_url, fixtur
     assert axis0(page)["ylim"] == pytest.approx(before["ylim"])
 
 
+def test_reload_with_fewer_columns_resets_vanished_file_column(page, app_url, fixtures_dir, tmp_path, console_log):
+    start(page, app_url, fixtures_dir)
+    add_computed(page, "[1] / max([1])", "正規化")
+    page.select_option("#series-s1-y", "__idx__6")  # 計算した列
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s2-y", "__idx__5")  # 最後のファイルの列（m）
+    wait_settled(page)
+    lines = (fixtures_dir / "chart_types.csv").read_text(encoding="utf-8").splitlines()
+    fewer = [",".join(ln.split(",")[:5]) for ln in lines]  # 列が1つ少ない（5 列）
+    (tmp_path / "chart_types.csv").write_text("\n".join(fewer) + "\n", encoding="utf-8")
+    load_fixture(page, tmp_path / "chart_types.csv")
+    wait_settled(page)
+    assert series_state(page, "s2")["y"] == ""  # 無くなった列は空（自動）に戻る。計算した列を指さない
+    assert series_state(page, "s1")["y"] == "__idx__5"  # 計算した列は [5] になり、系列1はそれを指したまま
+    assert status_kind(page) != "error", status_text(page)
+    assert axis0(page)["lines"] == 2
+
+
 def test_expression_error_and_recovery(page, app_url, fixtures_dir, console_log):
     start(page, app_url, fixtures_dir)
     c1 = add_computed(page, "[1] / (", "x")
@@ -197,7 +215,7 @@ def test_two_files_computed_column_on_second_source(page, app_url, fixtures_dir,
     page.select_option(f"#computed-{c1}-source", "d1")
     wait_settled(page)
     assert series_state(page, "s2")["y"] == ""
-    assert any("計算した列「平均の2倍」を削除したため" in w for w in status_warnings(page))
+    assert any("計算した列「平均の2倍」のデータ元を替えたため" in w for w in status_warnings(page))
     assert computed_index_text(page, c1) == "列 [6] として使えます"
     # ファイルを外すと、データ元は先頭に戻る
     page.select_option(f"#computed-{c1}-source", "d2")

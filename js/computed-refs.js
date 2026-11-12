@@ -86,16 +86,18 @@ export const remapReferences = (sourceId, fn) => {
   return reset;
 };
 
-const noteReset = (indices, name) => {
-  for (const n of indices) addNote(`系列${n}: 計算した列「${name}」を削除したため、その列を使っていた設定を空に戻しました。`);
+const noteReset = (indices, name, reason) => {
+  for (const n of indices) addNote(`系列${n}: 計算した列「${name}」${reason}、その列を使っていた設定を空に戻しました。`);
 };
+const REASON_REMOVED = "を削除したため";
+const REASON_SOURCE = "のデータ元を替えたため";
 
 // データ元 S から計算した列（番号 k、S の計算した列は count 個）を取り除いたときの付け替え
-const detach = (sourceId, k, count, name) => {
+const detach = (sourceId, k, count, name, reason) => {
   const f = fileColumnCount(sourceId);
   if (f === undefined) return;
   const reset = remapReferences(sourceId, (i) => (i === k ? null : i > k && i < f + count ? i - 1 : i));
-  noteReset(reset, name);
+  noteReset(reset, name, reason);
 };
 
 // 計算した列を削除する（その列を使っていた設定は空に戻し、後ろの計算した列の参照は詰める）
@@ -105,7 +107,7 @@ export const removeComputedColumn = (id) => {
   if (!c) return;
   if (k !== null) {
     const sid = resolveSource(c.source);
-    detach(sid, k, computedOfSource(sid).length, computedName(id));
+    detach(sid, k, computedOfSource(sid).length, computedName(id), REASON_REMOVED);
   }
   removeComputed(id);
 };
@@ -116,7 +118,7 @@ export const changeComputedSource = (id, newSource) => {
   if (!c || resolveSource(c.source) === resolveSource(newSource)) return;
   const oldSid = resolveSource(c.source);
   const k = computedIndex(id);
-  if (k !== null) detach(oldSid, k, computedOfSource(oldSid).length, computedName(id));
+  if (k !== null) detach(oldSid, k, computedOfSource(oldSid).length, computedName(id), REASON_SOURCE);
   updateComputed(id, { source: newSource });
   const newK = computedIndex(id);
   if (newK !== null) remapReferences(resolveSource(newSource), (i) => (i >= newK ? i + 1 : i));
@@ -126,7 +128,13 @@ export const changeComputedSource = (id, newSource) => {
 export const shiftForFileColumnChange = (sourceId, oldF, newF) => {
   const count = computedOfSource(sourceId).length;
   if (count === 0) return;
-  remapReferences(sourceId, (i) => (i >= oldF && i < oldF + count ? i + (newF - oldF) : i));
+  // ファイルの列が減ったとき（newF < oldF）、無くなったファイルの列 [newF, oldF) への参照は、新しい計算した列の範囲
+  // [newF, newF + count) に入ってしまい、reconcileColumns が有効と見なす。i + count にして範囲の外へ出し、reconcileColumns に空へ戻させる
+  remapReferences(sourceId, (i) => {
+    if (i >= oldF && i < oldF + count) return i + (newF - oldF);
+    if (i >= newF && i < oldF) return i + count;
+    return i;
+  });
 };
 
 // ファイルを外した・置き換えたとき、そのファイルをデータ元にしていた計算した列を先頭のファイルに戻す。
