@@ -1,5 +1,6 @@
 // 系列カード（追加・削除・列セレクト・種別/第2軸に応じた表示切替）。カードは state の系列リストから描く。
-import { addSeries, getSettings, hasSecondaryAxis, removeSeries, updateSeries, setPath } from "../state.js";
+import { addSeries, duplicateSeries, getSettings, hasSecondaryAxis, moveSeries, removeSeries, updateSeries, setPath } from "../state.js";
+import { addNote } from "../bridge.js";
 import { bindSeriesColorControls } from "./colorPicker.js";
 import { syncAxisTicks } from "./axisTicks.js";
 import { readNumber } from "./forms.js";
@@ -38,6 +39,17 @@ export const xAxisKind = () => {
   if (cols.some((c) => c && c.kind === "text" && c.numericLike === false)) return "category";
   return numeric;
 };
+
+// 系列の表示名（凡例名があればそれ、無ければ Y 列の表示）。近似曲線の系列の選択肢に使う
+export const seriesDisplayName = (series) => {
+  if (series.label) return series.label;
+  const col = columnsOf(series).find((c) => c.value === series.y);
+  return col ? col.label : "";
+};
+
+// 画面の同期（syncVisibility）の最後に呼ぶ関数を足す（注釈・近似曲線のカード。series.js から循環して import しないため）
+const visibilityHooks = [];
+export const addVisibilityHook = (fn) => visibilityHooks.push(fn);
 
 const esc = (text) =>
   String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -114,7 +126,12 @@ const cardHtml = (series, plotType) => {
   return `
     <div class="series-item-header">
       <div class="series-item-title">系列</div>
-      <button type="button" id="${id("remove")}" class="small-btn ghost-btn remove-series">削除</button>
+      <div class="series-item-actions">
+        <button type="button" id="${id("up")}" class="small-btn ghost-btn move-series-up">↑</button>
+        <button type="button" id="${id("down")}" class="small-btn ghost-btn move-series-down">↓</button>
+        <button type="button" id="${id("duplicate")}" class="small-btn ghost-btn duplicate-series">複製</button>
+        <button type="button" id="${id("remove")}" class="small-btn ghost-btn remove-series">削除</button>
+      </div>
     </div>
     <div class="group series-source-wrap">
       <label for="${id("source")}">データ元</label>
@@ -166,6 +183,27 @@ const cardHtml = (series, plotType) => {
         <input id="${id("marker-size")}" class="series-marker-size" type="number" step="1" value="${esc(displayMarkerSize(series, plotType))}" />
       </div>
     </div>
+    <div class="row group">
+      <div class="series-marker-wrap">
+        <label for="${id("marker")}">点の形</label>
+        <select id="${id("marker")}" class="series-marker">
+          <option value="auto">自動</option>
+          <option value="none">なし</option>
+          <option value="o">丸</option>
+          <option value="s">四角</option>
+          <option value="^">上三角</option>
+          <option value="v">下三角</option>
+          <option value="D">ひし形</option>
+          <option value="x">×</option>
+          <option value="+">+</option>
+          <option value="*">星</option>
+        </select>
+      </div>
+      <div>
+        <label for="${id("alpha")}">不透明度</label>
+        <input id="${id("alpha")}" class="series-alpha" type="number" min="0" max="1" step="0.1" value="${esc(series.alpha ?? "")}" />
+      </div>
+    </div>
     <div class="group">
       <label for="${id("legend-name")}">凡例名（任意）</label>
       <input id="${id("legend-name")}" class="series-legend-name" type="text" value="${esc(series.label)}" placeholder="自動" />
@@ -187,8 +225,34 @@ const cardHtml = (series, plotType) => {
         </div>
       </div>
     </details>
+    <details class="series-fill" id="${id("fill")}" ${fillOpen(series) ? "open" : ""}>
+      <summary class="series-errorbars-summary">塗りつぶし帯</summary>
+      <div class="series-errorbars-body">
+        <div class="help-text group">下端と上端の列の間を塗ります（値そのもの。誤差の大きさではありません）。</div>
+        <div class="row group">
+          <div>
+            <label for="${id("fill-lower")}">下端の列</label>
+            <select id="${id("fill-lower")}" data-fill="lower"></select>
+          </div>
+          <div>
+            <label for="${id("fill-upper")}">上端の列</label>
+            <select id="${id("fill-upper")}" data-fill="upper"></select>
+          </div>
+        </div>
+        <div class="group">
+          <label for="${id("fill-alpha")}">帯の不透明度（0〜1）</label>
+          <input id="${id("fill-alpha")}" type="number" min="0" max="1" step="0.05" data-fill="alpha" />
+        </div>
+      </div>
+    </details>
   `;
 };
+
+// 塗りつぶし帯の折りたたみの開閉（エラーバーと同じ。系列 id ごとにセッション中だけ覚える）
+const openFill = new Map();
+const usesFill = (series) => !!series.fill && !!(series.fill.lower || series.fill.upper);
+const fillOpen = (series) => (openFill.has(series.id) ? openFill.get(series.id) : usesFill(series));
+const fillColumnOptions = (columns) => [{ value: "", label: "（なし）" }, ...columns];
 
 const errorColumnOptions = (columns) => [{ value: "", label: "（列を選択）" }, ...columns];
 
@@ -252,12 +316,27 @@ const buildCard = (series, plotType) => {
   item.querySelector(".series-source-wrap").hidden = !hasManySources();
   item.querySelector(".series-line-style").value = series.lineStyle;
   fillErrorControls(item, series, columns);
+  item.querySelector(".series-marker").value = series.marker;
+  fillSelect(item.querySelector('[data-fill="lower"]'), fillColumnOptions(columns), series.fill.lower);
+  fillSelect(item.querySelector('[data-fill="upper"]'), fillColumnOptions(columns), series.fill.upper);
+  item.querySelector('[data-fill="alpha"]').value = series.fill.alpha === null ? "" : String(series.fill.alpha);
   const details = item.querySelector(".series-errorbars");
   details.addEventListener("toggle", () => {
     openErrorBars.set(series.id, details.open);
   });
+  const fillDetails = item.querySelector(".series-fill");
+  fillDetails.addEventListener("toggle", () => {
+    openFill.set(series.id, fillDetails.open);
+  });
   bindSeriesColorControls(item, (color) => updateSeries(series.id, { color }));
-  item.querySelector(".remove-series").addEventListener("click", () => removeSeries(series.id));
+  item.querySelector(".remove-series").addEventListener("click", () => {
+    const index = getSettings().series.findIndex((x) => x.id === series.id);
+    const removedFits = removeSeries(series.id);
+    if (removedFits > 0) addNote(`系列${index + 1}を削除したため、その系列の近似曲線${removedFits}本も削除しました。`);
+  });
+  item.querySelector(".move-series-up").addEventListener("click", () => moveSeries(series.id, -1));
+  item.querySelector(".move-series-down").addEventListener("click", () => moveSeries(series.id, 1));
+  item.querySelector(".duplicate-series").addEventListener("click", () => duplicateSeries(series.id));
   return item;
 };
 
@@ -271,7 +350,16 @@ export const syncVisibility = () => {
   }
   for (const wrap of document.querySelectorAll("#seriesList .series-source-wrap")) wrap.hidden = !hasManySources();
   for (const item of document.querySelectorAll("#seriesList .series-item")) {
-    syncErrorVisibility(item, settings.series.find((x) => x.id === item.dataset.seriesId), usePerSeriesX);
+    const s = settings.series.find((x) => x.id === item.dataset.seriesId);
+    syncErrorVisibility(item, s, usePerSeriesX);
+    // 棒グラフでは点の形と塗りつぶし帯は使わない（隠す）。点の形が「なし」の折れ線は点サイズを使わない
+    const isBar = settings.plot.type === "bar";
+    const markerWrap = item.querySelector(".series-marker-wrap");
+    if (markerWrap) markerWrap.hidden = isBar;
+    const fill = item.querySelector(".series-fill");
+    if (fill) fill.hidden = isBar;
+    const size = item.querySelector(".series-marker-size");
+    if (size && s) size.disabled = !isBar && settings.plot.type === "line" && s.marker === "none";
   }
   const dateGroup = document.getElementById("xDateFormatGroup");
   if (dateGroup) dateGroup.hidden = !usesDatetimeX();
@@ -281,6 +369,7 @@ export const syncVisibility = () => {
     const el = document.getElementById(id);
     if (el) el.style.display = hasY2 ? "" : "none";
   }
+  for (const hook of visibilityHooks) hook();
 };
 
 // 点サイズが自動（null）の系列は、プロット種別に応じた値を表示する（ユーザーが入力した値は変えない）
@@ -340,6 +429,13 @@ export const renderSeriesList = () => {
     removeBtn.setAttribute("aria-label", `系列 ${idx + 1} を削除`);
     removeBtn.style.opacity = disable ? "0.5" : "1";
     removeBtn.style.cursor = disable ? "not-allowed" : "pointer";
+    const up = item.querySelector(".move-series-up");
+    const down = item.querySelector(".move-series-down");
+    up.disabled = idx === 0;
+    down.disabled = idx === items.length - 1;
+    up.setAttribute("aria-label", `系列 ${idx + 1} を上へ`);
+    down.setAttribute("aria-label", `系列 ${idx + 1} を下へ`);
+    item.querySelector(".duplicate-series").setAttribute("aria-label", `系列 ${idx + 1} を複製`);
   });
   syncVisibility();
 };
@@ -398,6 +494,13 @@ export const reconcileColumns = () => {
       }
       if (next) patch.errorBars = next;
     }
+    // 塗りつぶし帯の列も同じ（もう無い列なら解除し、帯が消えることを知らせる）
+    if (s.fill && ["lower", "upper"].some((k) => s.fill[k] && !valid.has(s.fill[k]))) {
+      const fill = { ...s.fill };
+      for (const k of ["lower", "upper"]) if (fill[k] && !valid.has(fill[k])) fill[k] = "";
+      patch.fill = fill;
+      addNote(`系列${settings.series.indexOf(s) + 1}: 塗りつぶし帯の列が無くなったため、帯の列を空に戻しました。`);
+    }
     if (Object.keys(patch).length) updateSeries(s.id, patch, "reconcile");
   }
   refreshSources();
@@ -411,6 +514,8 @@ const FIELD_BY_CLASS = [
   ["series-line-width", "lineWidth", "number"],
   ["series-line-style", "lineStyle", "text"],
   ["series-marker-size", "markerSize", "number"],
+  ["series-marker", "marker", "text"],
+  ["series-alpha", "alpha", "number"],
   ["series-legend-name", "label", "text"],
   ["series-use-y2", "secondaryAxis", "checkbox"],
 ];
@@ -423,7 +528,12 @@ const onSourceChange = (seriesId, source) => {
   if (series[0] && series[0].id === seriesId && plot.xColumn) setPath("plot.xColumn", "");
   const errorBars = cloneErrorBars(current.errorBars);
   for (const dir of ["y", "x"]) Object.assign(errorBars[dir], { column: "", columnMinus: "" });
-  updateSeries(seriesId, { source, x: "", y: "", errorBars });
+  const patch = { source, x: "", y: "", errorBars };
+  if (usesFill(current)) {
+    patch.fill = { ...current.fill, lower: "", upper: "" };
+    addNote(`系列${series.indexOf(current) + 1}: データ元を替えたため、塗りつぶし帯の列を空に戻しました（帯は描きません）。`);
+  }
+  updateSeries(seriesId, patch);
   refreshSources();
 };
 
@@ -453,6 +563,11 @@ const onSeriesInput = (event) => {
   }
   if (target.dataset.err) {
     onErrorInput(item.dataset.seriesId, target);
+    return;
+  }
+  if (target.dataset.fill) {
+    const current = getSettings().series.find((x) => x.id === item.dataset.seriesId);
+    if (current) updateSeries(current.id, { fill: { ...current.fill, [target.dataset.fill]: target.dataset.fill === "alpha" ? readNumber(target) : target.value } });
     return;
   }
   const entry = FIELD_BY_CLASS.find(([cls]) => target.classList.contains(cls));

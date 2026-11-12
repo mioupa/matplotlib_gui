@@ -93,6 +93,62 @@ def _offset_text(axis) -> str:
     return str(get_offset()) if get_offset is not None else ""
 
 
+_AUX_LINE_LABELS = {"_errorbar", "_fit"}
+
+
+def _is_fit_label(label: str) -> bool:
+    return label == "_fit" or "$R^2$ = " in label
+
+
+def _is_fit_text(text: str) -> bool:
+    return "y = " in text and "$R^2$ = " in text
+
+
+def _transform_kind(artist, ax) -> tuple[bool, bool]:
+    """(X が データ座標か, Y が データ座標か)。axhline / axvline / axhspan / axvspan は片方だけデータ座標。"""
+    return tuple(bool(v) for v in artist.get_transform().contains_branch_seperately(ax.transData))
+
+
+def _series_lines(ax) -> list:
+    """系列の線（エラーバー・近似曲線・注釈の線を除く）。"""
+    return [
+        ln for ln in ax.lines
+        if ln.get_label() not in _AUX_LINE_LABELS and not _is_fit_label(ln.get_label()) and _transform_kind(ln, ax) == (True, True)
+    ]
+
+
+def _style_summary(ax) -> dict:
+    """点の形・不透明度・塗りつぶし帯・注釈・近似曲線の要約（既存のキーの値は変えない）。"""
+    lines = ax.lines
+    hlines = vlines = 0
+    for ln in lines:
+        kind = _transform_kind(ln, ax)
+        hlines += kind == (False, True)
+        vlines += kind == (True, False)
+    hspans = vspans = 0
+    for patch in ax.patches:
+        kind = _transform_kind(patch, ax)
+        hspans += kind == (False, True)
+        vspans += kind == (True, False)
+    fit_texts = sum(1 for t in ax.texts if _is_fit_text(t.get_text()))
+    series_lines = _series_lines(ax)
+    scatters = [c for c in ax.collections if type(c).__name__ == "PathCollection" and not c.get_label().startswith("_")]
+    return {
+        "bands": sum(1 for c in ax.collections if c.get_label() == "_fill"),
+        "markers": [str(ln.get_marker()) for ln in series_lines],
+        "alphas": [ln.get_alpha() for ln in series_lines] + [c.get_alpha() for c in scatters],
+        "annotations": {
+            "texts": len(ax.texts) - fit_texts,
+            "hlines": hlines,
+            "vlines": vlines,
+            "hspans": hspans,
+            "vspans": vspans,
+        },
+        "fitlines": sum(1 for ln in lines if _is_fit_label(ln.get_label())),
+        "fittexts": fit_texts,
+    }
+
+
 def figure_summary(fig) -> list[dict]:
     """Figure の中身の要約（軸ごと）。JSON にできる値だけで、E2E と生成コードの一致確認に使う。"""
     out = []
@@ -126,6 +182,7 @@ def figure_summary(fig) -> list[dict]:
                 "yoffset": _offset_text(ax.yaxis),
                 "errorbars": sum(1 for line in ax.lines if line.get_label() == "_errorbar")
                 + sum(1 for c in ax.containers if type(c).__name__ == "ErrorbarContainer"),
+                **_style_summary(ax),
             }
         )
     return out

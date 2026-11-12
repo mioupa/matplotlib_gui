@@ -9,6 +9,7 @@ SECTIONS = [
     ("sectionSeries", "系列"),
     ("sectionAxes", "軸・目盛"),
     ("sectionStyle", "体裁"),
+    ("sectionAnalysis", "注釈・解析"),
     ("sectionSave", "保存"),
 ]
 

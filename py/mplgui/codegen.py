@@ -13,7 +13,7 @@ import math
 from dataclasses import dataclass
 from typing import Callable
 
-from .dataprep import AxisPlan, ErrorPlan, PlotPlan, SeriesPlan
+from .dataprep import AnnotationPlan, AxisPlan, ErrorPlan, FitPlan, PlotPlan, SeriesPlan
 from .fonts import LATIN_FONTS, SANS_SERIF_PRIORITY
 from .formats import FORMATS, build_filename, savefig_kwargs, savefig_rc
 from .loader import DatetimeColumn, SourceInfo
@@ -113,6 +113,7 @@ class _Builder:
         self.steps: list[Step] = []
         self.load_lines = (0, -1)
         self.output_lines = (0, -1)
+        self._section_count = 0
 
     def add(self, *lines: str) -> None:
         self.lines.extend(lines)
@@ -121,10 +122,11 @@ class _Builder:
         self.lines.append("")
 
     def section(self, title: str) -> int:
-        """区切りの見出しを書き、その行番号（1 始まり）を返す。"""
+        """区切りの見出し（番号は呼んだ順に自動で振る）を書き、その行番号（1 始まり）を返す。"""
         if self.lines:
             self.blank()
-        self.lines.append(f"# ==== {title} ====")
+        self._section_count += 1
+        self.lines.append(f"# ==== {self._section_count}. {title} ====")
         return len(self.lines)
 
     def step(self, message: str, field: str | None = None):
@@ -277,7 +279,7 @@ def _emit_read(b: _Builder, source: SourceInfo, data_file: str, df: str) -> None
 
 
 def _emit_load(b: _Builder, plan: PlotPlan, infos: list[SourceInfo]) -> None:
-    start = b.section("1. データの読み込み")
+    start = b.section("データの読み込み")
     if not plan.multi_source:
         _emit_read(b, infos[0], "DATA_FILE", "df")
     else:
@@ -290,7 +292,7 @@ def _emit_load(b: _Builder, plan: PlotPlan, infos: list[SourceInfo]) -> None:
 
 
 def _emit_skip_rows(b: _Builder, plan: PlotPlan) -> None:
-    b.section("2. 描画に使う行")
+    b.section("描画に使う行")
     if plan.skip_rows > 0:
         for src in plan.sources:
             v = src.var
@@ -300,7 +302,7 @@ def _emit_skip_rows(b: _Builder, plan: PlotPlan) -> None:
 
 
 def _emit_figure(b: _Builder, settings: Settings) -> None:
-    b.section("3. 図と軸")
+    b.section("図と軸")
     fig = settings.plot.figure
     w, h = literal(fig.width), literal(fig.height)
     if fig.unit == "in":
@@ -361,6 +363,82 @@ class _Axes2State:
 
 def _style_args(s: SeriesSettings) -> str:
     return f"color={literal(s.color)}, linewidth={literal(s.line_width)}, linestyle={literal(s.line_style)}"
+
+
+def _alpha_arg(p: SeriesPlan) -> str:
+    return f", alpha={literal(p.alpha)}" if p.alpha != 1.0 else ""
+
+
+# ---- band (G3) ----
+
+
+def _emit_band(b: _Builder, s: SeriesSettings, p: SeriesPlan) -> None:
+    """塗りつぶし帯（fill_between）。エラーバーと系列本体より先に描く（系列本体が上に来る）。"""
+    fill = p.fill
+    if fill is None:
+        return
+    with b.step(f"系列{p.number}の塗りつぶし帯を描けませんでした。帯の下端・上端の列を確認してください。", f"系列{p.number}の塗りつぶし帯"):
+        b.add(
+            f'fill_lower = pd.to_numeric({p.data_var}.iloc[:, {fill.lower_index}], errors="coerce")'
+            f"  # 塗りつぶし帯の下端: {comment_text(fill.lower_label)}",
+            f'fill_upper = pd.to_numeric({p.data_var}.iloc[:, {fill.upper_index}], errors="coerce")'
+            f"  # 塗りつぶし帯の上端: {comment_text(fill.upper_label)}",
+            f"{_target(p)}.fill_between(x[ok], fill_lower[ok], fill_upper[ok], color={literal(s.color)}, alpha={literal(fill.alpha)}, "
+            'linewidth=0, label="_fill")  # 塗りつぶし帯（凡例には出さない）',
+        )
+
+
+# ---- fits (G5) ----
+
+POLY_TEXT_FUNCTION = (
+    "def poly_text(coef):",
+    '    """近似曲線の式の文字を作る（coef は低い次数から）。例: y = 1.234x$^{2}$ - 0.5x + 3.21（係数は有効数字4桁）"""',
+    '    text = "y = "',
+    "    for power in range(len(coef) - 1, -1, -1):",
+    "        c = float(coef[power])",
+    '        body = f"{abs(c):.4g}"',
+    "        if power == 1:",
+    '            body += "x"',
+    "        elif power >= 2:",
+    '            body += f"x$^{{{power}}}$"',
+    "        if power == len(coef) - 1:",
+    '            text += ("-" if c < 0 else "") + body',
+    "        else:",
+    '            text += (" - " if c < 0 else " + ") + body',
+    "    return text",
+)
+
+
+def _uses_poly_text(plan: PlotPlan) -> bool:
+    return plan.plot_type in {"line", "scatter"} and any(f.show in {"legend", "text"} for f in plan.fits)
+
+
+def _fit_label_expr(fit: FitPlan) -> str:
+    return f'{literal(fit.label_prefix + ": ")} + poly_text(fit.coef) + f"（$R^2$ = {{r2:.4f}}）"'
+
+
+def _emit_fits(b: _Builder, plan: PlotPlan, p: SeriesPlan) -> None:
+    """系列本体の直後に、その系列の近似曲線を描く（系列と同じ x / y / ok を使う）。"""
+    for fit in plan.fits:
+        if fit.series_number != p.number:
+            continue
+        with b.step(f"近似曲線{fit.number}を描けませんでした。近似曲線の設定とデータを確認してください。", f"近似曲線{fit.number}"):
+            kind = "1 次式" if fit.degree == 1 else f"{fit.degree} 次式"
+            b.add(
+                f"# 近似曲線{fit.number}: 系列{p.number}（{comment_text(fit.series_label)}）の {kind}（最小二乗。numpy）",
+                f"fit = np.polynomial.Polynomial.fit(x[ok], y[ok], {fit.degree}).convert()  # 係数は低い次数から（fit.coef）",
+                "r2 = 1 - np.sum((y[ok] - fit(x[ok])) ** 2) / np.sum((y[ok] - y[ok].mean()) ** 2)  # 決定係数 R²",
+                "x_fit = np.linspace(x[ok].min(), x[ok].max(), 200)  # 近似曲線を描く X（データの範囲を 200 点）",
+            )
+            style = f"color={literal(fit.color)}, linewidth={literal(fit.line_width)}, linestyle={literal(fit.line_style)}"
+            label = _fit_label_expr(fit) if fit.show == "legend" else '"_fit"'
+            b.add(f"{fit.target}.plot(x_fit, fit(x_fit), {style}, label={label})")
+            if fit.show == "text":
+                y_pos = literal(round(0.97 - 0.07 * fit.text_index, 2))
+                b.add(
+                    f"{fit.target}.text(0.03, {y_pos}, {_fit_label_expr(fit)}, transform={fit.target}.transAxes, va=\"top\", "
+                    f"color={literal(fit.color)}, fontsize=FONT_SIZE)  # 近似曲線の式を図の中（左上）に書く"
+                )
 
 
 # ---- error bars (G1) ----
@@ -482,12 +560,14 @@ def _emit_line_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
             _emit_x_data(b, p)
             _emit_y_data(b, p)
             _emit_ok_mask(b)
+            _emit_band(b, s, p)
             _emit_line_error_bars(b, s, p)
             marker = ""
-            if p.marker_size > 0:
+            if p.marker:
                 b.add("# 点の大きさ: 面積（scatter の s と同じ単位）の平方根を markersize（直径）にする")
-                marker = f', marker="o", markersize={literal(p.marker_size)} ** 0.5'
-            b.add(f"{_target(p)}.plot(x[ok], y[ok], {_style_args(s)}{marker}, label={literal(p.legend_label)})")
+                marker = f", marker={literal(p.marker)}, markersize={literal(p.marker_size)} ** 0.5"
+            b.add(f"{_target(p)}.plot(x[ok], y[ok], {_style_args(s)}{marker}{_alpha_arg(p)}, label={literal(p.legend_label)})")
+        _emit_fits(b, plan, p)
 
 
 def _emit_scatter_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
@@ -504,11 +584,14 @@ def _emit_scatter_series(b: _Builder, settings: Settings, plan: PlotPlan) -> Non
             _emit_x_data(b, p)
             _emit_y_data(b, p)
             _emit_ok_mask(b)
+            _emit_band(b, s, p)
             _emit_line_error_bars(b, s, p, zorder=1)  # 点を上に描くため、エラーバーは zorder=1
+            marker = f", marker={literal(p.marker)}" if p.marker else ""
             b.add(
-                f"{_target(p)}.scatter(x[ok], y[ok], color={literal(s.color)}, s={literal(p.marker_size)}, "
-                f"label={literal(p.legend_label)})"
+                f"{_target(p)}.scatter(x[ok], y[ok], color={literal(s.color)}, s={literal(p.marker_size)}{marker}"
+                f"{_alpha_arg(p)}, label={literal(p.legend_label)})"
             )
+        _emit_fits(b, plan, p)
 
 
 def _emit_bar_x(b: _Builder, plan: PlotPlan) -> None:
@@ -537,7 +620,7 @@ def _emit_bar_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
             if p.y_err is not None:
                 with b.step(*_error_step(p, p.y_err)):
                     _emit_error_columns(b, p, p.y_err)
-            b.add(f"{_target(p)}.bar(x[ok], y[ok], {_style_args(s)}, label={literal(p.legend_label)}{_bar_error_args(s, p)})")
+            b.add(f"{_target(p)}.bar(x[ok], y[ok], {_style_args(s)}{_alpha_arg(p)}, label={literal(p.legend_label)}{_bar_error_args(s, p)})")
         return
 
     n = len(plan.series)
@@ -572,7 +655,7 @@ def _emit_bar_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
             b.add(f"offset = -0.4 + (width / 2.0) + ({i} * width)")
             b.add(
                 f'{_target(p)}.bar(positions + offset, bar_data["y{p.number}"].fillna(0.0), width=width, '
-                f"{_style_args(s)}, label={literal(p.legend_label)}{_bar_error_args(s, p, f'y{p.number}')})"
+                f"{_style_args(s)}{_alpha_arg(p)}, label={literal(p.legend_label)}{_bar_error_args(s, p, f'y{p.number}')})"
             )
 
 
@@ -584,8 +667,55 @@ SERIES_EMITTERS: dict[str, Callable[[_Builder, Settings, PlotPlan], None]] = {
 
 
 def _emit_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
-    b.section("4. 系列")
+    b.section("系列")
     SERIES_EMITTERS[plan.plot_type](b, settings, plan)
+
+
+# ---- annotations (G4) ----
+
+_ANNOTATION_NOTES = {"text": "文字", "hline": "水平線", "vline": "垂直線", "hspan": "横の帯", "vspan": "縦の帯"}
+
+
+def _ann_x(a: AnnotationPlan, value) -> str:
+    """X 軸の値。日時の X なら pd.Timestamp(...)。"""
+    return f"pd.Timestamp({literal(value)})" if a.date else literal(float(value))
+
+
+def _ann_line_args(a: AnnotationPlan) -> str:
+    alpha = f", alpha={literal(a.alpha)}" if a.alpha is not None else ""
+    label = f", label={literal(a.label)}" if a.label else ""
+    return f"color={literal(a.color)}, linewidth={literal(a.line_width)}, linestyle={literal(a.line_style)}{alpha}{label}"
+
+
+def _ann_span_args(a: AnnotationPlan) -> str:
+    alpha = literal(a.alpha if a.alpha is not None else 0.2)
+    label = f", label={literal(a.label)}" if a.label else ""
+    return f"color={literal(a.color)}, alpha={alpha}, linewidth=0{label}"
+
+
+def _emit_annotations(b: _Builder, plan: PlotPlan) -> None:
+    b.section("注釈")
+    for a in plan.annotations:
+        v = a.target
+        note = _ANNOTATION_NOTES[a.kind] + ("（図の中の割合）" if a.kind == "text" and a.coords == "axes" else "")
+        with b.step(f"注釈{a.number}を描けませんでした。注釈の設定を確認してください。", f"注釈{a.number}"):
+            if a.kind == "hline":
+                code = f"{v}.axhline({literal(float(a.y))}, {_ann_line_args(a)})"
+            elif a.kind == "vline":
+                code = f"{v}.axvline({_ann_x(a, a.x)}, {_ann_line_args(a)})"
+            elif a.kind == "hspan":
+                code = f"{v}.axhspan({literal(float(a.start))}, {literal(float(a.end))}, {_ann_span_args(a)})"
+            elif a.kind == "vspan":
+                code = f"{v}.axvspan({_ann_x(a, a.start)}, {_ann_x(a, a.end)}, {_ann_span_args(a)})"
+            else:
+                size = literal(a.font_size) if a.font_size is not None else "FONT_SIZE"
+                alpha = f", alpha={literal(a.alpha)}" if a.alpha is not None else ""
+                style = f"color={literal(a.color)}, fontsize={size}{alpha}"
+                if a.coords == "axes":
+                    code = f"{v}.text({literal(float(a.x))}, {literal(float(a.y))}, {literal(a.text)}, transform={v}.transAxes, {style})"
+                else:
+                    code = f"{v}.text({_ann_x(a, a.x)}, {literal(float(a.y))}, {literal(a.text)}, {style})"
+            b.add(f"{code}  # 注釈{a.number}: {note}")
 
 
 def _axis_lines(var: str, which: str, scale: str, lo, hi) -> list[str]:
@@ -744,7 +874,7 @@ def _emit_spines(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
 
 
 def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
-    b.section("5. 軸（ラベル・スケール・範囲・目盛）")
+    b.section("軸（ラベル・スケール・範囲・目盛）")
     plot, axes = settings.plot, settings.axes
     if plot.title:
         b.add(f"ax.set_title({literal(plot.title)}, fontsize=FONT_SIZE + 2)")
@@ -795,7 +925,7 @@ def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
 
 
 def _emit_grid_and_legend(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
-    b.section("6. グリッドと凡例")
+    b.section("グリッドと凡例")
     plot = settings.plot
     if plot.grid_minor and not _per_axis_minor(plan):  # 軸ごとの副目盛の指定があるときは、5. 軸で書いた（minorticks_on() は軸ごとの指定を上書きする）
         b.add("ax.minorticks_on()")
@@ -815,7 +945,10 @@ def _emit_grid_and_legend(b: _Builder, settings: Settings, plan: PlotPlan) -> No
     if plot.legend_location == "none":
         b.add("# 凡例は表示しない")
         return
-    if not any(p.has_points and p.legend_label and not p.legend_label.startswith("_") for p in plan.series):
+    labelled = any(p.has_points and p.legend_label and not p.legend_label.startswith("_") for p in plan.series)
+    labelled = labelled or any(a.label and not a.label.startswith("_") for a in plan.annotations)
+    labelled = labelled or any(f.show == "legend" for f in plan.fits)
+    if not labelled:
         b.add("# 凡例に出せるラベルが無い（空、または _ で始まる）ため、凡例は表示しない")
         return
     size = _label_size_expr(plot.font_size)
@@ -832,7 +965,7 @@ def _emit_grid_and_legend(b: _Builder, settings: Settings, plan: PlotPlan) -> No
 
 
 def _emit_margins(b: _Builder, settings: Settings) -> None:
-    b.section("7. 余白")
+    b.section("余白")
     provided = settings.plot.margins.provided()
     if len(provided) < 4:
         b.add("# 余白は自動で調整する")
@@ -861,7 +994,7 @@ _PDF_CFF_NOTE = (
 
 
 def _emit_output(b: _Builder, settings: Settings) -> None:
-    start = b.section("8. 保存と表示")
+    start = b.section("保存と表示")
     save = settings.save
     _, _, ext = FORMATS[save.format]
     filename = build_filename(save.filename, ext)
@@ -893,10 +1026,15 @@ def generate_script(settings: Settings, source, plan: PlotPlan) -> GeneratedScri
     if _uses_error_function(plan):
         b.blank()
         b.add(*ERROR_BAR_FUNCTION)
+    if _uses_poly_text(plan):
+        b.blank()
+        b.add(*POLY_TEXT_FUNCTION)
     _emit_load(b, plan, infos)
     _emit_skip_rows(b, plan)
     _emit_figure(b, settings)
     _emit_series(b, settings, plan)
+    if plan.annotations:
+        _emit_annotations(b, plan)
     _emit_axes(b, settings, plan)
     _emit_grid_and_legend(b, settings, plan)
     _emit_margins(b, settings)

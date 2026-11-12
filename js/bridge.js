@@ -358,6 +358,11 @@ const scheduleScriptRefresh = () => {
   scriptTimer = window.setTimeout(refreshScript, SCRIPT_REFRESH_DELAY_MS);
 };
 
+// 画面の操作の注意（系列の帯の列を戻した、など）を、次の描画結果に1度だけ添える
+export const addNote = (message) => {
+  notes = [...notes, message];
+};
+
 // ---- 読込（複数ファイル: D6）----
 const files = () => getSettings().load.files;
 const fileLabel = (id) => {

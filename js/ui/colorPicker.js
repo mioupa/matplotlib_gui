@@ -4,10 +4,23 @@ import { getSettings } from "../state.js";
 
 const normalizeColor = (value) => String(value || "").trim().toUpperCase();
 
+// 色の選択UIのマークアップ（系列カード以外の注釈・近似曲線カードでも使う。bindSeriesColorControls で結ぶ）。idBase は trigger の id に使う
+export const colorPickerHtml = (idBase, color, extraClass = "") => `
+  <div class="series-color-picker ${extraClass}">
+    <button type="button" id="${idBase}-trigger" class="series-color-trigger">
+      <span class="series-color-swatch-inline"></span>
+      <span>色を選択</span>
+    </button>
+    <div class="series-color-panel hidden">
+      <div class="series-color-grid"></div>
+      <button type="button" class="small-btn ghost-btn series-color-custom-toggle">カスタム</button>
+      <input class="series-color series-color-custom hidden" type="color" value="${String(color).replace(/"/g, "")}" aria-label="カスタム色" />
+    </div>
+  </div>
+  <div class="color-value series-color-value">${String(color).replace(/[<>&"]/g, "")}</div>`;
+
 const closeAllColorPanels = (exceptPanel = null) => {
-  const seriesList = document.getElementById("seriesList");
-  if (!seriesList) return;
-  for (const p of seriesList.querySelectorAll(".series-color-panel")) {
+  for (const p of document.querySelectorAll(".series-color-panel")) {
     if (exceptPanel && p === exceptPanel) continue;
     p.classList.add("hidden");
   }
@@ -78,11 +91,9 @@ export const bindSeriesColorControls = (item, onChange) => {
 // パネル外クリックでオーバーレイを閉じる
 export const bindColorPanelOutsideClick = () => {
   document.addEventListener("click", (event) => {
-    const seriesList = document.getElementById("seriesList");
-    if (!seriesList) return;
     const target = event.target;
     if (target && target.closest(".series-color-picker")) return;
-    for (const panel of seriesList.querySelectorAll(".series-color-panel")) {
+    for (const panel of document.querySelectorAll(".series-color-panel")) {
       panel.classList.add("hidden");
     }
   });

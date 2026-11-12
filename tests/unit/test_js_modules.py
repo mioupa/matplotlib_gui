@@ -163,3 +163,70 @@ def test_add_series_without_preset_is_unchanged(tmp_path):
     files = {"state.js": "js/state.js", "defaults.js": "js/defaults.js", "palettes.js": "js/palettes.js", "presets.js": "js/presets.js"}
     res = run_node(tmp_path, files, script)
     assert res["lineWidth"] == 2 and res["markerSize"] is None and res["color"] == "#005AFF"
+
+
+STATE_FILES = {"state.js": "js/state.js", "defaults.js": "js/defaults.js", "palettes.js": "js/palettes.js", "presets.js": "js/presets.js"}
+
+
+@needs_node
+def test_move_and_duplicate_series(tmp_path):
+    script = """
+    import { addSeries, addFit, duplicateSeries, getSettings, moveSeries, updateSeries } from "./state.js";
+    const a = addSeries(); const b = addSeries();
+    const ids = () => getSettings().series.map((s) => s.id);
+    const out = { start: ids() };
+    moveSeries("s1", -1); out.top_stays = ids();
+    moveSeries("s1", 1); out.moved = ids();
+    moveSeries(b.id, 1); out.bottom_stays = ids();
+    updateSeries("s1", { marker: "s", alpha: 0.5, fill: { lower: "__idx__2", upper: "__idx__3", alpha: 0.4 } });
+    addFit();
+    const copy = duplicateSeries("s1");
+    out.after = ids();
+    out.copy = copy;
+    out.src_color = getSettings().series.find((s) => s.id === "s1").color;
+    out.fits = getSettings().fits.length;
+    copy.fill.lower = "";  // 複製は深いコピー
+    out.src_fill = getSettings().series.find((s) => s.id === "s1").fill.lower;
+    console.log(JSON.stringify(out));
+    """
+    res = run_node(tmp_path, STATE_FILES, script)
+    assert res["start"] == ["s1", "s2", "s3"]
+    assert res["top_stays"] == ["s1", "s2", "s3"]
+    assert res["moved"] == ["s2", "s1", "s3"]
+    assert res["bottom_stays"] == res["moved"]
+    assert res["after"] == ["s2", "s1", "s4", "s3"]  # 元の系列の直後
+    copy = res["copy"]
+    assert copy["id"] == "s4" and copy["marker"] == "s" and copy["alpha"] == 0.5
+    assert copy["fill"]["upper"] == "__idx__3" and copy["color"] != res["src_color"]
+    assert res["fits"] == 1 and res["src_fill"] == "__idx__2"
+
+
+@needs_node
+def test_annotations_fits_and_removing_series(tmp_path):
+    script = """
+    import { addAnnotation, addFit, addSeries, getSettings, removeAnnotation, removeFit, removeSeries, subscribe, updateAnnotation, updateFit } from "./state.js";
+    const kinds = []; subscribe((_s, c) => kinds.push(c.kind));
+    const out = {};
+    const a1 = addAnnotation(); const a2 = addAnnotation();
+    out.ann_ids = [a1.id, a2.id];
+    updateAnnotation("a1", { kind: "text", text: "ピーク" });
+    removeAnnotation("a1");
+    out.ann_after = getSettings().annotations.map((a) => [a.id, a.kind]);
+    out.ann_next = addAnnotation().id;
+    addSeries();
+    const f1 = addFit(); updateFit("f1", { series: "s2", model: "poly" }); const f2 = addFit();
+    out.fit_ids = [f1.id, f2.id]; out.f1 = getSettings().fits[0];
+    removeFit("f2"); out.fit_next = addFit().id;  // f3（f2 は再利用しない）
+    out.removed = removeSeries("s2");
+    out.fits_left = getSettings().fits.map((f) => [f.id, f.series]);
+    out.last = removeSeries("s1");
+    out.kinds = [...new Set(kinds)];
+    console.log(JSON.stringify(out));
+    """
+    res = run_node(tmp_path, STATE_FILES, script)
+    assert res["ann_ids"] == ["a1", "a2"] and res["ann_after"] == [["a2", "hline"]] and res["ann_next"] == "a3"
+    assert res["fit_ids"] == ["f1", "f2"] and res["fit_next"] == "f3"
+    assert res["f1"]["series"] == "s2" and res["f1"]["model"] == "poly" and res["f1"]["degree"] == 2
+    assert res["removed"] == 1 and res["fits_left"] == [["f3", "s1"]]
+    assert res["last"] == -1  # 系列が1つだけなら消さない
+    assert {"annotation-list", "annotation-field", "fit-list", "fit-field", "series-list"} <= set(res["kinds"])
