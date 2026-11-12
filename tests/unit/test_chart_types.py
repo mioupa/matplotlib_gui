@@ -835,8 +835,12 @@ def test_heatmap_value_column_required_with_value_wording():
         parse_settings(raw_settings([series()], plot_type="heatmap"))
     assert str(e.value) == "系列1の値の列を選んでください。" and e.value.field == "系列1の値の列"
     with pytest.raises(UserError) as e:
+        parse_settings(raw_settings([series(colorColumn="abc")], plot_type="heatmap"))
+    assert e.value.field == "系列1の値の列" and "値の列" in str(e.value)
+    # 系列が2つ以上なら、系列ごとの値の列の検証より先に、系列の数のエラーを出す
+    with pytest.raises(UserError) as e:
         parse_settings(raw_settings([hm(), series(colorColumn="abc")], plot_type="heatmap"))
-    assert e.value.field == "系列2の値の列" and "値の列" in str(e.value)
+    assert str(e.value).startswith("ヒートマップは系列1つで描きます。") and e.value.field == "系列"
     # scatterColor の文言は変えない
     with pytest.raises(UserError) as e:
         parse_settings(raw_settings([series()], plot_type="scatterColor"))
@@ -1214,6 +1218,10 @@ def test_heatmap_value_column_warnings_and_errors():
     assert e.value.field == "系列1の値の列" and "列" in str(e.value)
     with pytest.raises(UserError) as e:
         plan_of(df=df, plot_type="heatmap", series_list=[hm(), hm()])
+    assert str(e.value).startswith("ヒートマップは系列1つで描きます。") and e.value.field == "系列"
+    # 2つ目の系列の値の列が未選択でも、系列の数のエラーを先に出す（設定の検証の段階）
+    with pytest.raises(UserError) as e:
+        parse_settings(raw_settings([hm(), series(colorColumn="")], plot_type="heatmap"))
     assert str(e.value).startswith("ヒートマップは系列1つで描きます。") and e.value.field == "系列"
     nan_z = pd.DataFrame({"x": [0, 1], "y": [0, 1], "z": ["a", "b"]})
     with pytest.raises(UserError) as e:

@@ -413,8 +413,7 @@ def test_heatmap_value_column_missing_error_and_recovery(page, app_url, fixtures
 
 def test_heatmap_two_series_error_and_recovery(page, app_url, fixtures_dir, console_log):
     heatmap_start(page, app_url, fixtures_dir)
-    page.click("#addSeriesBtn")
-    page.select_option("#series-s2-color-column", "__idx__2")
+    page.click("#addSeriesBtn")  # 2つ目の値の列は未選択のまま: 系列の数のエラーが先に出る
     wait_error_status(page)
     assert "ヒートマップは系列1つ" in status_text(page)
     page.click("#series-s2-remove")

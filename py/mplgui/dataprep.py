@@ -17,7 +17,7 @@ from . import expr as expr_module
 from .errors import UserError
 from .loader import is_blank_cell as _is_blank_cell
 from .loader import looks_numeric as _looks_numeric
-from .settings import MAX_HEATMAP_SIZE, MAX_HIST_BINS, XY_TYPES, AxisSettings, ErrorSpec, Settings, check_axis_range, validate_date_range
+from .settings import HEATMAP_SERIES_MESSAGE, MAX_HEATMAP_SIZE, MAX_HIST_BINS, XY_TYPES, AxisSettings, ErrorSpec, Settings, check_axis_range, validate_date_range
 from .settings import _DATE_EXAMPLE, _date_range_value, _to_float
 
 MAX_EXAMPLES = 3
@@ -354,7 +354,6 @@ class ComputedPlan:
     refs: tuple[tuple[int, str], ...] = ()  # 式が使うファイルの列（番号、コメント用の「列 [i]: 名前」）
 
 
-HEATMAP_SERIES_MESSAGE = "ヒートマップは系列1つで描きます。系列を1つにしてください。"
 HEATMAP_DATETIME_MESSAGE = "系列{n}: {what}（{name}）は日時の列です。ヒートマップでは日時の列を使えません。"
 MAX_CATEGORY_TICKS = 25  # X が文字列の列のとき、目盛に出すカテゴリの最大数
 Y_DATETIME_MESSAGE = "系列{n}: Y列（{name}）は日時の列です。Y列には数値の列を選んでください。"

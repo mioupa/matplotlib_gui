@@ -28,6 +28,7 @@ SERIES_X_TYPES = XY_TYPES + ("heatmap",)  # 系列ごとの X 列を使う
 NO_Y2_TYPES = ("barh", "barStacked", "hist", "scatterColor") + BOX_TYPES + ("heatmap",)  # 第2Y軸を使わない
 NO_Y_ERROR_TYPES = ("barStacked", "hist") + BOX_TYPES + ("heatmap",)  # Y 方向のエラーバーを使わない
 COLOR_COLUMN_TYPES = ("scatterColor", "heatmap")  # 色分けの列（ヒートマップでは値の列）を使う
+HEATMAP_SERIES_MESSAGE = "ヒートマップは系列1つで描きます。系列を1つにしてください。"
 STEP_WHERE_CHOICES = ("pre", "mid", "post")
 COLORMAPS = ("viridis", "cividis", "plasma", "inferno", "magma", "coolwarm", "RdBu_r", "gray")
 MAX_HIST_BINS = 1000
@@ -834,6 +835,8 @@ def _parse_color_column(value: Any, owner: str, what: str = "色分けの列") -
 def _parse_series(raw_series: Any, plot_type: str = "line") -> tuple[SeriesSettings, ...]:
     if not isinstance(raw_series, list) or not raw_series:
         raise UserError("描画系列を1つ以上追加してください。", field="描画系列")
+    if plot_type == "heatmap" and len(raw_series) > 1:  # 系列ごとの検証（値の列が未選択など）より先に知らせる
+        raise UserError(HEATMAP_SERIES_MESSAGE, field="系列")
     out = []
     used_ids: set[str] = set()
     for i, given in enumerate(raw_series):
