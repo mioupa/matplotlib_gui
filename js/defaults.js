@@ -62,7 +62,7 @@ export const DEFAULT_ANNOTATION = {
 };
 
 // 近似曲線（fits[]）1つの既定値。id は f1, f2, ...。series は追加するときに系列1の id にする
-export const DEFAULT_FIT = { id: "f1", series: "s1", model: "linear", degree: 2, show: "legend", color: "", lineStyle: "dashed" };
+export const DEFAULT_FIT = { id: "f1", series: "s1", model: "linear", degree: 2, show: "legend", color: "", lineStyle: "dashed", expr: "", initial: { a: 1, b: 1, c: 1, d: 1, e: 1 } };
 
 // 計算した列（computed[]）1つの既定値。id は追加するときに c1, c2, ... を振る（削除しても再利用しない）
 export const DEFAULT_COMPUTED = { id: "", source: "", name: "", expr: "" };

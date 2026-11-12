@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import dataclasses
 import hashlib
+import importlib.util
 import json
 import struct
 import traceback
@@ -247,11 +248,22 @@ def _generate(settings: Settings):
     return plan, generate_script(settings, infos, plan)
 
 
+def _require_scipy(plan) -> None:
+    """任意の式の近似曲線があるのに scipy が無いときは、日本語のエラーにする（ブラウザでは JS が先に ensureScipy を呼ぶ）。"""
+    custom = [f.number for f in plan.fits if f.model == "custom"]
+    if custom and importlib.util.find_spec("scipy") is None:
+        raise UserError(
+            "scipy を読み込めていません。任意の式の近似曲線には scipy が必要です。ページを再読み込みして、もう一度試してください。",
+            field=f"近似曲線{custom[0]}",
+        )
+
+
 def _run(settings: Settings | None, code: str | None, *, file_format: str, transparent: bool, dpi: int, svg_text: str = "path"):
     """GUI 同期（code が None）: 設定から生成したスクリプトを、読込済みの df で実行する（読込・保存の行は空にする）。
     編集モード（code が文字列）: そのスクリプトを、アップロードしたファイルのある作業フォルダで実行する。設定は使わない。"""
     if code is None:
         plan, script = _generate(settings)
+        _require_scipy(plan)
         # 計算した列は生成コードが df.insert で足すので、そのデータ元はコピーを渡す（描画のたびに列が増えるのを防ぐ）
         with_computed = {c.data_id for c in plan.computed}
         injected = {

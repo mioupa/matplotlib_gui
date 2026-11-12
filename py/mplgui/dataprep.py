@@ -205,6 +205,12 @@ class FitPlan:
     label_prefix: str  # 凡例・図の中の文字の先頭（「温度の近似」）
     text_index: int  # show が text の近似曲線のうちの順番（0 始まり。それ以外は -1）
     target: str  # ax / ax2
+    # 任意の式（model が custom）のとき: 解釈済みの式の木・使うパラメータ（a〜e の順）・初期値
+    model: str = "poly"  # linear / poly / custom
+    expr: str = ""
+    node: object = field(default=None, compare=False, repr=False)
+    params: tuple[str, ...] = ()
+    p0: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -538,9 +544,16 @@ def _check_fit_data(n: int, fit, p: "SeriesPlan", x: pd.Series, y: pd.Series) ->
     if p.categorical_x:
         raise _fit_error(n, "X が文字列の列の系列は近似できません。")
     distinct = int(pd.Series(x).nunique())
-    need = fit.degree + 1
-    if distinct < need:
-        raise _fit_error(n, f"{fit.degree}次式で近似するには、X の異なる値が{need}個以上必要です（今は{distinct}個）。")
+    if fit.model == "custom":
+        need = len(fit.params) + 1
+        if distinct < need:
+            raise _fit_error(
+                n, f"パラメータが{len(fit.params)}個の式で近似するには、X の異なる値が{need}個以上必要です（今は{distinct}個）。"
+            )
+    else:
+        need = fit.degree + 1
+        if distinct < need:
+            raise _fit_error(n, f"{fit.degree}次式で近似するには、X の異なる値が{need}個以上必要です（今は{distinct}個）。")
     if int(pd.Series(y).nunique()) < 2:
         raise _fit_error(n, "Y の値がすべて同じなので、近似できません（決定係数 R² を計算できません）。")
 
@@ -568,6 +581,11 @@ def _build_fit_plans(settings: Settings, plans: list["SeriesPlan"]) -> tuple[Fit
                 label_prefix=f"{base}の近似",
                 text_index=text_index if fit.show == "text" else -1,
                 target="ax2" if sp.secondary else "ax",
+                model=fit.model,
+                expr=fit.expr,
+                node=fit.expr_node,
+                params=fit.params,
+                p0=fit.initial,
             )
         )
         if fit.show == "text":

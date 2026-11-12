@@ -74,7 +74,7 @@ MARKERS = ("auto", "none", "o", "s", "^", "v", "D", "x", "+", "*")
 ANNOTATION_KINDS = ("text", "hline", "vline", "hspan", "vspan")
 ANNOTATION_COORDS = ("data", "axes")
 ANNOTATION_AXES = ("y", "y2")
-FIT_MODELS = ("linear", "poly")
+FIT_MODELS = ("linear", "poly", "custom")
 FIT_SHOWS = ("legend", "text", "none")
 MAX_ANNOTATIONS = 50
 MAX_FITS = 20
@@ -113,7 +113,10 @@ _DEFAULT_ANNOTATION = {
     "label": "",
 }
 _DEFAULT_COMPUTED = {"id": "", "source": "", "name": "", "expr": ""}
-_DEFAULT_FIT = {"id": "f1", "series": "s1", "model": "linear", "degree": 2, "show": "legend", "color": "", "lineStyle": "dashed"}
+_DEFAULT_FIT = {
+    "id": "f1", "series": "s1", "model": "linear", "degree": 2, "show": "legend", "color": "", "lineStyle": "dashed",
+    "expr": "", "initial": {"a": 1, "b": 1, "c": 1, "d": 1, "e": 1},
+}
 
 _DEFAULT_SERIES = {
     "id": "s1",
@@ -389,6 +392,11 @@ class FitSettings:
     show: str = "legend"  # legend / text / none
     color: str = ""  # "" = 系列の色
     line_style: str = "dashed"
+    # custom（任意の式）のときだけ使う。expr_node は解釈済みの式、params は使うパラメータ（a〜e の順）、initial はその初期値
+    expr: str = ""
+    expr_node: Any = field(default=None, compare=False, repr=False)
+    params: tuple[str, ...] = ()
+    initial: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -982,6 +990,24 @@ def _parse_fits(raw: Any, series_ids: set[str]) -> tuple[FitSettings, ...]:
         degree = 1
         if model == "poly":
             degree = _int_range(f["degree"], f"{owner}次数", 2, 6, default=2)
+        expr_text, node, params, initial = "", None, (), ()
+        if model == "custom":
+            expr_text = _string(f["expr"], "式", owner=owner)
+            if not expr_text.strip():
+                raise UserError(f"近似曲線{n}の式を入力してください。", field=f"近似曲線{n}の式")
+            try:
+                node = expr_module.parse_model(expr_text)
+            except expr_module.ExprError as e:
+                raise UserError(f"近似曲線{n}の式: {e}", field=f"近似曲線{n}の式") from None
+            params = expr_module.model_params(node)
+            given_initial = f["initial"] if isinstance(f["initial"], dict) else {}
+            initial = tuple(
+                _number(
+                    given_initial.get(name, 1), f"初期値（{name}）", default=1.0, owner=owner,
+                    field_name=f"{owner}初期値（{name}）",
+                )
+                for name in params
+            )
         color = _string(f["color"], "色", owner=owner).strip()
         if color and not is_color_like(color):
             raise UserError(f"{owner}「色」が不正です。", field=f"{owner}色")
@@ -994,6 +1020,10 @@ def _parse_fits(raw: Any, series_ids: set[str]) -> tuple[FitSettings, ...]:
                 show=_choice(f["show"], "式の表示先", FIT_SHOWS, owner=owner, field_name=f"{owner}式の表示先"),
                 color=color,
                 line_style=_choice(f["lineStyle"], "線種", LINE_STYLES, owner=owner, field_name=f"{owner}線種"),
+                expr=expr_text,
+                expr_node=node,
+                params=params,
+                initial=initial,
             )
         )
     return tuple(out)

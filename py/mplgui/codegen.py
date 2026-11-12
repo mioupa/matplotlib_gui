@@ -181,10 +181,11 @@ def _emit_header(
             f"「{comment_text(src.filename)}」" + ("（貼り付けたデータを保存したもの）" if src.pasted else "") for src in sources
         )
         usage = f"# 使い方: データファイル {names} を、このスクリプトと同じフォルダに置いて、python {SCRIPT_NAME} で実行します。"
+    custom_fit = plan is not None and _uses_custom_fit(plan)
     b.add(
         "# matplotlib GUI が生成したスクリプト",
         usage,
-        "# 必要なライブラリ: pandas, matplotlib, numpy",
+        "# 必要なライブラリ: pandas, matplotlib, numpy" + (", scipy（任意の式の近似曲線。pip install scipy）" if custom_fit else ""),
     )
     if plan is not None and _uses_date_axis(plan):
         b.add("import matplotlib.dates as mdates")
@@ -196,6 +197,10 @@ def _emit_header(
     b.add(
         "import numpy as np",
         "import pandas as pd",
+    )
+    if custom_fit:
+        b.add("from scipy.optimize import curve_fit")
+    b.add(
         "",
         "# 日本語フォント: 一覧の先頭から、見つかったものを使う。",
         "# どれも無い環境では DejaVu Sans になる（日本語は豆腐になるが、実行はできる）",
@@ -464,7 +469,48 @@ POLY_TEXT_FUNCTION = (
 
 
 def _uses_poly_text(plan: PlotPlan) -> bool:
-    return plan.plot_type in XY_TYPES and any(f.show in {"legend", "text"} for f in plan.fits)
+    return plan.plot_type in XY_TYPES and any(f.show in {"legend", "text"} and f.model != "custom" for f in plan.fits)
+
+
+def _uses_custom_fit(plan: PlotPlan) -> bool:
+    return plan.plot_type in XY_TYPES and any(f.model == "custom" for f in plan.fits)
+
+
+def _custom_label_expr(fit: FitPlan) -> str:
+    """任意の式の近似曲線の凡例・図の中の文字を作る式（パラメータは実行時に fit_params から作る）。"""
+    names = "[" + ", ".join(literal(name) for name in fit.params) + "]"
+    head = literal(f"{fit.label_prefix}: y = {expr_module.model_to_text(fit.node)}（")
+    return f'{head} + ", ".join(f"{{name}} = {{value:.4g}}" for name, value in zip({names}, fit_params)) + f"、$R^2$ = {{r2:.4f}}）"'
+
+
+def _emit_custom_fit(b: _Builder, p: SeriesPlan, fit: FitPlan) -> None:
+    params = ", ".join(fit.params)
+    func = f"fit_model_{fit.number}"
+    body = expr_module.model_to_code(fit.node, lambda v: literal(float(v)))
+    p0 = "[" + ", ".join(literal(float(v)) for v in fit.p0) + "]"
+    b.add(
+        f"# 近似曲線{fit.number}: 系列{p.number}（{comment_text(fit.series_label)}）に任意の式を当てはめる（最小二乗。scipy の curve_fit）",
+        f"def {func}(x, {params}):  # 近似曲線{fit.number}の式: {comment_text(fit.expr)}",
+        f"    return {body}",
+    )
+    with b.step(f"近似曲線{fit.number}: 式を当てはめられませんでした。初期値を変えてみてください。", f"近似曲線{fit.number}の初期値"):
+        b.add(
+            f"fit_params, _ = curve_fit({func}, x[ok], y[ok], p0={p0}, maxfev=10000)  # 初期値 p0 から当てはめる（パラメータは {params} の順）",
+            f"fit_y = {func}(x[ok], *fit_params)  # 当てはめた曲線の、データの X での値",
+            "if not np.all(np.isfinite(fit_y)):  # 初期値のところで計算できない値になると、curve_fit は黙って初期値を返すことがある",
+            '    raise ValueError("当てはめた式の値が有限ではありません")',
+            "r2 = 1 - np.sum((y[ok] - fit_y) ** 2) / np.sum((y[ok] - y[ok].mean()) ** 2)  # 決定係数 R²",
+            "x_fit = np.linspace(x[ok].min(), x[ok].max(), 200)  # 近似曲線を描く X（データの範囲を 200 点）",
+        )
+        style = f"color={literal(fit.color)}, linewidth={literal(fit.line_width)}, linestyle={literal(fit.line_style)}"
+        label = _custom_label_expr(fit) if fit.show == "legend" else '"_fit"'
+        b.add(f"{fit.target}.plot(x_fit, {func}(x_fit, *fit_params), {style}, label={label})")
+        if fit.show == "text":
+            y_pos = literal(round(0.97 - 0.07 * fit.text_index, 2))
+            b.add(
+                f"{fit.target}.text(0.03, {y_pos}, {_custom_label_expr(fit)}, transform={fit.target}.transAxes, va=\"top\", "
+                f"color={literal(fit.color)}, fontsize=FONT_SIZE)  # 近似曲線の式を図の中（左上）に書く"
+            )
 
 
 def _fit_label_expr(fit: FitPlan) -> str:
@@ -475,6 +521,9 @@ def _emit_fits(b: _Builder, plan: PlotPlan, p: SeriesPlan) -> None:
     """系列本体の直後に、その系列の近似曲線を描く（系列と同じ x / y / ok を使う）。"""
     for fit in plan.fits:
         if fit.series_number != p.number:
+            continue
+        if fit.model == "custom":
+            _emit_custom_fit(b, p, fit)
             continue
         with b.step(f"近似曲線{fit.number}を描けませんでした。近似曲線の設定とデータを確認してください。", f"近似曲線{fit.number}"):
             kind = "1 次式" if fit.degree == 1 else f"{fit.degree} 次式"
