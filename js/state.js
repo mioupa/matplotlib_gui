@@ -1,7 +1,8 @@
 // 設定オブジェクト（単一の正）。画面の入力はすべてここへ書き込み、描画・読込はここから JSON を作る。
 // DOM には触れない。変更は subscribe で購読する。
-import { DEFAULT_ANNOTATION, DEFAULT_FIT, DEFAULT_SERIES, DEFAULT_SETTINGS } from "./defaults.js";
+import { DEFAULT_ANNOTATION, DEFAULT_COMPUTED, DEFAULT_FIT, DEFAULT_SERIES, DEFAULT_SETTINGS } from "./defaults.js";
 import { getPalette, paletteColor } from "./palettes.js";
+import { usesY2 } from "./chart-types.js";
 import { newSeriesDefaults } from "./presets.js";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -193,4 +194,40 @@ export const removeFit = (id) => {
   notify({ kind: "fit-list", origin: "user" });
 };
 
-export const hasSecondaryAxis = () => settings.series.some((s) => s.secondaryAxis);
+// ---- 計算した列（G6）。id は c1, c2, ...（削除しても再利用しない） ----
+export const MAX_COMPUTED = 20;
+let computedCounter = 0;
+
+export const addComputed = () => {
+  if (settings.computed.length >= MAX_COMPUTED) return null;
+  computedCounter += 1;
+  const item = { ...clone(DEFAULT_COMPUTED), id: `c${computedCounter}` };
+  settings.computed.push(item);
+  notify({ kind: "computed-list", origin: "user" });
+  return item;
+};
+
+// updateComputed(id, "expr", "...") か updateComputed(id, {expr: "..."}, origin)
+export const updateComputed = (id, fieldOrPatch, valueOrOrigin = "user") => {
+  const patch = typeof fieldOrPatch === "string" ? { [fieldOrPatch]: valueOrOrigin } : fieldOrPatch;
+  const origin = typeof fieldOrPatch === "string" ? "user" : valueOrOrigin;
+  const item = settings.computed.find((c) => c.id === id);
+  if (!item) return;
+  let changed = false;
+  for (const [key, value] of Object.entries(patch)) {
+    if (item[key] !== value) {
+      item[key] = value;
+      changed = true;
+    }
+  }
+  if (changed) notify({ kind: "computed-field", id, fields: Object.keys(patch), origin });
+};
+
+export const removeComputed = (id) => {
+  const idx = settings.computed.findIndex((c) => c.id === id);
+  if (idx < 0) return;
+  settings.computed.splice(idx, 1);
+  notify({ kind: "computed-list", origin: "user" });
+};
+
+export const hasSecondaryAxis = () => usesY2(settings.plot.type) && settings.series.some((s) => s.secondaryAxis); // 第2Y軸を使わない種類では、値を残しても使わない

@@ -11,6 +11,7 @@ import { clearPlot, showPlot } from "./ui/plotView.js";
 import { showCodeOutput } from "./ui/codeOutput.js";
 import { getGeneratedCode, getGeneratedGeneration, isEditMode, setCodeMode, setCodeStale, setGeneratedCode } from "./code-state.js";
 import { applySkipRows, clearPreview, showPreview } from "./ui/dataPreview.js";
+import { releaseComputedSources } from "./computed-refs.js";
 import { dropSourceColumns, reconcileColumns, refreshSources, setSourceColumns } from "./ui/series.js";
 import { encodingDisplayName, showEncoding, showFileName, showPastedSave } from "./ui/fileInfo.js";
 import { showSheets } from "./ui/loadSection.js";
@@ -642,6 +643,7 @@ export const selectFiles = (fileList, options = {}) => {
     pendingLoad.clear();
     if (api) callPython("clearSources");
     for (const s of getSettings().series) if (s.source !== "") updateSeries(s.id, { source: "" }, "reconcile");
+    nextNotes.push(...releaseComputedSources((src) => src !== "" && !entries.some((e) => e.id === src))); // 無くなった id をデータ元にしていた計算した列
     previewId = null;
   }
   for (const [id, file] of staged) {
@@ -673,6 +675,7 @@ export const removeFile = (id) => {
     if (i === 0 && getSettings().plot.xColumn) setPath("plot.xColumn", "", "reconcile");
     msgs.push(`データ${index + 1}（${removed.name}）を削除したため、系列${i + 1}の列を自動に戻しました。`);
   });
+  msgs.push(...releaseComputedSources((src) => src === id || (src === "" && index === 0)));
   sources.delete(id);
   pendingLoad.delete(id);
   if (api) callPython("removeSource", id);

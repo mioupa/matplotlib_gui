@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from mplgui.settings import default_annotation, default_fit, default_settings
+from mplgui.settings import default_annotation, default_computed, default_fit, default_settings
 
 pytestmark = pytest.mark.unit
 
@@ -37,10 +37,11 @@ def test_js_and_python_element_defaults_match(tmp_path):
     module = tmp_path / "defaults.mjs"
     module.write_text((REPO / "js" / "defaults.js").read_text(encoding="utf-8"), encoding="utf-8")
     script = (
-        f"import {{ DEFAULT_ANNOTATION, DEFAULT_FIT }} from {json.dumps(module.as_uri())}; "
-        "console.log(JSON.stringify([DEFAULT_ANNOTATION, DEFAULT_FIT]));"
+        f"import {{ DEFAULT_ANNOTATION, DEFAULT_FIT, DEFAULT_COMPUTED }} from {json.dumps(module.as_uri())}; "
+        "console.log(JSON.stringify([DEFAULT_ANNOTATION, DEFAULT_FIT, DEFAULT_COMPUTED]));"
     )
     out = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True, check=True, timeout=30)
-    annotation, fit = json.loads(out.stdout)
+    annotation, fit, computed = json.loads(out.stdout)
     assert annotation == default_annotation()
     assert fit == default_fit()
+    assert computed == default_computed()

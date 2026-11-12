@@ -135,7 +135,53 @@
               <option value="line">line</option>
               <option value="scatter">scatter</option>
               <option value="bar">bar</option>
+              <option value="step">step</option>
+              <option value="barh">barh（横棒）</option>
+              <option value="barStacked">bar（積み上げ）</option>
+              <option value="hist">hist（ヒストグラム）</option>
+              <option value="scatterColor">scatter（色分け）</option>
             </select>
+          </div>
+
+          <div id="stepGroup" class="group" hidden>
+            <label for="stepWhere">段の付き方</label>
+            <select id="stepWhere">
+              <option value="post">次の点まで値を保つ（post）</option>
+              <option value="pre">前の点から値を保つ（pre）</option>
+              <option value="mid">点と点の中間で切り替える（mid）</option>
+            </select>
+          </div>
+
+          <div id="histGroup" class="group" hidden>
+            <div class="group">
+              <label for="histBins">区間の数</label>
+              <input id="histBins" type="number" min="1" max="1000" step="1" placeholder="自動" aria-describedby="histBinsHelp" />
+              <div id="histBinsHelp" class="help-text">空欄なら自動で決めます（1〜1000）</div>
+            </div>
+            <div class="group inline">
+              <input id="histDensity" type="checkbox" />
+              <label for="histDensity">縦軸を確率密度にする</label>
+            </div>
+          </div>
+
+          <div id="colorMapGroup" class="group" hidden>
+            <div class="group">
+              <label for="colorMap">カラーマップ</label>
+              <select id="colorMap">
+                <option value="viridis">viridis</option>
+                <option value="cividis">cividis</option>
+                <option value="plasma">plasma</option>
+                <option value="inferno">inferno</option>
+                <option value="magma">magma</option>
+                <option value="coolwarm">coolwarm</option>
+                <option value="RdBu_r">RdBu_r</option>
+                <option value="gray">gray</option>
+              </select>
+            </div>
+            <div class="group">
+              <label for="colorbarLabel">カラーバーのラベル</label>
+              <input id="colorbarLabel" type="text" placeholder="（色分けの列の名前）" />
+            </div>
           </div>
 
           <div class="group">
@@ -296,7 +342,7 @@
             </div>
           </details>
 
-          <div class="group">
+          <div id="yScaleGroup" class="group">
             <label for="yScale">Y軸スケール</label>
             <select id="yScale">
               <option value="linear">linear</option>
@@ -549,6 +595,14 @@
           <div class="section-body">
           <div class="group">
             <div class="series-toolbar">
+              <span id="computedLabel" class="field-label">計算した列</span>
+              <button id="addComputedBtn" class="small-btn secondary" type="button">+ 列を追加</button>
+            </div>
+            <div id="computedList" class="series-list" role="group" aria-labelledby="computedLabel"></div>
+            <div id="computedHelp" class="help-text">式で新しい列を作り、系列の X・Y などの列に選べます。列は [0] か A, B, …（A = [0]）。+ - * / ^、括弧。関数: abs sqrt exp log log10 sin cos tan、集計: min max mean median std first last、rolling_mean(式, 窓の幅) diff cumsum。ほかの計算した列は使えません。</div>
+          </div>
+          <div class="group">
+            <div class="series-toolbar">
               <span id="annotationLabel" class="field-label">注釈</span>
               <button id="addAnnotationBtn" class="small-btn secondary" type="button">+ 注釈を追加</button>
             </div>
@@ -561,7 +615,7 @@
               <button id="addFitBtn" class="small-btn secondary" type="button">+ 近似曲線を追加</button>
             </div>
             <div id="fitList" class="series-list" role="group" aria-labelledby="fitLabel"></div>
-            <div id="fitBarNote" class="help-text" hidden>棒グラフでは近似曲線は使えません。</div>
+            <div id="fitBarNote" class="help-text" hidden>棒グラフ・ヒストグラムでは近似曲線を使えません。</div>
             <div class="help-text">系列の点から、最小二乗法で1次式・多項式をあてはめます（X が数値の系列だけ）。対数軸でも、近似は軸の目盛ではなく元の値で行うので、曲線は曲がって見えます。</div>
           </div>
           </div>

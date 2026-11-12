@@ -19,7 +19,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "tests" / "e2e"))
 from helpers import (  # noqa: E402
     add_series_with_source, enter_edit_mode, image_generation, load_fixture, paste_text, plot_src,
-    add_annotation, add_fit, set_fill, open_tick_group, set_axis_option, set_errorbars, set_save_dpi, wait_app_ready, wait_copy_state, wait_data_ready, wait_latin_state,
+    add_annotation, add_computed, add_fit, series_ids, set_fill, open_tick_group, set_axis_option, set_errorbars, set_save_dpi, wait_app_ready, wait_copy_state, wait_data_ready, wait_latin_state,
     wait_plot_changed,
 )
 from server import start_server  # noqa: E402
@@ -541,6 +541,81 @@ def bench_p5b_change(browser, url, reps, band_path):
     return out
 
 
+# --- Phase 5c: 色分け散布図・ヒストグラム・計算した列 ---
+def make_color_csv(path, rows=10_000):
+    """X + Y 5列 + 色の値 5列 = 11 列。"""
+    import math
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["x"] + [f"y{k + 1}" for k in range(5)] + [f"c{k + 1}" for k in range(5)])
+        for i in range(rows):
+            x = i * 0.01
+            ys = [math.sin(x * (k + 1)) + 0.1 * k for k in range(5)]
+            w.writerow([round(x, 4)] + [round(y, 5) for y in ys] + [round(math.cos(x * (k + 1)) * (k + 1), 5) for k in range(5)])
+
+
+def _wait_summary(page, cond):
+    """表示中の画像の data-summary（最初の Axes）が cond（JS の式。s が要約）を満たすまで待つ。"""
+    page.wait_for_function(
+        """(cond) => { const d = document.querySelector('#plotArea img'); if (!d || !d.dataset.summary) return false;
+          try { const s = JSON.parse(d.dataset.summary)[0]; return Function('s', 'return ' + cond)(s); } catch (e) { return false; } }""",
+        arg=cond, timeout=TIMEOUT)
+
+
+def bench_scatter_color_change(browser, url, reps, color_path):
+    """色分け散布図: 5 系列（Y 列1-5、色分けの列 6-10。凡例あり）のカラーバー付きの図が出るまで待ってから、「設定変更」を測る。"""
+    out = []
+    ctx = _warm_context(browser, url, color_path)
+    for i in range(reps):
+        page = _prepared_page(ctx, url, color_path)
+        page.select_option("#plotType", "scatterColor")
+        for k, sid in enumerate(series_ids(page)):
+            page.select_option(f"#series-{sid}-color-column", f"__idx__{k + 6}")
+        _wait_summary(page, "!!s.colorbar")
+        page.wait_for_timeout(3000)
+        out.append(page.evaluate(CHANGE_JS, ["#title", f"bench title {i}"]))
+        page.close()
+    ctx.close()
+    return out
+
+
+def bench_hist_change(browser, url, reps, csv_path):
+    """ヒストグラム: 5 系列（Y 列1-5、区間は自動）の図が出るまで待ってから、「設定変更」を測る。"""
+    out = []
+    ctx = _warm_context(browser, url, csv_path)
+    for i in range(reps):
+        page = _prepared_page(ctx, url, csv_path)
+        page.select_option("#plotType", "hist")
+        _wait_summary(page, "s.bars && s.bars.containers.length >= 5")
+        page.wait_for_timeout(3000)
+        out.append(page.evaluate(CHANGE_JS, ["#title", f"bench title {i}"]))
+        page.close()
+    ctx.close()
+    return out
+
+
+def bench_computed_change(browser, url, reps, csv_path):
+    """計算した列: 列1-5 をそれぞれ正規化（[k] / max([k])）した計算した列 5 つ（列 [6]-[10]）を、line 5 系列の Y にした図が出るまで待ってから、
+    「設定変更」を測る。"""
+    out = []
+    ctx = _warm_context(browser, url, csv_path)
+    for i in range(reps):
+        page = _prepared_page(ctx, url, csv_path)
+        for k in range(1, 6):
+            add_computed(page, expr=f"[{k}] / max([{k}])")
+        for k, sid in enumerate(series_ids(page)):
+            page.select_option(f"#series-{sid}-y", f"__idx__{k + 6}")
+        page.wait_for_function(
+            "() => { const c = document.querySelector('#customPyCode').value;"
+            " return c.includes('計算した列5') && c.includes('df.iloc[:, 10]'); }",
+            timeout=TIMEOUT)
+        page.wait_for_timeout(3000)
+        out.append(page.evaluate(CHANGE_JS, ["#title", f"bench title {i}"]))
+        page.close()
+    ctx.close()
+    return out
+
+
 def fmt(name, xs):
     s = stats(xs)
     return f"{name:<44} median {s['median']:9.0f}  min {s['min']:9.0f}  max {s['max']:9.0f}  (ms, n={s['n']})"
@@ -551,7 +626,7 @@ def main():
     ap.add_argument("--reps", type=int, default=5)
     ap.add_argument("--headed", action="store_true")
     ap.add_argument("--json")
-    ap.add_argument("--only", choices=["old", "new", "p5a", "p5b"], help="old: Phase 3 までの項目だけ / new: Phase 4 の項目だけ / p5a: Phase 5a の項目だけ / p5b: Phase 5b の項目だけ（省略時は全部）")
+    ap.add_argument("--only", choices=["old", "new", "p5a", "p5b", "p5c"], help="old: Phase 3 までの項目だけ / new: Phase 4 の項目だけ / p5a: Phase 5a の項目だけ / p5b: Phase 5b の項目だけ / p5c: Phase 5c の項目だけ（省略時は全部）")
     a = ap.parse_args()
     serve = Path(os.environ.get("E2E_SERVE_DIR") or REPO)
     srv, url = start_server(serve)
@@ -568,6 +643,8 @@ def main():
     make_errorbar_csv(eb_path)
     band_path = tmp / "bench_bands_10000x16.csv"
     make_band_csv(band_path)
+    color_path = tmp / "bench_color_10000x11.csv"
+    make_color_csv(color_path)
     big_tsv = make_tsv()
     small_tsv = make_tsv(rows=30, ys=2)
     with sync_playwright() as p:
@@ -632,6 +709,19 @@ def main():
                 # Phase 5b で追加（帯・近似曲線・注釈を付けた設定変更。デバウンス込みと、250 ms を除いた値）
                 "p5b_change_to_plot_ms": b_change,
                 "p5b_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in b_change],
+            })
+        if a.only in (None, "p5c"):
+            sc_change = bench_scatter_color_change(browser, url, a.reps, color_path)
+            hist_change = bench_hist_change(browser, url, a.reps, csv_path)
+            comp_change = bench_computed_change(browser, url, a.reps, csv_path)
+            res.update({
+                # Phase 5c で追加（色分け散布図・ヒストグラム・計算した列。デバウンス込みと、250 ms を除いた値）
+                "scatter_color_change_to_plot_ms": sc_change,
+                "scatter_color_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in sc_change],
+                "hist_change_to_plot_ms": hist_change,
+                "hist_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in hist_change],
+                "computed_change_to_plot_ms": comp_change,
+                "computed_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in comp_change],
             })
         browser.close()
     for k, v in res.items():

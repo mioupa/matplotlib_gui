@@ -39,6 +39,7 @@ export const DEFAULT_SERIES = {
   marker: "auto",
   alpha: 1,
   fill: { lower: "", upper: "", alpha: 0.25 },
+  colorColumn: "",
 };
 
 // 注釈（annotations[]）1つの既定値。id は追加するときに a1, a2, ... を振る（削除しても再利用しない）
@@ -62,6 +63,9 @@ export const DEFAULT_ANNOTATION = {
 
 // 近似曲線（fits[]）1つの既定値。id は f1, f2, ...。series は追加するときに系列1の id にする
 export const DEFAULT_FIT = { id: "f1", series: "s1", model: "linear", degree: 2, show: "legend", color: "", lineStyle: "dashed" };
+
+// 計算した列（computed[]）1つの既定値。id は追加するときに c1, c2, ... を振る（削除しても再利用しない）
+export const DEFAULT_COMPUTED = { id: "", source: "", name: "", expr: "" };
 
 export const DEFAULT_SETTINGS = {
   version: SCHEMA_VERSION,
@@ -88,6 +92,10 @@ export const DEFAULT_SETTINGS = {
     grid: { major: false, minor: false },
     margins: { left: null, right: null, bottom: null, top: null },
     spines: { top: true, right: true },
+    step: { where: "post" },
+    hist: { bins: null, density: false },
+    colormap: "viridis",
+    colorbarLabel: "",
   },
   axes: {
     x: { label: "", scale: "linear", min: null, max: null, dateFormat: "", ...defaultTicks(), majorStepUnit: "day", dateMin: "", dateMax: "" },
@@ -97,5 +105,6 @@ export const DEFAULT_SETTINGS = {
   series: [DEFAULT_SERIES],
   annotations: [],
   fits: [],
+  computed: [],
   save: { filename: "", format: "png", transparent: false, dpi: 300, svgText: "path" },
 };

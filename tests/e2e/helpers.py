@@ -575,3 +575,46 @@ def add_fit(page, **fields) -> str:
     for name, value in fields.items():
         set_card_field(page, f"#fit-{new}-{name.replace('_', '-')}", value)
     return new
+
+
+# --- グラフの種類（Phase 5c, G7） ---
+def set_plot_type(page, plot_type):
+    """プロット種別を変え、読込・描画が一段落するまで待つ（エラー終了を含む）。"""
+    page.select_option("#plotType", plot_type)
+    wait_settled(page)
+
+
+def plot_settings(page) -> dict:
+    """state の plot 設定（隠した設定の値が残っているかの確認に使う）。"""
+    return page.evaluate("import(new URL('js/state.js', document.baseURI)).then((m) => m.getSettings().plot)")
+
+
+def visible_ids(page, ids) -> dict:
+    """要素 id → 画面に出ているか。"""
+    return {i: not is_hidden_by_id(page, i) for i in ids}
+
+
+# --- 計算した列（Phase 5c, G6） ---
+def add_computed(page, expr="", name="", source=None) -> str:
+    """「+ 列を追加」を押し、名前・式・データ元を入力して id（c1…）を返す。待たない。"""
+    before = {c["id"] for c in state_list(page, "computed")}
+    page.click("#addComputedBtn")
+    new = [c["id"] for c in state_list(page, "computed") if c["id"] not in before][0]
+    if source is not None:
+        page.select_option(f"#computed-{new}-source", source)
+    if name:
+        page.fill(f"#computed-{new}-name", name)
+    if expr:
+        page.fill(f"#computed-{new}-expr", expr)
+    return new
+
+
+def computed_index_text(page, computed_id) -> str:
+    return page.inner_text(f"#computed-{computed_id}-index")
+
+
+def option_labels(page, select_id) -> dict:
+    """select の option の value → 表示。"""
+    return page.evaluate(
+        "(id) => Object.fromEntries([...document.querySelectorAll(`#${id} option`)].map(o => [o.value, o.textContent.trim()]))", select_id
+    )

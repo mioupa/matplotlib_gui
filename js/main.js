@@ -13,6 +13,7 @@ import { bindDateFormat } from "./ui/dateFormat.js";
 import { bindClipboard } from "./ui/clipboard.js";
 import { addVisibilityHook, bindSeriesEvents, refreshSources, renderSeriesList, syncMarkerSizeDisplay, syncVisibility } from "./ui/series.js";
 import { bindAnnotations, renderAnnotationList, syncAnnotations } from "./ui/annotations.js";
+import { bindComputed, renderComputedList, syncComputed } from "./ui/computed.js";
 import { bindFits, renderFitList, syncFits } from "./ui/fits.js";
 import { bindStyleSection } from "./ui/styleSection.js";
 import { initPanelSections } from "./ui/panelSections.js";
@@ -40,6 +41,8 @@ bindForms();
 bindSeriesEvents();
 addVisibilityHook(syncAnnotations);
 addVisibilityHook(syncFits);
+addVisibilityHook(syncComputed);
+bindComputed();
 bindAnnotations();
 bindFits();
 bindSaveFormatEvents();
@@ -60,6 +63,12 @@ subscribe((_settings, change) => {
     renderAnnotationList();
   } else if (change.kind === "fit-list") {
     renderFitList();
+  } else if (change.kind === "computed-list") {
+    renderComputedList();
+    refreshSources(); // 計算した列は、系列の列の選択肢に出る
+  } else if (change.kind === "computed-field") {
+    syncComputed();
+    refreshSources();
   } else if (change.kind === "path" && change.path === "plot.palette") {
     renderSeriesList(); // 色の選択肢と各系列の色を、新しいパレットで描き直す
   } else {

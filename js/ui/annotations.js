@@ -3,7 +3,7 @@
 import { addAnnotation, getSettings, hasSecondaryAxis, removeAnnotation, updateAnnotation } from "../state.js";
 import { bindSeriesColorControls, colorPickerHtml } from "./colorPicker.js";
 import { readNumber } from "./forms.js";
-import { xAxisKind } from "./series.js";
+import { xAxisKind, yAxisKind } from "./series.js";
 
 const esc = (text) =>
   String(text ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -144,7 +144,7 @@ const SHOWN = {
   vspan: ["start", "end", "label"],
 };
 
-const syncCard = (item, a, xKind, hasY2) => {
+const syncCard = (item, a, xKind, yKind, hasY2) => {
   const shown = new Set(SHOWN[a.kind] || []);
   shown.add("alpha");
   const dataY = a.kind === "hline" || a.kind === "hspan" || (a.kind === "text" && a.coords === "data");
@@ -163,7 +163,8 @@ const syncCard = (item, a, xKind, hasY2) => {
     helpEl.hidden = !help;
   };
   const axesCoords = a.kind === "text" && a.coords === "axes";
-  const yExample = ["例 1.5", "Y 軸の値（数）です。"];
+  // 横棒の縦軸はカテゴリなので、Y は何番目か（X の文字列の列と同じ）
+  const yExample = yKind === "category" ? [X_EXAMPLE.category, X_HELP.category.replace("X", "Y")] : ["例 1.5", "Y 軸の値（数）です。"];
   if (a.kind === "text") {
     label("x", "X");
     label("y", "Y");
@@ -197,10 +198,11 @@ const syncCard = (item, a, xKind, hasY2) => {
 export const syncAnnotations = () => {
   const { annotations } = getSettings();
   const xKind = xAxisKind();
+  const yKind = yAxisKind();
   const hasY2 = hasSecondaryAxis();
   for (const item of document.querySelectorAll("#annotationList .annotation-item")) {
     const a = annotations.find((x) => x.id === item.dataset.annId);
-    if (a) syncCard(item, a, xKind, hasY2);
+    if (a) syncCard(item, a, xKind, yKind, hasY2);
   }
 };
 

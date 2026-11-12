@@ -1,5 +1,7 @@
 // スタイルプリセット。純粋な ES module（DOM にも state にも触れない）。
 // プリセットの名前は設定オブジェクトに入れない。適用すると、下の値が個別の設定に書き込まれる。
+import { isScatterLike } from "./chart-types.js";
+
 export const PRESETS = {
   standard: {
     label: "標準（8 × 6 inch、15 pt）",
@@ -40,7 +42,7 @@ export const planPreset = (preset, plotType, series) => ({
   series: series.map((s) => {
     const patch = { lineWidth: preset.lineWidth };
     if (preset.markerSize === null) patch.markerSize = null;
-    else if (plotType === "scatter" || typeof s.markerSize === "number") patch.markerSize = preset.markerSize;
+    else if (isScatterLike(plotType) || typeof s.markerSize === "number") patch.markerSize = preset.markerSize;
     return { id: s.id, patch };
   }),
 });
@@ -50,6 +52,6 @@ export const newSeriesDefaults = (preset, plotType) => {
   if (!preset) return {};
   return {
     lineWidth: preset.lineWidth,
-    markerSize: plotType === "scatter" && preset.markerSize !== null ? preset.markerSize : null,
+    markerSize: isScatterLike(plotType) && preset.markerSize !== null ? preset.markerSize : null,
   };
 };

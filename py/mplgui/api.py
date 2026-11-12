@@ -252,10 +252,16 @@ def _run(settings: Settings | None, code: str | None, *, file_format: str, trans
     編集モード（code が文字列）: そのスクリプトを、アップロードしたファイルのある作業フォルダで実行する。設定は使わない。"""
     if code is None:
         plan, script = _generate(settings)
+        # 計算した列は生成コードが df.insert で足すので、そのデータ元はコピーを渡す（描画のたびに列が増えるのを防ぐ）
+        with_computed = {c.data_id for c in plan.computed}
+        injected = {
+            src.var: SESSION.sources[src.id].df.copy() if src.id in with_computed else SESSION.sources[src.id].df
+            for src in plan.sources
+        }
         try:
             result = run_to_image(
                 script.auto_render_text(), file_format=file_format, transparent=transparent, dpi=dpi, svg_text=svg_text,
-                injected={src.var: SESSION.sources[src.id].df for src in plan.sources},
+                injected=injected,
             )
         except ScriptError as err:
             raise _step_error(script, err) from err

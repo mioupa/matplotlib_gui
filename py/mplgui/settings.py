@@ -14,11 +14,19 @@ from typing import Any
 
 from matplotlib.colors import is_color_like
 
+from . import expr as expr_module
 from .errors import UserError
 
 SCHEMA_VERSION = 4
 
-PLOT_TYPES = ("line", "scatter", "bar")
+PLOT_TYPES = ("line", "scatter", "bar", "step", "barh", "barStacked", "hist", "scatterColor")
+# 種類ごとに画面で隠す設定は、検証せず使わない（要件 §2.2。docs/PHASE5_DESIGN.md §6.2）
+BAR_LIKE_TYPES = ("bar", "barh", "barStacked", "hist")  # 点の形・塗りつぶし帯・X 方向のエラーバー・近似曲線を使わない
+NO_Y2_TYPES = ("barh", "barStacked", "hist", "scatterColor")  # 第2Y軸を使わない
+NO_Y_ERROR_TYPES = ("barStacked", "hist")  # Y 方向のエラーバーを使わない
+STEP_WHERE_CHOICES = ("pre", "mid", "post")
+COLORMAPS = ("viridis", "cividis", "plasma", "inferno", "magma", "coolwarm", "RdBu_r", "gray")
+MAX_HIST_BINS = 1000
 LINE_STYLES = ("solid", "dashed", "dashdot", "dotted")
 SCALES = ("linear", "log")
 SAVE_FORMATS = ("png", "jpg", "svg", "pdf")
@@ -65,6 +73,8 @@ FIT_MODELS = ("linear", "poly")
 FIT_SHOWS = ("legend", "text", "none")
 MAX_ANNOTATIONS = 50
 MAX_FITS = 20
+MAX_COMPUTED = 20
+MAX_COMPUTED_NAME = 50
 MAX_ANNOTATION_TEXT = 200
 _DATE_INPUT_RE = re.compile(r"(\d{4})([-/])(\d{1,2})\2(\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?")
 DATE_RANGE_LABEL = "X軸の範囲（日時）"
@@ -97,6 +107,7 @@ _DEFAULT_ANNOTATION = {
     "fontSize": None,
     "label": "",
 }
+_DEFAULT_COMPUTED = {"id": "", "source": "", "name": "", "expr": ""}
 _DEFAULT_FIT = {"id": "f1", "series": "s1", "model": "linear", "degree": 2, "show": "legend", "color": "", "lineStyle": "dashed"}
 
 _DEFAULT_SERIES = {
@@ -114,12 +125,18 @@ _DEFAULT_SERIES = {
     "marker": "auto",
     "alpha": 1,
     "fill": copy.deepcopy(_DEFAULT_FILL),
+    "colorColumn": "",
 }
 
 
 def default_annotation() -> dict:
     """注釈1つの既定値（js/defaults.js の DEFAULT_ANNOTATION と同一）。"""
     return copy.deepcopy(_DEFAULT_ANNOTATION)
+
+
+def default_computed() -> dict:
+    """計算した列1つの既定値（js/defaults.js の DEFAULT_COMPUTED と同一）。"""
+    return copy.deepcopy(_DEFAULT_COMPUTED)
 
 
 def default_fit() -> dict:
@@ -154,6 +171,10 @@ def default_settings() -> dict:
             "grid": {"major": False, "minor": False},
             "margins": {"left": None, "right": None, "bottom": None, "top": None},
             "spines": {"top": True, "right": True},
+            "step": {"where": "post"},
+            "hist": {"bins": None, "density": False},
+            "colormap": "viridis",
+            "colorbarLabel": "",
         },
         "axes": {
             "x": {
@@ -166,6 +187,7 @@ def default_settings() -> dict:
         "series": [copy.deepcopy(_DEFAULT_SERIES)],
         "annotations": [],
         "fits": [],
+        "computed": [],
         "save": {"filename": "", "format": "png", "transparent": False, "dpi": DEFAULT_DPI, "svgText": "path"},
     }
 
@@ -252,6 +274,11 @@ class PlotSettings:
     margins: MarginSettings = field(default_factory=MarginSettings)
     spine_top: bool = True  # 上の枠線を表示する
     spine_right: bool = True  # 右の枠線を表示する（第2Y軸があるときは無視）
+    step_where: str = "post"  # step のときだけ使う: pre / mid / post
+    hist_bins: int | None = None  # hist のときだけ使う: None = 自動（numpy の "auto"）
+    hist_density: bool = False  # hist のときだけ使う: 縦軸を確率密度にする
+    colormap: str = "viridis"  # scatterColor のときだけ使う
+    colorbar_label: str = ""  # scatterColor のときだけ使う（"" = 系列1の色分けの列の名前）
 
 
 @dataclass(frozen=True)
@@ -309,13 +336,14 @@ class SeriesSettings:
     marker: str = "auto"  # auto / none / o / s / ^ / v / D / x / + / *（棒グラフでは使わない）
     alpha: float = 1.0  # 不透明度（1 = 透けない）
     fill: FillSettings = field(default_factory=FillSettings)  # 棒グラフでは使わない
+    color_column: str = ""  # "__idx__N"。scatterColor のときだけ使う（必須）
 
     def effective_marker_size(self, plot_type: str) -> float:
-        """自動(None)は line=0 / それ以外=24。scatter で 0 以下なら 24 に補正する。"""
+        """自動(None)は line / step=0 / それ以外=24。scatter / scatterColor で 0 以下なら 24 に補正する。"""
         size = self.marker_size
         if size is None:
-            return 0.0 if plot_type == "line" else DEFAULT_SCATTER_MARKER_SIZE
-        if plot_type == "scatter" and size <= 0:
+            return 0.0 if plot_type in {"line", "step"} else DEFAULT_SCATTER_MARKER_SIZE
+        if plot_type in {"scatter", "scatterColor"} and size <= 0:
             return DEFAULT_SCATTER_MARKER_SIZE
         return float(size)
 
@@ -353,6 +381,17 @@ class FitSettings:
 
 
 @dataclass(frozen=True)
+class ComputedSettings:
+    """計算した列1つ。式は解釈済み（expr_node）で、設定の検証の時点で構文の誤りを UserError にする。"""
+
+    id: str = "c1"
+    source: str = ""  # "" = load.files の先頭
+    name: str = ""  # "" = 「計算N」
+    expr: str = ""
+    expr_node: Any = field(default=None, compare=False, repr=False)
+
+
+@dataclass(frozen=True)
 class SaveSettings:
     filename: str = ""
     format: str = "png"
@@ -371,6 +410,7 @@ class Settings:
     save: SaveSettings = field(default_factory=SaveSettings)
     annotations: tuple[AnnotationSettings, ...] = ()
     fits: tuple[FitSettings, ...] = ()
+    computed: tuple[ComputedSettings, ...] = ()
 
     @property
     def uses_secondary_axis(self) -> bool:
@@ -577,12 +617,12 @@ def _parse_files(raw_files: Any) -> tuple[FileEntry, ...]:
     return tuple(out)
 
 
-def _parse_axis(raw: dict, key: str, name: str, *, ticks: bool = True) -> AxisSettings:
+def _parse_axis(raw: dict, key: str, name: str, *, ticks: bool = True, linear: bool = False) -> AxisSettings:
     """ticks が False のとき（使っていない第2Y軸）は、目盛の項目を検証せず既定値にする（隠れた不正な値で描画を止めないため）。"""
     axis = raw[key]
     lo = _number(axis["min"], f"{name}軸の最小値", default=None)
     hi = _number(axis["max"], f"{name}軸の最大値", default=None)
-    scale = _choice(axis["scale"], f"{name}軸スケール", SCALES)
+    scale = "linear" if linear else _choice(axis["scale"], f"{name}軸スケール", SCALES)  # linear: スケールを隠している軸（横棒の縦軸）
     date_format = _date_format(axis["dateFormat"]) if key == "x" else ""
     base = AxisSettings(label=_string(axis["label"], f"{name}軸ラベル").strip(), scale=scale, min=lo, max=hi, date_format=date_format)
     if not ticks:
@@ -729,10 +769,12 @@ def _parse_error_spec(raw: dict, axis: str, owner: str) -> ErrorSpec:
 
 
 def _parse_error_bars(raw: dict, plot_type: str, owner: str) -> ErrorBarSettings:
+    if plot_type in NO_Y_ERROR_TYPES:  # 積み上げ棒・ヒストグラムはエラーバーを両方向とも隠すので、何も検証しない
+        return ErrorBarSettings()
     cap = _number(raw["capSize"], "エラーバーの端の長さ", default=3.0, minimum=0, maximum=MAX_CAP_SIZE, owner=owner)
     return ErrorBarSettings(
-        y=_parse_error_spec(raw["y"], "Y", owner),
-        x=ErrorSpec() if plot_type == "bar" else _parse_error_spec(raw["x"], "X", owner),  # 棒グラフでは X 方向を隠すので使わない
+        y=ErrorSpec() if plot_type in NO_Y_ERROR_TYPES else _parse_error_spec(raw["y"], "Y", owner),  # 積み上げ棒・ヒストグラムでは Y 方向を隠す
+        x=ErrorSpec() if plot_type in BAR_LIKE_TYPES else _parse_error_spec(raw["x"], "X", owner),  # 棒グラフ・ヒストグラムでは X 方向を隠す
         cap_size=cap,
     )
 
@@ -760,6 +802,16 @@ def _parse_fill(raw: dict, owner: str) -> FillSettings:
     return FillSettings(lower=lower, upper=upper, alpha=alpha)
 
 
+def _parse_color_column(value: Any, owner: str) -> str:
+    """色分けの列（scatterColor のときだけ。必須）。"""
+    field_name = f"{owner}色分けの列"
+    if value is None or (isinstance(value, str) and not value.strip()):
+        raise UserError(f"{owner}色分けの列を選んでください。", field=field_name)
+    if not isinstance(value, str) or not _COLUMN_RE.fullmatch(value.strip()):
+        raise UserError(f"{owner}「色分けの列」の指定が正しくありません。列を選び直してください。", field=field_name)
+    return value.strip()
+
+
 def _parse_series(raw_series: Any, plot_type: str = "line") -> tuple[SeriesSettings, ...]:
     if not isinstance(raw_series, list) or not raw_series:
         raise UserError("描画系列を1つ以上追加してください。", field="描画系列")
@@ -780,13 +832,14 @@ def _parse_series(raw_series: Any, plot_type: str = "line") -> tuple[SeriesSetti
         marker = _number(s["markerSize"], "点サイズ", default=None, minimum=0, owner=owner)
         marker_shape = "auto"
         fill = FillSettings()
-        if plot_type != "bar":  # 棒グラフでは点の形と塗りつぶし帯を隠すので、検証せず使わない
+        if plot_type not in BAR_LIKE_TYPES:  # 棒グラフ・ヒストグラムでは点の形と塗りつぶし帯を隠すので、検証せず使わない
             marker_shape = _choice(s["marker"], "点の形", MARKERS, owner=owner, field_name=f"{owner}点の形")
-            if plot_type == "scatter" and marker_shape == "none":
+            if plot_type in {"scatter", "scatterColor"} and marker_shape == "none":
                 raise UserError(
                     f"{owner}「点の形」を「なし」にすると、散布図の点が見えなくなります。点の形を選んでください。", field=f"{owner}点の形"
                 )
             fill = _parse_fill(s["fill"], owner)
+        color_column = _parse_color_column(s["colorColumn"], owner) if plot_type == "scatterColor" else ""
         out.append(
             SeriesSettings(
                 id=sid,
@@ -797,12 +850,14 @@ def _parse_series(raw_series: Any, plot_type: str = "line") -> tuple[SeriesSetti
                 line_style=_choice(s["lineStyle"], "線種", LINE_STYLES, owner=owner),
                 marker_size=marker,
                 label=_string(s["label"], "凡例名", owner=owner).strip(),
-                secondary_axis=_boolean(s["secondaryAxis"], "第2軸を使用", owner=owner),
+                # 横棒・積み上げ棒・ヒストグラム・色分け散布図では第2Y軸を隠す（false として扱い、検証しない）
+                secondary_axis=False if plot_type in NO_Y2_TYPES else _boolean(s["secondaryAxis"], "第2軸を使用", owner=owner),
                 source=_string(s["source"], "データ元", owner=owner),
                 error_bars=_parse_error_bars(s["errorBars"], plot_type, owner),
                 marker=marker_shape,
                 alpha=_number(s["alpha"], "不透明度", default=1.0, minimum=0, maximum=1, owner=owner, field_name=f"{owner}不透明度"),
                 fill=fill,
+                color_column=color_column,
             )
         )
     return tuple(out)
@@ -925,6 +980,40 @@ def _parse_fits(raw: Any, series_ids: set[str]) -> tuple[FitSettings, ...]:
     return tuple(out)
 
 
+def _parse_computed(raw: Any, file_ids: set[str]) -> tuple[ComputedSettings, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise UserError("「計算した列」の値が不正です。", field="計算した列")
+    if len(raw) > MAX_COMPUTED:
+        raise UserError(f"計算した列は{MAX_COMPUTED}個までです。", field="計算した列")
+    out = []
+    used_ids: set[str] = set()
+    for i, given in enumerate(raw):
+        n = i + 1
+        owner = f"計算した列{n}の"
+        c = _merge(_DEFAULT_COMPUTED, given)
+        cid = c["id"] if isinstance(c["id"], str) and c["id"] and c["id"] not in used_ids else f"c{n}"
+        while cid in used_ids:
+            cid += "_"
+        used_ids.add(cid)
+        source = _string(c["source"], "データ元", owner=owner)
+        if source and source not in file_ids:
+            raise UserError(f"計算した列{n}のデータ元が見つかりません。データ元を選び直してください。", field=f"計算した列{n}のデータ元")
+        name = _string(c["name"], "名前", owner=owner).strip()
+        if len(name) > MAX_COMPUTED_NAME:
+            raise UserError(f"{owner}「名前」は{MAX_COMPUTED_NAME}文字以内で入力してください。", field=f"計算した列{n}の名前")
+        expr = _string(c["expr"], "式", owner=owner)
+        if not expr.strip():
+            raise UserError(f"計算した列{n}の式を入力してください。", field=f"計算した列{n}の式")
+        try:
+            node = expr_module.parse(expr)
+        except expr_module.ExprError as e:
+            raise UserError(f"計算した列{n}の式: {e}", field=f"計算した列{n}の式") from None
+        out.append(ComputedSettings(id=cid, source=source, name=name, expr=expr, expr_node=node))
+    return tuple(out)
+
+
 def parse_settings(raw: dict | None) -> Settings:
     """設定 dict を検証し、型付きの Settings にする。欠けているキーは既定値で補う。
 
@@ -965,10 +1054,23 @@ def parse_settings(raw: dict | None) -> Settings:
     if margins.bottom is not None and margins.top is not None and margins.bottom >= margins.top:
         raise UserError("余白は bottom < top になるように指定してください。", field="余白")
 
+    plot_type = _choice(p["type"], "プロット種別", PLOT_TYPES)
+    step_where, hist_bins, hist_density, colormap, colorbar_label = "post", None, False, "viridis", ""
+    if plot_type == "step":
+        step = p["step"] if isinstance(p["step"], dict) else {}
+        step_where = _choice(step.get("where", "post"), "段の付き方", STEP_WHERE_CHOICES)
+    elif plot_type == "hist":
+        hist = p["hist"] if isinstance(p["hist"], dict) else {}
+        hist_bins = _int_range(hist.get("bins"), "区間の数", 1, MAX_HIST_BINS, default=None)
+        hist_density = _boolean(hist.get("density", False), "確率密度")
+    elif plot_type == "scatterColor":
+        colormap = _choice(p["colormap"], "カラーマップ", COLORMAPS)
+        colorbar_label = _string(p["colorbarLabel"], "カラーバーのラベル").strip()
+
     plot = PlotSettings(
-        type=_choice(p["type"], "プロット種別", PLOT_TYPES),
+        type=plot_type,
         skip_rows=_integer(p["skipRows"], "除外する先頭行数", default=0, minimum=0),
-        x_column=_string(p["xColumn"], "X列").strip(),
+        x_column="" if plot_type == "hist" else _string(p["xColumn"], "X列").strip(),  # ヒストグラムは X列を隠す
         title=_string(p["title"], "タイトル").strip(),
         font_size=_number(p["fontSize"], "フォントサイズ", default=15.0, exclusive_min=0),
         figure=figure,
@@ -980,14 +1082,23 @@ def parse_settings(raw: dict | None) -> Settings:
         margins=margins,
         spine_top=_boolean(spines.get("top", True), "上の枠線"),
         spine_right=_boolean(spines.get("right", True), "右の枠線"),
+        step_where=step_where,
+        hist_bins=hist_bins,
+        hist_density=hist_density,
+        colormap=colormap,
+        colorbar_label=colorbar_label,
     )
 
     ax = merged["axes"]
     raw_series = raw.get("series", d["series"])
-    y2_used = isinstance(raw_series, list) and any(isinstance(s, dict) and s.get("secondaryAxis") is True for s in raw_series)
+    y2_used = (
+        plot.type not in NO_Y2_TYPES
+        and isinstance(raw_series, list)
+        and any(isinstance(s, dict) and s.get("secondaryAxis") is True for s in raw_series)
+    )
     axes = AxesSettings(
         x=_parse_axis(ax, "x", "X"),
-        y=_parse_axis(ax, "y", "Y"),
+        y=_parse_axis(ax, "y", "Y", linear=plot.type == "barh"),  # 横棒の縦軸はカテゴリなので、Y のスケールは使わない
         y2=_parse_axis(ax, "y2", "第2Y", ticks=y2_used),
     )
     series = _parse_series(raw_series, plot.type)
@@ -1001,11 +1112,17 @@ def parse_settings(raw: dict | None) -> Settings:
         check_axis_range(axes.y2, "第2Y")
 
     annotations = _parse_annotations(raw.get("annotations"), any(s.secondary_axis for s in series))
-    # 棒グラフでは近似曲線を使わない（隠れているので検証しない）
-    fits = () if plot.type == "bar" else _parse_fits(raw.get("fits"), {s.id for s in series})
+    # 棒グラフ・ヒストグラムでは近似曲線を使わない（隠れているので検証しない）
+    fits = () if plot.type in BAR_LIKE_TYPES else _parse_fits(raw.get("fits"), {s.id for s in series})
+
+    # 計算した列は常に表示されるので、グラフの種類によらず検証する
+    computed = _parse_computed(raw.get("computed"), file_ids)
 
     save = _parse_save(merged["save"])
-    return Settings(version=SCHEMA_VERSION, load=load, plot=plot, axes=axes, series=series, save=save, annotations=annotations, fits=fits)
+    return Settings(
+        version=SCHEMA_VERSION, load=load, plot=plot, axes=axes, series=series, save=save,
+        annotations=annotations, fits=fits, computed=computed,
+    )
 
 
 def _figure_length(value: Any, label: str, default: float, unit: str) -> float:
