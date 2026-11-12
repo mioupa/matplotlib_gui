@@ -4,6 +4,7 @@ import { addNote } from "../bridge.js";
 import { bindSeriesColorControls } from "./colorPicker.js";
 import { syncAxisTicks } from "./axisTicks.js";
 import { readNumber } from "./forms.js";
+import { computedOfSource, shiftForFileColumnChange } from "../computed-refs.js";
 import {
   isLineLike,
   usesColorColumn,
@@ -23,7 +24,28 @@ const columnsById = new Map();
 
 const loadedFiles = () => getSettings().load.files;
 const sourceIdOf = (series) => series.source || (loadedFiles()[0] ? loadedFiles()[0].id : "d1"); // "" は先頭のファイル
-const columnsOf = (series) => columnsById.get(sourceIdOf(series)) || [];
+// データ元のファイルの列数（読み込んでいなければ undefined）
+export const fileColumnCount = (id) => {
+  const columns = columnsById.get(id);
+  return columns ? columns.length : undefined;
+};
+
+// 計算した列（G6）の選択肢: ファイルの列の後ろに、カードの順で並ぶ（番号 = ファイルの列数 + 位置）。データ確認の表には出さない
+const computedOptions = (sourceId, fileCount) => {
+  const all = getSettings().computed;
+  return computedOfSource(sourceId).map((c, pos) => {
+    const n = all.indexOf(c) + 1;
+    const k = fileCount + pos;
+    return { value: `__idx__${k}`, label: `${c.name.trim() || `計算${n}`} [${k}]（計算）`, kind: "number", numericLike: true };
+  });
+};
+
+// 系列のデータ元の列の選択肢（ファイルの列 + 計算した列）。列の選択肢を作る・検証するのはここだけ
+const columnsOf = (series) => {
+  const sid = sourceIdOf(series);
+  const file = columnsById.get(sid);
+  return file ? [...file, ...computedOptions(sid, file.length)] : [];
+};
 const hasManySources = () => loadedFiles().length >= 2;
 
 const isDatetimeColumn = (columns, value) => !!value && columns.some((c) => c.value === value && c.kind === "datetime");
@@ -503,13 +525,19 @@ export const refreshSources = () => {
   refreshXColumnSelect();
   syncAxisTicks(xAxisKind(), yAxisKind());
   // データ元と列の選択肢が変わっていなければ、カードは描き直さない（入力中の欄や開いている選択肢を保つ）
-  if (renderedStructure === structureOf() && cardsMatchSettings()) return;
+  if (renderedStructure === structureOf() && cardsMatchSettings()) {
+    for (const hook of visibilityHooks) hook(); // 計算した列の番号の表示など
+    return;
+  }
   renderSeriesList();
 };
 
 // 1つのデータ元の列の選択肢を更新する（読込のたびに呼ぶ）。
 export const setSourceColumns = (id, newColumns) => {
+  const old = columnsById.get(id);
   columnsById.set(id, newColumns);
+  // ファイルの列数が変わったら、計算した列を指す参照を同じだけずらす（reconcileColumns より前）
+  if (old && old.length !== newColumns.length) shiftForFileColumnChange(id, old.length, newColumns.length);
 };
 
 export const dropSourceColumns = (keepIds) => {
@@ -521,14 +549,14 @@ export const dropSourceColumns = (keepIds) => {
 export const reconcileColumns = () => {
   const settings = getSettings();
   const first = settings.series[0];
-  const firstColumns = first ? columnsById.get(sourceIdOf(first)) : null;
+  const firstColumns = first && columnsById.get(sourceIdOf(first)) ? columnsOf(first) : null;
   if (settings.plot.xColumn && firstColumns && !firstColumns.some((c) => c.value === settings.plot.xColumn)) {
     setPath("plot.xColumn", "", "reconcile");
   }
   for (const s of settings.series) {
     const known = columnsById.get(sourceIdOf(s));
     if (!known) continue;
-    const valid = new Set(known.map((c) => c.value));
+    const valid = new Set(columnsOf(s).map((c) => c.value));
     const patch = {};
     if (s.x && !valid.has(s.x)) patch.x = "";
     if (s.y && !valid.has(s.y)) patch.y = "";

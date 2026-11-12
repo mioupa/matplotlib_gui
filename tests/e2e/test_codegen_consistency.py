@@ -319,6 +319,24 @@ def _configure_scatter_color(page):
     page.fill("#colorbarLabel", "電流 (A)")
 
 
+# --- 計算した列（Phase 5c, G6） ---
+def _configure_computed_one_file(page):
+    page.fill("#skipRows", "2")  # 計算は、除外した行を除いて行う（max もその行だけ）
+    page.click("#addComputedBtn")
+    page.fill("#computed-c1-name", "正規化")
+    page.fill("#computed-c1-expr", "[1] / max([1])")
+    page.select_option("#series-s1-x", "__idx__2")
+    page.select_option("#series-s1-y", "__idx__6")
+
+
+def _configure_computed_two_files(page):
+    page.click("#addComputedBtn")
+    page.select_option("#computed-c1-source", "d2")
+    page.fill("#computed-c1-expr", "rolling_mean([1], 3) - first([1])")
+    page.select_option("#series-s1-y", "__idx__2")
+    add_series_with_source(page, "d2", "__idx__6")
+
+
 # 読込の設定を変えた場合: 生成スクリプトの読込部が、GUI の読み方と同じ図を作る
 PRE_STEPS = {"preamble_csv": _pre_preamble, "european_csv": _pre_european}
 
@@ -365,6 +383,8 @@ CASES = {
     "type_bar_stacked": ("chart_types.csv", _configure_bar_stacked),
     "type_hist": ("chart_types.csv", _configure_hist),
     "type_scatter_color": ("chart_types.csv", _configure_scatter_color),
+    "computed_one_file": ("chart_types.csv", _configure_computed_one_file),
+    "computed_two_files": (("chart_types.csv", "band.csv"), _configure_computed_two_files),
     "scatter_paper1": ("utf8.csv", _configure_scatter_paper1),
     "scatter_arimo_paper2_pdf": ("utf8.csv", _configure_scatter_arimo_paper2_pdf),
 }

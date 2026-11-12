@@ -1233,3 +1233,15 @@ button.series-color-chip.active {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* 計算した列（G6）: 雛形のボタンは狭い画面で折り返す */
+.computed-templates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.computed-item input,
+.computed-item select {
+  max-width: 100%;
+  box-sizing: border-box;
+}

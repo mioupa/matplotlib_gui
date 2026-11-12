@@ -595,6 +595,14 @@
           <div class="section-body">
           <div class="group">
             <div class="series-toolbar">
+              <span id="computedLabel" class="field-label">計算した列</span>
+              <button id="addComputedBtn" class="small-btn secondary" type="button">+ 列を追加</button>
+            </div>
+            <div id="computedList" class="series-list" role="group" aria-labelledby="computedLabel"></div>
+            <div id="computedHelp" class="help-text">式で新しい列を作り、系列の X・Y などの列に選べます。列は [0] か A, B, …（A = [0]）。+ - * / ^、括弧。関数: abs sqrt exp log log10 sin cos tan、集計: min max mean median std first last、rolling_mean(式, 窓の幅) diff cumsum。ほかの計算した列は使えません。</div>
+          </div>
+          <div class="group">
+            <div class="series-toolbar">
               <span id="annotationLabel" class="field-label">注釈</span>
               <button id="addAnnotationBtn" class="small-btn secondary" type="button">+ 注釈を追加</button>
             </div>
