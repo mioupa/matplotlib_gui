@@ -1436,15 +1436,20 @@ def _emit_grid_and_legend(b: _Builder, settings: Settings, plan: PlotPlan) -> No
         return
     size = _label_size_expr(plot.font_size)
     loc = literal(plot.legend_location)
+    # パネルが2つ以上のときは、凡例を余白の自動調整（tight_layout）の計算から外す。凡例は常に軸の内側にあるので配置は
+    # 変わらず、位置「best」の探索（点が多いと重い）が1回減る。1行×1列は今までと同じコードにする（ゴールデンテスト）
+    tail = ".set_in_layout(False)" if b.panel_mode else ""
+    if b.panel_mode:
+        b.add("# 凡例は軸の内側にあるので、余白の自動調整（tight_layout）の計算から外す（位置の探索を1回減らす）")
     if plan.uses_secondary:
         b.add(
             "# 第1・第2Y軸の系列をまとめて凡例にする",
             "handles, labels = ax.get_legend_handles_labels()",
             "handles2, labels2 = ax2.get_legend_handles_labels()",
-            f'ax.legend(handles + handles2, labels + labels2, loc={loc}, fontsize={size}, edgecolor="black")',
+            f'ax.legend(handles + handles2, labels + labels2, loc={loc}, fontsize={size}, edgecolor="black"){tail}',
         )
     else:
-        b.add(f'ax.legend(loc={loc}, fontsize={size}, edgecolor="black")')
+        b.add(f'ax.legend(loc={loc}, fontsize={size}, edgecolor="black"){tail}')
 
 
 def _emit_margins(b: _Builder, settings: Settings, multi: bool = False) -> None:

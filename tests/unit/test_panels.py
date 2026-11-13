@@ -226,6 +226,23 @@ def test_per_panel_legends(tmp_path):
     assert panels[(0, 0)]["legend"] == ["A"] and panels[(0, 1)]["legend"] == ["B", "C"]
 
 
+def test_legends_are_left_out_of_tight_layout_without_moving_anything(tmp_path):
+    # 複数パネルでは凡例を tight_layout の計算から外す（位置「best」の探索を1回減らす）。凡例は軸の内側なので配置は同じ
+    series_list = [series(1, label="A"), series(2, label="B", panel=1, secondaryAxis=True), series(3, label="C", panel=1)]
+    b = build(tmp_path, series_list, rows=1, cols=2)
+    assert b.script.text.count(".set_in_layout(False)") == 2
+    with b.auto() as run:
+        assert all(ax.get_legend().get_in_layout() is False for ax in run.fig.axes if ax.get_legend())
+        fig = run.fig
+        fig.canvas.draw()
+        moved = [ax.get_position().bounds for ax in fig.axes]
+    with run_script(b.script.auto_render_text().replace(".set_in_layout(False)", ""), injected={"df": b.loaded.df}) as run:
+        run.fig.canvas.draw()
+        assert [ax.get_position().bounds for ax in run.fig.axes] == moved
+    single = build(tmp_path, [series(1, label="A")], rows=1, cols=1)
+    assert "set_in_layout" not in single.script.text
+
+
 def test_second_axis_legend_is_per_panel(tmp_path):
     b = build(tmp_path, [series(1, label="A"), series(2, label="B", panel=1, secondaryAxis=True), series(3, label="C", panel=1)], rows=1, cols=2)
     sm = summary(b)
