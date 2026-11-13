@@ -23,6 +23,8 @@ from helpers import (
     paste_text,
     set_errorbars,
     set_fill,
+    set_layout,
+    set_series_panel,
     wait_data_ready,
     wait_app_ready,
     wait_code_contains,
@@ -351,6 +353,56 @@ def _configure_heatmap(page):
 
 
 # --- 計算した列（Phase 5c, G6） ---
+def _configure_panels_2x2_line(page):
+    set_layout(page, 2, 2)
+    page.fill("#title", "全体のタイトル")
+    page.select_option("#series-s1-x", "__idx__0")
+    page.select_option("#series-s1-y", "__idx__1")
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s2-x", "__idx__0")
+    page.select_option("#series-s2-y", "__idx__5")
+    page.check("#series-s2-use-y2")
+    set_series_panel(page, "s2", 1)
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s3-x", "__idx__0")
+    page.select_option("#series-s3-y", "__idx__2")
+    set_series_panel(page, "s3", 2)  # パネル4（2行目・2列目）は使わない
+    add_annotation(page, "hline", y="2", label="基準", panel="0")
+    add_fit(page, series="s1", show="text")
+    page.evaluate("document.getElementById('panelLabelsGroup').open = true")
+    page.fill("#panel-1-title", "温度")
+    page.fill("#panel-2-ylabel", "左軸")
+    page.fill("#panel-2-y2label", "右軸")
+
+
+def _configure_panels_shared_x_datetime(page):
+    set_layout(page, 2, 1)
+    page.select_option("#series-s1-x", "__idx__4")
+    page.select_option("#series-s1-y", "__idx__1")
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s2-x", "__idx__4")
+    page.select_option("#series-s2-y", "__idx__2")
+    set_series_panel(page, "s2", 1)
+    page.check("#layoutShareX")
+    open_tick_group(page, "x")
+    page.check("#xInverted")
+
+
+def _configure_panels_scatter_color(page):
+    set_layout(page, 1, 2)
+    _configure_scatter_color(page)
+    set_series_panel(page, "s2", 1)
+
+
+def _configure_panels_box(page):
+    set_layout(page, 1, 2)
+    page.select_option("#plotType", "box")
+    page.select_option("#series-s1-y", "__idx__1")
+    page.click("#addSeriesBtn")
+    page.select_option("#series-s2-y", "__idx__2")
+    set_series_panel(page, "s2", 1)
+
+
 def _configure_computed_one_file(page):
     page.fill("#skipRows", "2")  # 計算は、除外した行を除いて行う（max もその行だけ）
     page.click("#addComputedBtn")
@@ -420,6 +472,10 @@ CASES = {
     "type_heatmap": ("grid.csv", _configure_heatmap),
     "computed_one_file": ("chart_types.csv", _configure_computed_one_file),
     "computed_two_files": (("chart_types.csv", "band.csv"), _configure_computed_two_files),
+    "panels_2x2_line": ("band.csv", _configure_panels_2x2_line),
+    "panels_shared_x_datetime": ("band.csv", _configure_panels_shared_x_datetime),
+    "panels_scatter_color": ("chart_types.csv", _configure_panels_scatter_color),
+    "panels_box": ("chart_types.csv", _configure_panels_box),
     "scatter_paper1": ("utf8.csv", _configure_scatter_paper1),
     "scatter_arimo_paper2_pdf": ("utf8.csv", _configure_scatter_arimo_paper2_pdf),
 }
@@ -436,6 +492,9 @@ def _run_in_cpython(script: Path, workdir: Path) -> tuple[list[dict], str]:
     return json.loads(line[len("FIGURE_SUMMARY:"):]), proc.stderr
 
 
+# Axes の数（パネル + 第2Y軸 + カラーバー。使わないパネルも Axes として残る）。値は実測で確かめる
+EXPECTED_AXES = {"panels_2x2_line": 5, "panels_shared_x_datetime": 2, "panels_scatter_color": 2, "panels_box": 2}
+
 TICK_CASES = ("ticks_fixed_inverted", "ticks_pow10", "datetime_day_step_range", "text_x_step")
 
 
@@ -448,6 +507,7 @@ EXACT_KEYS = (
     "bands", "markers", "alphas", "annotations", "fitlines", "fittexts",  # Phase 5b
     "drawstyles", "bars", "colorbar",  # Phase 5c
     "boxes", "violins", "meshes",  # Phase 5d
+    "panel", "axison", "titleleft", "suptitle",  # Phase 5e
 )
 
 
@@ -491,7 +551,7 @@ def test_downloaded_script_matches_browser_figure(case, page, app_url, fixtures_
     local, stderr = _run_in_cpython(script, tmp_path)
 
     assert len(local) == len(browser)
-    assert len(browser) == (2 if case in ("line", "annotations_y2", "fit_y2") else 1)
+    assert len(browser) == EXPECTED_AXES.get(case, 2 if case in ("line", "annotations_y2", "fit_y2") else 1)
     if case.startswith("errbars_"):
         assert browser[0]["errorbars"] > 0
         assert l_ax_summary(local, "errorbars") == l_ax_summary(browser, "errorbars")

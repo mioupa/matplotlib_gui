@@ -628,3 +628,30 @@ def scipy_state(page) -> str:
 
 def wait_scipy_state(page, state, timeout=300_000):
     page.wait_for_function("(s) => document.documentElement.dataset.scipyState === s", arg=state, timeout=timeout)
+
+
+# ---- Phase 5e (G9): サブプロットのパネル
+def set_layout(page, rows, cols, *, wait=True):
+    """パネルの配置（行・列）を変える。wait=True なら描画が一段落するまで待つ。"""
+    page.select_option("#layoutRows", str(rows))
+    page.select_option("#layoutCols", str(cols))
+    if wait:
+        wait_settled(page)
+
+
+def set_series_panel(page, series_id, panel, *, wait=False):
+    """系列カードのパネル（0 始まり）を選ぶ。"""
+    page.select_option(f"#series-{series_id}-panel", str(panel))
+    if wait:
+        wait_settled(page)
+
+
+def panel_state(page) -> dict:
+    """state の plot.layout と plot.panels。"""
+    return page.evaluate(
+        "import(new URL('js/state.js', document.baseURI)).then((m) => ({layout: m.getSettings().plot.layout, panels: m.getSettings().plot.panels}))"
+    )
+
+
+def is_disabled(page, element_id) -> bool:
+    return page.evaluate("(id) => document.getElementById(id).disabled", element_id)
