@@ -230,3 +230,69 @@ def test_annotations_fits_and_removing_series(tmp_path):
     assert res["removed"] == 1 and res["fits_left"] == [["f3", "s1"]]
     assert res["last"] == -1  # 系列が1つだけなら消さない
     assert {"annotation-list", "annotation-field", "fit-list", "fit-field", "series-list"} <= set(res["kinds"])
+
+
+
+@needs_node
+def test_panels_update_and_series_inheritance(tmp_path):
+    script = """
+    import { addSeries, getSettings, subscribe, updatePanel, updateSeries, duplicateSeries } from "./state.js";
+    const out = {};
+    const seen = [];
+    subscribe((_s, c) => seen.push(c));
+    updatePanel(2, { title: "C" });
+    const panels = getSettings().plot.panels;
+    out.length = panels.length;
+    out.padded = { ...panels[0] };
+    out.third = panels[2];
+    out.notify = seen.filter((c) => c.kind === "panel-field").map((c) => [c.index, c.fields, c.origin]);
+    updatePanel(2, { title: "C" });  // 同じ値なら通知しない
+    out.notifyCount = seen.filter((c) => c.kind === "panel-field").length;
+    updatePanel(0, { y2Label: "R" }, "reconcile");
+    out.y2 = getSettings().plot.panels[0].y2Label;
+    out.defaultPanel = getSettings().series[0].panel;
+    updateSeries("s1", { panel: 3 });
+    out.inherited = addSeries().panel;      // 一覧の最後の系列と同じパネル
+    out.explicit = addSeries({ panel: 1 }).panel;
+    out.afterExplicit = addSeries().panel;  // 直前（panel 1）を引き継ぐ
+    const last = getSettings().series[getSettings().series.length - 1];
+    out.dup = duplicateSeries(last.id).panel;
+    console.log(JSON.stringify(out));
+    """
+    res = run_node(tmp_path, STATE_FILES, script)
+    assert res["length"] == 3
+    assert res["padded"] == {"title": "", "xLabel": "", "yLabel": "", "y2Label": ""}
+    assert res["third"]["title"] == "C"
+    assert res["notify"] == [[2, ["title"], "user"]]
+    assert res["notifyCount"] == 1
+    assert res["y2"] == "R"
+    assert res["defaultPanel"] == 0
+    assert res["inherited"] == 3
+    assert res["explicit"] == 1
+    assert res["afterExplicit"] == 1
+    assert res["dup"] == 1
+
+
+@needs_node
+def test_panel_remap_rule(tmp_path):
+    script = """
+    import { panelCount, planPanelRemap, remapPanelIndex } from "./chart-types.js";
+    const out = {};
+    out.count = [panelCount({ rows: 2, cols: 3 }), panelCount({ rows: 1, cols: 1 }), panelCount(undefined)];
+    out.index = [remapPanelIndex(3, 2), remapPanelIndex(1, 2), remapPanelIndex(5, 1), remapPanelIndex(0, 4)];
+    const series = [{ id: "s1", panel: 0 }, { id: "s2", panel: 1 }, { id: "s3", panel: 3 }];
+    const ann = [{ id: "a1", panel: 3 }, { id: "a2", panel: 2 }];
+    out.shrink = planPanelRemap(series, ann, 2);
+    out.toOne = planPanelRemap(series, ann, 1);   // 1 パネルに戻すときは何も変えない
+    out.same = planPanelRemap(series, ann, 4);
+    console.log(JSON.stringify(out));
+    """
+    res = run_node(tmp_path, {"chart-types.js": "js/chart-types.js"}, script)
+    assert res["count"] == [6, 1, 1]
+    assert res["index"] == [1, 1, 5, 0]
+    assert res["shrink"] == {
+        "series": [{"id": "s3", "index": 2, "from": 3, "to": 1}],
+        "annotations": [{"id": "a1", "index": 0, "from": 3, "to": 1}, {"id": "a2", "index": 1, "from": 2, "to": 1}],
+    }
+    assert res["toOne"] == {"series": [], "annotations": []}
+    assert res["same"] == {"series": [], "annotations": []}

@@ -282,6 +282,10 @@ const cardHtml = (series, plotType) => {
       <label for="${id("color-column")}" class="series-color-column-label">色分けの列</label>
       <select id="${id("color-column")}" class="series-color-column"></select>
     </div>
+    <div class="group series-panel-wrap" hidden>
+      <label for="${id("panel")}">パネル</label>
+      <select id="${id("panel")}" class="series-panel"></select>
+    </div>
     <div class="group series-y2-wrap">
       <label class="inline check-label">
         <input id="${id("use-y2")}" class="series-use-y2" type="checkbox" ${series.secondaryAxis ? "checked" : ""} />
@@ -625,6 +629,7 @@ const FIELD_BY_CLASS = [
   ["series-color-column", "colorColumn", "text"],
   ["series-legend-name", "label", "text"],
   ["series-use-y2", "secondaryAxis", "checkbox"],
+  ["series-panel", "panel", "number"],
 ];
 
 // データ元を替えたら、X / Y は自動に戻す（別のファイルの列番号は意味が変わる）。系列1なら棒グラフの X列も戻す

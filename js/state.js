@@ -96,6 +96,9 @@ export const addSeries = (overrides = {}) => {
     ...overrides,
     id: `s${seriesCounter}`,
   };
+  // Phase 5e: 新しい系列は、一覧の最後の系列と同じパネルに置く
+  const last = settings.series[settings.series.length - 1];
+  if (last && !("panel" in overrides)) series.panel = last.panel ?? 0;
   settings.series.push(series);
   notify({ kind: "series-list", origin: "user" });
   return series;
@@ -192,6 +195,24 @@ export const removeFit = (id) => {
   if (idx < 0) return;
   settings.fits.splice(idx, 1);
   notify({ kind: "fit-list", origin: "user" });
+};
+
+// ---- パネル（Phase 5e）。plot.panels[index] = {title, xLabel, yLabel, y2Label}。足りない要素は空文字として補う ----
+const emptyPanel = () => ({ title: "", xLabel: "", yLabel: "", y2Label: "" });
+
+export const updatePanel = (index, patch, origin = "user") => {
+  if (!Number.isInteger(index) || index < 0) return;
+  const panels = settings.plot.panels;
+  while (panels.length <= index) panels.push(emptyPanel());
+  const item = panels[index];
+  let changed = false;
+  for (const [key, value] of Object.entries(patch)) {
+    if (item[key] !== value) {
+      item[key] = value;
+      changed = true;
+    }
+  }
+  if (changed) notify({ kind: "panel-field", index, fields: Object.keys(patch), origin });
 };
 
 // ---- 計算した列（G6）。id は c1, c2, ...（削除しても再利用しない） ----
