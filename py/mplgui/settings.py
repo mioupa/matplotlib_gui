@@ -78,6 +78,9 @@ ANNOTATION_AXES = ("y", "y2")
 FIT_MODELS = ("linear", "poly", "custom")
 FIT_SHOWS = ("legend", "text", "none")
 MAX_ANNOTATIONS = 50
+MAX_PANELS = 16
+MAX_PANEL_LINES = 4  # パネルの行数・列数の上限
+LABEL_STYLES = ("(a)", "a", "A", "(A)", "none")
 MAX_FITS = 20
 MAX_COMPUTED = 20
 MAX_COMPUTED_NAME = 50
@@ -274,6 +277,36 @@ class MarginSettings:
 
 
 @dataclass(frozen=True)
+class LayoutSettings:
+    """パネルの配置（Phase 5e, G9）。rows / cols 以外は、パネルが2つ以上のときだけ使う（1行×1列では検証せず既定値）。"""
+
+    rows: int = 1
+    cols: int = 1
+    share_x: bool = False
+    share_y: bool = False
+    label_style: str = "(a)"  # (a) / a / A / (A) / none
+    label_bold: bool = False
+
+    @property
+    def count(self) -> int:
+        return self.rows * self.cols
+
+    @property
+    def multi(self) -> bool:
+        return self.count >= 2
+
+
+@dataclass(frozen=True)
+class PanelSettings:
+    """パネル1つのタイトルと軸ラベル（空欄は、全体の欄 → 自動の順に使う）。"""
+
+    title: str = ""
+    x_label: str = ""
+    y_label: str = ""
+    y2_label: str = ""
+
+
+@dataclass(frozen=True)
 class PlotSettings:
     type: str = "line"
     skip_rows: int = 0
@@ -298,6 +331,8 @@ class PlotSettings:
     box_means: bool = False  # box のときだけ使う: 平均の印を描く
     violin_medians: bool = True  # violin のときだけ使う: 中央値の線を描く
     violin_means: bool = False  # violin のときだけ使う: 平均の線を描く
+    layout: LayoutSettings = field(default_factory=LayoutSettings)
+    panels: tuple[PanelSettings, ...] = ()  # パネルが2つ以上のときだけ。layout の行数 × 列数に足りない分は空で補う
 
 
 @dataclass(frozen=True)
@@ -356,6 +391,7 @@ class SeriesSettings:
     alpha: float = 1.0  # 不透明度（1 = 透けない）
     fill: FillSettings = field(default_factory=FillSettings)  # 棒グラフでは使わない
     color_column: str = ""  # "__idx__N"。scatterColor / heatmap（値の列）のときだけ使う（必須）
+    panel: int = 0  # 描くパネルの位置（0 始まり。パネルが2つ以上のときだけ使う）
 
     def effective_marker_size(self, plot_type: str) -> float:
         """自動(None)は line / step=0 / それ以外=24。scatter / scatterColor で 0 以下なら 24 に補正する。"""
@@ -386,6 +422,7 @@ class AnnotationSettings:
     alpha: float | None = None  # None = 自動（帯 0.2、それ以外 1）
     font_size: float | None = None  # None = 図のフォントサイズ
     label: str = ""
+    panel: int = 0  # 置くパネルの位置（0 始まり。パネルが2つ以上のときだけ使う）
 
 
 @dataclass(frozen=True)
@@ -836,11 +873,93 @@ def _parse_color_column(value: Any, owner: str, what: str = "色分けの列") -
     return value.strip()
 
 
-def _parse_series(raw_series: Any, plot_type: str = "line") -> tuple[SeriesSettings, ...]:
+def _parse_layout(raw: Any) -> LayoutSettings:
+    """パネルの配置。行数・列数は常に検証する。ほかの項目は、パネルが2つ以上のときだけ検証して使う（§2.2）。"""
+    lay = raw if isinstance(raw, dict) else {}
+    rows = _int_range(lay.get("rows", 1), "パネルの行数", 1, MAX_PANEL_LINES, default=1)
+    cols = _int_range(lay.get("cols", 1), "パネルの列数", 1, MAX_PANEL_LINES, default=1)
+    assert rows is not None and cols is not None
+    if rows * cols < 2:
+        return LayoutSettings(rows=rows, cols=cols)
+    return LayoutSettings(
+        rows=rows,
+        cols=cols,
+        share_x=_boolean(lay.get("shareX", False), "X軸を共有"),
+        share_y=_boolean(lay.get("shareY", False), "Y軸を共有"),
+        label_style=_choice(lay.get("labelStyle", "(a)"), "パネルの記号", LABEL_STYLES),
+        label_bold=_boolean(lay.get("labelBold", False), "パネルの記号を太字"),
+    )
+
+
+def _parse_panels(raw: Any, layout: LayoutSettings) -> tuple[PanelSettings, ...]:
+    """パネルごとのタイトルと軸ラベル（パネルが2つ以上のときだけ）。足りない分は空で補う。"""
+    if not layout.multi:
+        return ()
+    if raw is None:
+        raw = []
+    if not isinstance(raw, list):
+        raise UserError("「パネルのタイトル・軸ラベル」の値が不正です。", field="パネル")
+    if len(raw) > MAX_PANELS:
+        raise UserError(f"パネルの設定は{MAX_PANELS}個までです。", field="パネル")
+    out = []
+    for i in range(layout.count):
+        given = raw[i] if i < len(raw) and isinstance(raw[i], dict) else {}
+        n = i + 1
+        out.append(
+            PanelSettings(
+                title=_string(given.get("title"), f"パネル{n}のタイトル").strip(),
+                x_label=_string(given.get("xLabel"), f"パネル{n}のX軸ラベル").strip(),
+                y_label=_string(given.get("yLabel"), f"パネル{n}のY軸ラベル").strip(),
+                y2_label=_string(given.get("y2Label"), f"パネル{n}の第2Y軸ラベル").strip(),
+            )
+        )
+    return tuple(out)
+
+
+def _parse_panel_index(value: Any, owner: str, layout: LayoutSettings) -> int:
+    """系列・注釈のパネルの位置（0 始まり）。パネルが2つ以上のときだけ検証して使う（1行×1列では 0）。owner は「系列3」「注釈2」。"""
+    if not layout.multi or _is_blank(value):
+        return 0
+    field_name = f"{owner}のパネル"
+    num = _to_float(value)
+    if num is None or not num.is_integer():
+        raise UserError(f"{owner}のパネルの値が不正です。パネルを選び直してください。", field=field_name)
+    if not 0 <= num < layout.count:
+        shown = f"（パネル{int(num) + 1}）" if num >= 0 else ""
+        raise UserError(
+            f"{owner}のパネル{shown}は今の配置（{layout.rows}行×{layout.cols}列）にありません。パネルを選び直してください。",
+            field=field_name,
+        )
+    return int(num)
+
+
+def heatmap_panel_message(panel_number: int | None) -> str:
+    """ヒートマップは1つのパネルに系列1つ。パネルが2つ以上のときは、どのパネルかを添える。"""
+    if panel_number is None:
+        return HEATMAP_SERIES_MESSAGE
+    return f"ヒートマップは1つのパネルに系列1つで描きます。パネル{panel_number}の系列を1つにしてください。"
+
+
+def _check_heatmap_panels(raw_series: list, layout: LayoutSettings) -> None:
+    """ヒートマップは1つのパネルに系列1つ（系列ごとの検証より先に知らせる）。"""
+    if not layout.multi:
+        if len(raw_series) > 1:
+            raise UserError(HEATMAP_SERIES_MESSAGE, field="系列")
+        return
+    seen: set[int] = set()
+    for given in raw_series:
+        num = _to_float(given.get("panel")) if isinstance(given, dict) else None
+        panel = int(num) if num is not None and num.is_integer() and 0 <= num < layout.count else 0
+        if panel in seen:
+            raise UserError(heatmap_panel_message(panel + 1), field="系列")
+        seen.add(panel)
+
+
+def _parse_series(raw_series: Any, plot_type: str = "line", layout: LayoutSettings = LayoutSettings()) -> tuple[SeriesSettings, ...]:
     if not isinstance(raw_series, list) or not raw_series:
         raise UserError("描画系列を1つ以上追加してください。", field="描画系列")
-    if plot_type == "heatmap" and len(raw_series) > 1:  # 系列ごとの検証（値の列が未選択など）より先に知らせる
-        raise UserError(HEATMAP_SERIES_MESSAGE, field="系列")
+    if plot_type == "heatmap":  # 系列ごとの検証（値の列が未選択など）より先に知らせる
+        _check_heatmap_panels(raw_series, layout)
     out = []
     used_ids: set[str] = set()
     for i, given in enumerate(raw_series):
@@ -892,6 +1011,7 @@ def _parse_series(raw_series: Any, plot_type: str = "line") -> tuple[SeriesSetti
                 alpha=_number(s["alpha"], "不透明度", default=1.0, minimum=0, maximum=1, owner=owner, field_name=f"{owner}不透明度"),
                 fill=fill,
                 color_column=color_column,
+                panel=_parse_panel_index(s["panel"], owner[:-1], layout),
             )
         )
     return tuple(out)
@@ -912,7 +1032,7 @@ def _position_text(value: Any, label: str, field_name: str) -> str:
     raise UserError(f"「{label}」の値が不正です。", field=field_name)
 
 
-def _parse_annotations(raw: Any, y2_used: bool) -> tuple[AnnotationSettings, ...]:
+def _parse_annotations(raw: Any, y2_used: bool, layout: LayoutSettings = LayoutSettings()) -> tuple[AnnotationSettings, ...]:
     if raw is None:
         return ()
     if not isinstance(raw, list):
@@ -938,7 +1058,9 @@ def _parse_annotations(raw: Any, y2_used: bool) -> tuple[AnnotationSettings, ...
         if not is_color_like(color):
             raise UserError(f"{owner}「色」が不正です。", field=f("色"))
         alpha = _number(a["alpha"], "不透明度", default=None, minimum=0, maximum=1, owner=owner, field_name=f("不透明度"))
-        values: dict[str, Any] = {"id": aid, "kind": kind, "color": color, "alpha": alpha}
+        values: dict[str, Any] = {
+            "id": aid, "kind": kind, "color": color, "alpha": alpha, "panel": _parse_panel_index(a["panel"], owner[:-1], layout),
+        }
         # 種類で使わない項目は検証せず、既定値にする（隠れた不正な値で描画を止めないため。§2.2）
         if kind == "text":
             text = _string(a["text"], "文字", owner=owner)
@@ -1111,6 +1233,8 @@ def parse_settings(raw: dict | None) -> Settings:
         raise UserError("余白は bottom < top になるように指定してください。", field="余白")
 
     plot_type = _choice(p["type"], "プロット種別", PLOT_TYPES)
+    layout = _parse_layout(p["layout"])
+    panels = _parse_panels(p["panels"], layout)
     step_where, hist_bins, hist_density, colormap, colorbar_label = "post", None, False, "viridis", ""
     box_fliers, box_means, violin_medians, violin_means = True, False, True, False
     if plot_type == "step":
@@ -1156,6 +1280,8 @@ def parse_settings(raw: dict | None) -> Settings:
         box_means=box_means,
         violin_medians=violin_medians,
         violin_means=violin_means,
+        layout=layout,
+        panels=panels,
     )
 
     ax = merged["axes"]
@@ -1170,7 +1296,7 @@ def parse_settings(raw: dict | None) -> Settings:
         y=_parse_axis(ax, "y", "Y", linear=plot.type == "barh"),  # 横棒の縦軸はカテゴリなので、Y のスケールは使わない
         y2=_parse_axis(ax, "y2", "第2Y", ticks=y2_used),
     )
-    series = _parse_series(raw_series, plot.type)
+    series = _parse_series(raw_series, plot.type, layout)
     file_ids = {f.id for f in load.files}
     for i, s in enumerate(series):
         if s.source and s.source not in file_ids:
@@ -1180,7 +1306,7 @@ def parse_settings(raw: dict | None) -> Settings:
     if any(s.secondary_axis for s in series):
         check_axis_range(axes.y2, "第2Y")
 
-    annotations = _parse_annotations(raw.get("annotations"), any(s.secondary_axis for s in series))
+    annotations = _parse_annotations(raw.get("annotations"), any(s.secondary_axis for s in series), layout)
     # XY の種類以外では近似曲線を使わない（隠れているので検証しない）
     fits = _parse_fits(raw.get("fits"), {s.id for s in series}) if plot.type in XY_TYPES else ()
 

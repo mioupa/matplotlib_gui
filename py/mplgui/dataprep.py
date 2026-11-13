@@ -17,7 +17,19 @@ from . import expr as expr_module
 from .errors import UserError
 from .loader import is_blank_cell as _is_blank_cell
 from .loader import looks_numeric as _looks_numeric
-from .settings import HEATMAP_SERIES_MESSAGE, MAX_HEATMAP_SIZE, MAX_HIST_BINS, XY_TYPES, AxisSettings, ErrorSpec, Settings, check_axis_range, validate_date_range
+from .settings import (
+    HEATMAP_SERIES_MESSAGE,
+    MAX_HEATMAP_SIZE,
+    MAX_HIST_BINS,
+    XY_TYPES,
+    AxisSettings,
+    ErrorSpec,
+    PanelSettings,
+    Settings,
+    check_axis_range,
+    heatmap_panel_message,
+    validate_date_range,
+)
 from .settings import _DATE_EXAMPLE, _date_range_value, _to_float
 
 MAX_EXAMPLES = 3
@@ -311,6 +323,49 @@ class AxesPlan:
 
 
 @dataclass(frozen=True)
+class LayoutPlan:
+    """パネルの配置。share_x / share_y は実際に共有するか（軸の種類が数値・対数・日時のときだけ。それ以外は使わない）。"""
+
+    rows: int = 1
+    cols: int = 1
+    share_x: bool = False
+    share_y: bool = False
+    label_style: str = "(a)"
+    label_bold: bool = False
+
+    @property
+    def multi(self) -> bool:
+        return self.rows * self.cols >= 2
+
+
+@dataclass(frozen=True)
+class PanelPlan:
+    """パネル1つ（パネルが2つ以上のときだけ PlotPlan.panels に並ぶ。配置の順に、左上から右へ、行ごと）。
+
+    plan はそのパネルの系列・注釈・近似曲線だけで作った、今の図1枚と同じ形の計画（番号 = 系列N・注釈N・近似曲線N は図全体の番号）。
+    系列が無いパネルは plan が None（drawn が False）で、生成コードは枠ごと消す。"""
+
+    index: int  # 0 始まり
+    row: int
+    col: int
+    label: str  # 記号（"(a)" など。記号なし・使わないパネルは ""）。位置で決まる（パネル3 は常に c）
+    title: str  # パネルのタイトル
+    x_label: str  # パネルの X軸ラベル（空欄は、全体の欄 → 自動）
+    y_label: str
+    y2_label: str
+    series_indices: tuple[int, ...]  # 図全体の系列の位置（0 始まり）
+    plan: "PlotPlan | None"
+
+    @property
+    def drawn(self) -> bool:
+        return self.plan is not None
+
+    @property
+    def number(self) -> int:
+        return self.index + 1
+
+
+@dataclass(frozen=True)
 class PlotPlan:
     skip_rows: int
     plot_type: str
@@ -334,6 +389,8 @@ class PlotPlan:
     colorbar: ColorbarPlan | None = None  # scatterColor / heatmap のときだけ
     heatmap: HeatmapPlan | None = None  # heatmap のときだけ
     computed: tuple["ComputedPlan", ...] = ()  # 計算した列（描画に使うデータ元のものだけ。カードの順）
+    layout: LayoutPlan = field(default_factory=LayoutPlan)
+    panels: tuple[PanelPlan, ...] = ()  # パネルが2つ以上のときだけ（1行×1列では空。そのとき上の項目がそのままパネル1）
 
     @property
     def plotted(self) -> tuple[SeriesPlan, ...]:
@@ -557,11 +614,15 @@ def _check_fit_data(n: int, fit, p: "SeriesPlan", x: pd.Series, y: pd.Series) ->
         raise _fit_error(n, "Y の値がすべて同じなので、近似できません（決定係数 R² を計算できません）。")
 
 
-def _build_fit_plans(settings: Settings, plans: list["SeriesPlan"]) -> tuple[FitPlan, ...]:
+def _build_fit_plans(
+    settings: Settings, plans: list["SeriesPlan"], fit_list: list[tuple[int, object]] | None = None
+) -> tuple[FitPlan, ...]:
+    """fit_list は (近似曲線の番号, FitSettings)。省略は設定の全部（パネルごとのときは、そのパネルの分だけ渡す。
+    図の中の文字の並び順 text_index は、渡した分の中で数える）。"""
     ids = {s.id: i for i, s in enumerate(settings.series)}
     out = []
     text_index = 0
-    for n, fit in _plan_fits(settings):
+    for n, fit in (_plan_fits(settings) if fit_list is None else fit_list):
         i = ids[fit.series]
         sp, ss = plans[i], settings.series[i]
         if not sp.has_points:
@@ -630,12 +691,14 @@ def _looks_like_date(text: str) -> bool:
 
 
 def _plan_annotations(
-    settings: Settings, x_kind: str, uses_secondary: bool, ext: "_Extents", y_kind: str | None = None
+    settings: Settings, x_kind: str, uses_secondary: bool, ext: "_Extents", y_kind: str | None = None,
+    annotations: list[tuple[int, object]] | None = None,
 ) -> tuple[AnnotationPlan, ...]:
-    """y_kind は Y 軸の種類（横棒の縦軸は category / number）。None なら Y のスケール（number / log）から決める。"""
+    """y_kind は Y 軸の種類（横棒の縦軸は category / number）。None なら Y のスケール（number / log）から決める。
+    annotations は (注釈の番号, AnnotationSettings)。省略は設定の全部（パネルごとのときは、そのパネルの分だけ渡す）。"""
     out = []
     y_log = {"y": settings.axes.y.scale == "log", "y2": settings.axes.y2.scale == "log"}
-    for n, a in enumerate(settings.annotations, start=1):
+    for n, a in (enumerate(settings.annotations, start=1) if annotations is None else annotations):
         use_y2 = a.axis == "y2" and uses_secondary
         target = "ax2" if use_y2 else "ax"
         y_axis = "y2" if use_y2 else "y"
@@ -785,8 +848,17 @@ def plan_plot(data, settings: Settings) -> PlotPlan:
     default_id = files[0].id if files else next(iter(data))
     multi = len(files) >= 2
 
-    if plot.type == "heatmap" and len(settings.series) > 1:
-        raise UserError(HEATMAP_SERIES_MESSAGE, field="系列")
+    layout = plot.layout
+    if plot.type == "heatmap":
+        if not layout.multi:
+            if len(settings.series) > 1:
+                raise UserError(HEATMAP_SERIES_MESSAGE, field="系列")
+        else:  # ヒートマップは1つのパネルに系列1つ
+            seen: set[int] = set()
+            for s in settings.series:
+                if s.panel in seen:
+                    raise UserError(heatmap_panel_message(s.panel + 1), field="系列")
+                seen.add(s.panel)
     ids: list[str] = []  # 系列ごとのデータ元
     for n, s in enumerate(settings.series, start=1):
         sid = s.source or default_id
@@ -817,16 +889,9 @@ def plan_plot(data, settings: Settings) -> PlotPlan:
             y_requests[i] = r
     computed, computed_warnings = _apply_computed(frames, default_id, settings, var_of)
     dfs = [frames[sid] for sid in ids]
-    if plot.type in {"line", "step", "scatter", "scatterColor"}:
-        plan = _plan_xy(dfs, settings, y_requests)
-    elif plot.type == "hist":
-        plan = _plan_hist(dfs, settings, y_requests)
-    elif plot.type in {"box", "violin"}:
-        plan = _plan_box(dfs, settings, y_requests)
-    elif plot.type == "heatmap":
-        plan = _plan_heatmap(dfs[0], settings, y_requests[0])
-    else:
-        plan = _plan_bar(dfs[0], settings, y_requests)
+    if layout.multi:
+        return _plan_panels(settings, dfs, y_requests, ids, var_of, sources, multi, computed, computed_warnings)
+    plan = _plan_figure(plot.type, dfs, settings, y_requests)
     series = tuple(replace(sp, data_id=sid, data_var=var_of[sid]) for sp, sid in zip(plan.series, ids))
     return replace(
         plan,
@@ -835,6 +900,123 @@ def plan_plot(data, settings: Settings) -> PlotPlan:
         multi_source=multi,
         computed=computed,
         warnings=tuple(computed_warnings) + tuple(plan.warnings),
+    )
+
+
+def _plan_figure(
+    plot_type: str, dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str], numbers: list[int] | None = None,
+    annotations: list | None = None, fit_list: list | None = None,
+) -> PlotPlan:
+    """1つの図（またはパネル1つ）の計画。settings.series はこの図（パネル）の系列だけ。
+    numbers は系列の番号（省略は 1, 2, …）、annotations / fit_list は (番号, 設定)（省略は設定の全部）。"""
+    if plot_type in {"line", "step", "scatter", "scatterColor"}:
+        return _plan_xy(dfs, settings, y_requests, numbers, annotations, fit_list)
+    if plot_type == "hist":
+        return _plan_hist(dfs, settings, y_requests, numbers, annotations)
+    if plot_type in {"box", "violin"}:
+        return _plan_box(dfs, settings, y_requests, numbers, annotations)
+    if plot_type == "heatmap":
+        return _plan_heatmap(dfs[0], settings, y_requests[0], numbers, annotations)
+    return _plan_bar(dfs[0], settings, y_requests, numbers, annotations)
+
+
+X_KIND_MISMATCH = "パネルによって X の種類（数値・文字列）が違います。X軸の目盛の設定は全パネル共通なので、X列の種類をそろえてください。"
+Y_KIND_MISMATCH = "パネルによって Y の種類（数値・文字列）が違います。Y軸の目盛の設定は全パネル共通なので、Y列の種類をそろえてください。"
+SHAREABLE_KINDS = {"number", "log", "datetime"}  # 軸を共有できる種類（カテゴリの軸はパネルごとに並びが違うので共有しない）
+
+
+def panel_label(style: str, index: int) -> str:
+    """パネルの記号。パネルの位置で決まる（パネル3 は常に c）。"""
+    if style == "none":
+        return ""
+    letter = chr(ord("a") + index)
+    return {"(a)": f"({letter})", "a": letter, "A": letter.upper(), "(A)": f"({letter.upper()})"}[style]
+
+
+def _plan_panels(
+    settings: Settings, dfs: list[pd.DataFrame], y_requests: list[str], ids: list[str], var_of: dict[str, str],
+    sources: tuple[PlanSource, ...], multi: bool, computed: tuple["ComputedPlan", ...], computed_warnings: list[dict],
+) -> PlotPlan:
+    """パネルが2つ以上のとき: パネルごとに、今の図1枚と同じ規則で計画を作る（系列・注釈・近似曲線の番号は図全体の番号のまま）。"""
+    plot, layout = settings.plot, settings.plot.layout
+    fits_all = _plan_fits(settings)
+    panels: list[PanelPlan] = []
+    warnings: list[dict] = list(computed_warnings)
+    for k in range(layout.count):
+        row, col = divmod(k, layout.cols)
+        own = plot.panels[k] if k < len(plot.panels) else PanelSettings()
+        idxs = tuple(i for i, s in enumerate(settings.series) if s.panel == k)
+        anns = [(n, a) for n, a in enumerate(settings.annotations, start=1) if a.panel == k]
+        if not idxs:
+            for n, _ in anns:
+                warnings.append({"series": 0, "message": f"注釈{n}: パネル{k + 1}に系列が無いため、描きません。"})
+            panels.append(PanelPlan(k, row, col, "", own.title, own.x_label, own.y_label, own.y2_label, idxs, None))
+            continue
+        view = replace(settings, series=tuple(settings.series[i] for i in idxs))
+        view_ids = {s.id for s in view.series}
+        try:
+            pplan = _plan_figure(
+                plot.type, [dfs[i] for i in idxs], view, [y_requests[i] for i in idxs], [i + 1 for i in idxs], anns,
+                [(n, f) for n, f in fits_all if f.series in view_ids],
+            )
+        except UserError as exc:
+            if exc.message.startswith("描画可能な"):  # 「描画可能な数値データがありません。」にパネルを添える
+                raise UserError(f"パネル{k + 1}: {exc.message}", field=exc.field, detail=exc.detail) from exc
+            raise
+        pplan = replace(
+            pplan,
+            series=tuple(replace(sp, data_id=ids[i], data_var=var_of[ids[i]]) for sp, i in zip(pplan.series, idxs)),
+            sources=sources,
+            multi_source=multi,
+            computed=computed,
+        )
+        warnings.extend(pplan.warnings)
+        panels.append(
+            PanelPlan(k, row, col, panel_label(layout.label_style, k), own.title, own.x_label, own.y_label, own.y2_label, idxs, pplan)
+        )
+    drawn = [pp for pp in panels if pp.plan is not None]
+    plans = [pp.plan for pp in drawn]
+    if plot.type in {"line", "step", "scatter", "scatterColor"} and len({p.datetime_x for p in plans}) > 1:
+        raise UserError("X が日時の系列と、日時でない系列を同じ図に描くことはできません。X列をそろえてください。", field="X列")
+    if len({p.axes.x.kind for p in plans}) > 1:
+        raise UserError(X_KIND_MISMATCH, field="X列")
+    if len({p.axes.y.kind for p in plans}) > 1:
+        raise UserError(Y_KIND_MISMATCH, field="Y列")
+    first = plans[0]
+    lay = LayoutPlan(
+        rows=layout.rows,
+        cols=layout.cols,
+        share_x=layout.share_x and first.axes.x.kind in SHAREABLE_KINDS,
+        share_y=layout.share_y and first.axes.y.kind in SHAREABLE_KINDS,
+        label_style=layout.label_style,
+        label_bold=layout.label_bold,
+    )
+    series_by_index = {i: sp for pp in drawn for i, sp in zip(pp.series_indices, pp.plan.series)}
+    return PlotPlan(
+        skip_rows=plot.skip_rows,
+        plot_type=plot.type,
+        series=tuple(series_by_index[i] for i in sorted(series_by_index)),
+        x_label=first.x_label,
+        y_label=first.y_label,
+        y2_label=next((p.y2_label for p in plans if p.uses_secondary), None),
+        bar_x_index=first.bar_x_index,
+        plotted_count=sum(p.plotted_count for p in plans),
+        uses_secondary=any(p.uses_secondary for p in plans),
+        warnings=tuple(warnings),
+        datetime_x=any(p.datetime_x for p in plans),
+        thin_categorical_x=any(p.thin_categorical_x for p in plans),
+        bar_date_format=first.bar_date_format,
+        sources=sources,
+        multi_source=multi,
+        axes=first.axes,
+        annotations=tuple(sorted((a for p in plans for a in p.annotations), key=lambda a: a.number)),
+        fits=tuple(sorted((f for p in plans for f in p.fits), key=lambda f: f.number)),
+        hist=first.hist,
+        colorbar=first.colorbar,
+        heatmap=first.heatmap,
+        computed=computed,
+        layout=lay,
+        panels=tuple(panels),
     )
 
 
@@ -1019,15 +1201,23 @@ def _color_values(
     return numeric
 
 
-def _plan_xy(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str]) -> PlotPlan:
+def _numbers_of(numbers: list[int] | None, count: int) -> list[int]:
+    """系列の番号（系列N の N）。パネルごとに作るときは、図全体の番号を渡す。"""
+    return list(range(1, count + 1)) if numbers is None else list(numbers)
+
+
+def _plan_xy(
+    dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str], numbers: list[int] | None = None,
+    annotations: list | None = None, fit_list: list | None = None,
+) -> PlotPlan:
     plot_type = settings.plot.type
     plans: list[SeriesPlan] = []
     warnings: list[dict] = []
     category_values: set = set()
     ext = _Extents()
-    fit_settings = _plan_fits(settings)
+    fit_settings = _plan_fits(settings) if fit_list is None else fit_list
     fits_of = {settings.series[i].id: [(k, f) for k, f in fit_settings if f.series == settings.series[i].id] for i in range(len(settings.series))}
-    for n, (df, series, y_request) in enumerate(zip(dfs, settings.series, y_requests), start=1):
+    for n, (df, series, y_request) in zip(_numbers_of(numbers, len(dfs)), zip(dfs, settings.series, y_requests)):
         x_index = resolve_column_index(df, series.x) if series.x else None
         x_label = str(df.columns[x_index]) if x_index is not None else "index"
         y_index = resolve_column_index(df, y_request)
@@ -1133,7 +1323,8 @@ def _plan_xy(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str])
         datetime_x=any(p.datetime_x and p.has_points for p in plans),
         thin_categorical_x=len(category_values) > MAX_CATEGORY_TICKS,
         axes_args=(x_kind, ext, len(category_values)),
-        fits=_build_fit_plans(settings, plans),
+        fits=_build_fit_plans(settings, plans, fit_settings),
+        annotations=annotations,
     )
 
 
@@ -1149,7 +1340,10 @@ def _check_datetime_x(settings: Settings, plans: list[SeriesPlan]) -> None:
         raise UserError("X が日時の列のときは、X軸を対数にできません。", field="X軸スケール")
 
 
-def _plan_bar(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> PlotPlan:
+def _plan_bar(
+    df: pd.DataFrame, settings: Settings, y_requests: list[str], numbers: list[int] | None = None, annotations: list | None = None,
+    fit_list: list | None = None,
+) -> PlotPlan:
     """bar / barh / barStacked。barh は軸を入れ替えて描く（値は横軸 = X 軸、カテゴリは縦軸 = Y 軸）。"""
     plot = settings.plot
     horizontal = plot.type == "barh"
@@ -1170,8 +1364,9 @@ def _plan_bar(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> Pl
     frame = pd.DataFrame({"x": x})
     plans: list[SeriesPlan] = []
     warnings: list[dict] = []
+    nums = _numbers_of(numbers, len(settings.series))
     for i, (series, y_request) in enumerate(zip(settings.series, y_requests)):
-        n = i + 1
+        n = nums[i]
         y_index = resolve_column_index(df, y_request)
         y_name, data_label = _label_for(df, y_index)
         if _is_datetime(df.iloc[:, y_index]):
@@ -1232,7 +1427,7 @@ def _plan_bar(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> Pl
             continue
         k = f"y_{i}"
         rows = ok & frame[k].notna()  # 棒を描く行（欠けた行は棒も誤差も描かない）
-        y_err, plus, minus = _plan_error(df, spec, "y", i + 1, rows, settings.load, warnings)
+        y_err, plus, minus = _plan_error(df, spec, "y", nums[i], rows, settings.load, warnings)
         axis = val_axis if horizontal else ("y2" if plans[i].secondary else "y")
         _add_error_extent(ext, axis, frame[k][rows], _take(plus, rows), _take(minus, rows))
         plans[i] = replace(plans[i], y_err=y_err, cap_size=series.error_bars.cap_size)
@@ -1250,20 +1445,23 @@ def _plan_bar(df: pd.DataFrame, settings: Settings, y_requests: list[str]) -> Pl
         axes_args = (cat_kind, ext, categories)
     return _finish(
         settings, plans, warnings, x_label, bar_x_index, datetime_x=datetime_x, bar_date_format=bar_date_format,
-        axes_args=axes_args,
+        axes_args=axes_args, annotations=annotations,
     )
 
 
 HIST_AUTO_BINS_MESSAGE = "区間の数が自動で{n} 個になりました（{limit} 個まで）。「区間の数」を指定してください。"
 
 
-def _plan_hist(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str]) -> PlotPlan:
+def _plan_hist(
+    dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str], numbers: list[int] | None = None, annotations: list | None = None,
+    fit_list: list | None = None,
+) -> PlotPlan:
     """ヒストグラム。各系列の Y 列の値の分布（X 列は使わない）。区間は全系列で共通。"""
     plot = settings.plot
     plans: list[SeriesPlan] = []
     warnings: list[dict] = []
     values: list[pd.Series] = []
-    for n, (df, series, y_request) in enumerate(zip(dfs, settings.series, y_requests), start=1):
+    for n, (df, series, y_request) in zip(_numbers_of(numbers, len(dfs)), zip(dfs, settings.series, y_requests)):
         y_index = resolve_column_index(df, y_request)
         y_name, data_label = _label_for(df, y_index)
         if _is_datetime(df.iloc[:, y_index]):
@@ -1310,6 +1508,7 @@ def _plan_hist(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str
     return _finish(
         settings, plans, warnings, "", None, axes_args=("log" if settings.axes.x.scale == "log" else "number", ext, 0),
         hist=HistPlan(bins=bins, density=plot.hist_density, bin_count=bin_count, max_height=max_height),
+        annotations=annotations,
     )
 
 
@@ -1317,7 +1516,10 @@ BOX_NO_VALUES = "系列{n}: 描ける値（数値の行）が無いため、{wha
 VIOLIN_FEW_VALUES = "系列{n}: 値が1個だけなので密度を推定できず、バイオリンは描きません。"
 
 
-def _plan_box(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str]) -> PlotPlan:
+def _plan_box(
+    dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str], numbers: list[int] | None = None, annotations: list | None = None,
+    fit_list: list | None = None,
+) -> PlotPlan:
     """箱ひげ図（box）・バイオリン図（violin）。系列ごとに Y 列の値の分布を1つ、左から系列の順（0, 1, 2, …）に描く。
 
     値が無い系列（バイオリンは2個未満）は、位置を空けたまま描かない（警告）。X 列は使わない。"""
@@ -1326,7 +1528,7 @@ def _plan_box(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str]
     plans: list[SeriesPlan] = []
     warnings: list[dict] = []
     ext = _Extents()
-    for n, (df, series, y_request) in enumerate(zip(dfs, settings.series, y_requests), start=1):
+    for n, (df, series, y_request) in zip(_numbers_of(numbers, len(dfs)), zip(dfs, settings.series, y_requests)):
         y_index = resolve_column_index(df, y_request)
         y_name, data_label = _label_for(df, y_index)
         if _is_datetime(df.iloc[:, y_index]):
@@ -1360,15 +1562,18 @@ def _plan_box(dfs: list[pd.DataFrame], settings: Settings, y_requests: list[str]
         )
     if not any(p.has_points for p in plans):
         raise UserError(_no_data_message(warnings))
-    return _finish(settings, plans, warnings, "", None, axes_args=("category", ext, len(plans)))
+    return _finish(settings, plans, warnings, "", None, axes_args=("category", ext, len(plans)), annotations=annotations)
 
 
-def _plan_heatmap(df: pd.DataFrame, settings: Settings, y_request: str) -> PlotPlan:
+def _plan_heatmap(
+    df: pd.DataFrame, settings: Settings, y_request: str, numbers: list[int] | None = None, annotations: list | None = None,
+    fit_list: list | None = None,
+) -> PlotPlan:
     """ヒートマップ。X・Y・値（色分けの列）の3列の縦長の表から格子を作る（案 H2）。系列は1つだけ。
 
     X・Y は数値の列か文字列の列（文字列は現れた順のカテゴリ）。日時の列は使えない。同じ X・Y の組は平均を描く。"""
     series = settings.series[0]
-    n = 1
+    n = _numbers_of(numbers, 1)[0]
     warnings: list[dict] = []
     x_index = resolve_column_index(df, series.x) if series.x else None
     x_label = str(df.columns[x_index]) if x_index is not None else "index"
@@ -1444,6 +1649,7 @@ def _plan_heatmap(df: pd.DataFrame, settings: Settings, y_request: str) -> PlotP
     return _finish(
         settings, [plan], warnings, x_label, None, axes_args=(x_kind, ext, x_count if x_text else 0, y_kind, y_count if y_text else 0),
         heatmap=HeatmapPlan(x_text=x_text, y_text=y_text, y_convert=convert_y, x_count=x_count, y_count=y_count, duplicates=duplicates),
+        annotations=annotations,
     )
 
 
@@ -1461,6 +1667,7 @@ def _finish(
     fits: tuple[FitPlan, ...] = (),
     hist: HistPlan | None = None,
     heatmap: HeatmapPlan | None = None,
+    annotations: list | None = None,
 ) -> PlotPlan:
     primary = [p.data_label for p in plans if not p.secondary]
     secondary = [p.data_label for p in plans if p.secondary]
@@ -1468,7 +1675,7 @@ def _finish(
     x_kind, ext, categories, *rest = axes_args or ("number", _Extents(), 0)
     y_kind = rest[0] if rest else None
     y_categories = rest[1] if len(rest) > 1 else None
-    annotations = _plan_annotations(settings, x_kind, uses_secondary, ext, y_kind)  # 範囲を ext に足すので、軸の計画より前
+    annotation_plans = _plan_annotations(settings, x_kind, uses_secondary, ext, y_kind, annotations)  # 範囲を ext に足すので、軸の計画より前
     plot_type = settings.plot.type
     y_label = primary[0] if len(primary) == 1 else "values"
     colorbar = None
@@ -1495,7 +1702,7 @@ def _finish(
         thin_categorical_x=thin_categorical_x,
         bar_date_format=bar_date_format,
         axes=_plan_axes(settings, x_kind, uses_secondary, ext, categories, y_kind, y_categories),
-        annotations=annotations,
+        annotations=annotation_plans,
         fits=fits,
         hist=hist,
         colorbar=colorbar,
