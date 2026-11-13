@@ -69,7 +69,7 @@ export const usesDatetimeX = () => {
 // 棒グラフのカテゴリ側の軸の種類。系列が複数、または X 列が数値でない（日時を含む）ならカテゴリ。X 列なし・数値なら numeric
 const barCategoryKind = (numeric) => {
   const { plot, series } = getSettings();
-  if (series.length > 1) return "category";
+  if (series.length > 1 || panelCount(plot.layout) > 1) return "category"; // Phase 5e: パネルが2つ以上のときは、1系列でも位置の形（カテゴリ）
   const col = series[0] && plot.xColumn ? columnsOf(series[0]).find((c) => c.value === plot.xColumn) : undefined;
   return col && col.kind !== "number" ? "category" : numeric;
 };

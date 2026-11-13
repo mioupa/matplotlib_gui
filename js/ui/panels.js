@@ -110,8 +110,9 @@ export const syncPanels = () => {
   hide("layoutOptionsGroup", !multi);
   hide("titlePanelHelp", !multi);
   // カテゴリの軸は共有できない（値は残す）
-  const catX = xAxisKind() === "category";
-  const catY = yAxisKind() === "category";
+  // 共有しない場合: 軸がカテゴリ、X は bar / barStacked / box / violin、Y は barh（Python と同じ規則）
+  const catX = xAxisKind() === "category" || ["bar", "barStacked", "box", "violin"].includes(plot.type);
+  const catY = yAxisKind() === "category" || plot.type === "barh";
   const shareX = document.getElementById("layoutShareX");
   const shareY = document.getElementById("layoutShareY");
   if (shareX) shareX.disabled = catX;
