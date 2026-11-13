@@ -1258,3 +1258,19 @@ button.series-color-chip.active {
   flex: 1 1 64px;
   min-width: 64px;
 }
+
+/* Phase 5e: パネル */
+#panelLabelsGroup > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.panel-label-row {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #ddd;
+}
+.panel-label-row input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}

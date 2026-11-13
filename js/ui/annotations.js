@@ -4,6 +4,7 @@ import { addAnnotation, getSettings, hasSecondaryAxis, removeAnnotation, updateA
 import { bindSeriesColorControls, colorPickerHtml } from "./colorPicker.js";
 import { readNumber } from "./forms.js";
 import { xAxisKind, yAxisKind } from "./series.js";
+import { syncPanelSelects } from "./panels.js";
 
 const esc = (text) =>
   String(text ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -31,6 +32,7 @@ const FIELD_KEYS = {
   alpha: ["alpha", "number"],
   "font-size": ["fontSize", "number"],
   label: ["label", "text"],
+  panel: ["panel", "number"],
 };
 
 const X_EXAMPLE = {
@@ -84,6 +86,10 @@ const cardHtml = (a, index) => {
         <option value="y">左（第1Y軸）</option>
         <option value="y2">右（第2Y軸）</option>
       </select>
+    </div>
+    <div class="group ann-panel-wrap" hidden>
+      <label for="${id("panel")}">パネル</label>
+      <select id="${id("panel")}" class="annotation-panel"></select>
     </div>
     <div class="row group">
       <div>
@@ -204,6 +210,7 @@ export const syncAnnotations = () => {
     const a = annotations.find((x) => x.id === item.dataset.annId);
     if (a) syncCard(item, a, xKind, yKind, hasY2);
   }
+  syncPanelSelects();
 };
 
 export const renderAnnotationList = () => {
