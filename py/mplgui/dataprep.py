@@ -389,6 +389,7 @@ class PlotPlan:
     colorbar: ColorbarPlan | None = None  # scatterColor / heatmap のときだけ
     heatmap: HeatmapPlan | None = None  # heatmap のときだけ
     computed: tuple["ComputedPlan", ...] = ()  # 計算した列（描画に使うデータ元のものだけ。カードの順）
+    bar_positions: bool = False  # bar / barh / barStacked を位置（0, 1, 2, …）の形で描く（複数系列・積み上げ・パネルが2つ以上）
     layout: LayoutPlan = field(default_factory=LayoutPlan)
     panels: tuple[PanelPlan, ...] = ()  # パネルが2つ以上のときだけ（1行×1列では空。そのとき上の項目がそのままパネル1）
 
@@ -1401,8 +1402,10 @@ def _plan_bar(
     if frame.empty:
         raise UserError(_no_data_message(warnings))
 
-    positions_form = stacked or len(plans) > 1  # 棒の位置（0, 1, 2, …）にカテゴリのラベルを付ける形
-    if len(plans) == 1 and not stacked:
+    # 棒の位置（0, 1, 2, …）にカテゴリのラベルを付ける形。パネルが2つ以上のときは、系列が1つでもこの形にする
+    # （パネルごとに系列の数が違っても、X（横棒は Y）の種類をカテゴリでそろえるため）
+    positions_form = stacked or len(plans) > 1 or settings.plot.layout.multi
+    if not positions_form:
         has_points = bool((frame["y_0"].notna() & pd.notna(frame["x"])).any())
         if not has_points:
             raise UserError(NO_DRAWABLE_DATA)
@@ -1445,10 +1448,11 @@ def _plan_bar(
         axes_args = ("log" if settings.axes.x.scale == "log" else "number", ext, categories, cat_kind)  # 縦軸はカテゴリ。Y のスケールは使わない
     else:
         axes_args = (cat_kind, ext, categories)
-    return _finish(
+    plan = _finish(
         settings, plans, warnings, x_label, bar_x_index, datetime_x=datetime_x, bar_date_format=bar_date_format,
         axes_args=axes_args, annotations=annotations,
     )
+    return replace(plan, bar_positions=positions_form)
 
 
 HIST_AUTO_BINS_MESSAGE = "区間の数が自動で{n} 個になりました（{limit} 個まで）。「区間の数」を指定してください。"
