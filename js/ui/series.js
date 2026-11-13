@@ -9,6 +9,7 @@ import {
   isBoxLike,
   isHeatmap,
   isLineLike,
+  panelCount,
   usesBox,
   usesColor,
   usesColorColumn,
