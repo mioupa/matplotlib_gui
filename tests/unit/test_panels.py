@@ -1,5 +1,6 @@
 """Phase 5e（G9 サブプロット）: パネルごとの計画・生成コード・図の要約。"""
 import re
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -386,15 +387,32 @@ def test_label_styles_follow_panel_position(tmp_path, style, expected):
     assert panels[(1, 0)]["titleleft"] == ""
 
 
-def test_label_bold_and_default_weight(tmp_path):
-    b = build(tmp_path, [series(1), series(2, panel=1)], rows=1, cols=2, labelBold=True)
+def _bold_font_file(title):
+    from matplotlib import font_manager
+
+    return Path(font_manager.findfont(title.get_fontproperties())).name
+
+
+@pytest.mark.parametrize("latin,family,font_file", [("default", "DejaVu Sans", "DejaVuSans-Bold.ttf"), ("tinos", "DejaVu Serif", "DejaVuSerif-Bold.ttf")])
+def test_label_bold_uses_bundled_bold_font(tmp_path, latin, family, font_file):
+    # 読み込む日本語・欧文フォントには太字が無いので、太字の記号は matplotlib 同梱のフォントで書く（ブラウザと手元で同じ見た目）
+    def mutate(raw):
+        raw["plot"]["latinFont"] = latin
+
+    b = build(tmp_path, [series(1), series(2, panel=1)], rows=1, cols=2, labelBold=True, mutate=mutate)
     with b.full() as run:
-        assert run.fig.axes[0]._left_title.get_fontweight() == "bold"
-    assert 'loc="left", fontsize=FONT_SIZE + 2, fontweight="bold")' in b.script.text
+        title = run.fig.axes[0]._left_title
+        assert title.get_fontweight() == "bold"
+        assert _bold_font_file(title) == font_file
+    assert f'loc="left", fontsize=FONT_SIZE + 2, fontweight="bold", fontfamily="{family}")' in b.script.text
+
+
+def test_label_default_weight(tmp_path):
     b = build(tmp_path, [series(1), series(2, panel=1)], rows=1, cols=2)
     with b.full() as run:
         assert run.fig.axes[0]._left_title.get_fontweight() == "normal"
     assert "fontweight" not in b.script.text
+    assert "fontfamily" not in b.script.text
 
 
 def test_suptitle_and_panel_titles(tmp_path):

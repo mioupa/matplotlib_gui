@@ -770,7 +770,7 @@ ax.plot(x_fit, fit(x_fit), color="#FF4B00", linewidth=2.0, linestyle="dashed", l
 | `plot.layout.rows` / `cols` | `1` / `1` | 1〜4 の整数。常に検証する（「パネルの行数」「パネルの列数」） |
 | `plot.layout.shareX` / `shareY` | `false` | X軸・Y軸をパネルで共有するか（真偽）。パネルが2つ以上のときだけ使う（§8.4） |
 | `plot.layout.labelStyle` | `"(a)"` | パネルの記号の書式。`(a)` / `a` / `A` / `(A)` / `none`。パネルが2つ以上のときだけ使う |
-| `plot.layout.labelBold` | `false` | パネルの記号を太字にするか |
+| `plot.layout.labelBold` | `false` | パネルの記号を太字にするか（実装時の変更（2026-11-13、ユーザーが決定）: 太字は matplotlib 同梱の DejaVu Sans Bold で書く。Tinos のときは DejaVu Serif Bold。読み込む Noto Sans JP に太字が無く、`fontweight` だけでは太字にならないため） |
 | `plot.panels` | `[]` | `[{title, xLabel, yLabel, y2Label}]`。配列の位置がパネルの位置（左上から右へ、行ごと）。足りない分は空として扱う。16 個まで |
 | `series[].panel` | `0` | 系列を描くパネルの位置（0 始まり）。パネルが2つ以上のときだけ検証して使う |
 | `annotations[].panel` | `0` | 注釈を置くパネルの位置。同上 |

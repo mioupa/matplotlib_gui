@@ -3,6 +3,7 @@
 import pytest
 
 from helpers import (
+    act_and_wait_render,
     add_annotation,
     code_text,
     enter_edit_mode,
@@ -213,3 +214,18 @@ def test_narrow_screen_has_no_horizontal_scroll(page, app_url, fixtures_dir, con
         }"""
     )
     assert overflow["page"] <= 0 and overflow["wide"] == []
+
+
+def test_bold_panel_label_changes_the_figure(page, app_url, fixtures_dir, console_log):
+    # 読み込む Noto Sans JP には太字が無いので、太字の記号は matplotlib 同梱の DejaVu Sans Bold で書く（図が実際に変わること）
+    start(page, app_url, fixtures_dir)
+    add_second_series(page)
+    set_layout(page, 1, 2)
+    set_series_panel(page, "s2", 1)
+    wait_settled(page)
+    regular = page.get_attribute("#plotArea img", "src")
+    act_and_wait_render(page, lambda: page.check("#panelLabelBold"))
+    wait_settled(page)
+    assert page.get_attribute("#plotArea img", "src") != regular
+    assert 'fontweight="bold", fontfamily="DejaVu Sans")' in code_text(page)
+    assert [a["titleleft"] for a in image_summary(page)] == ["(a)", "(b)"]

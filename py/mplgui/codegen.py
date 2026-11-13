@@ -26,6 +26,8 @@ LINE_ONLY_MARKERS = {"x", "+"}  # 線だけでできた点の形（縁を描か�
 XY_TYPES = {"line", "step", "scatter", "scatterColor"}  # X と Y の組で描く種類（X が日時なら日時の軸、エラーバー・帯・近似曲線を使える）
 BOX_TYPES = {"box", "violin"}  # 系列ごとに1つの箱・胴を描く種類（横軸は系列の名前）
 NO_SERIES_LEGEND_TYPES = {"box", "violin", "heatmap"}  # 系列を凡例に出さない種類（名前は目盛に出る・カラーバーで読む）
+# パネルの記号を太字にするときのフォント（matplotlib 同梱。読み込む日本語・欧文フォントには太字が無いため）
+BOLD_LABEL_FONTS = {"sans": "DejaVu Sans", "serif": "DejaVu Serif"}
 
 GENERIC_ERROR_MESSAGE = "グラフを描画できませんでした。X列・Y列に指定した列の値の形式（数値と文字列の混在など）や、設定の値を確認してください。"
 TIGHT_LAYOUT_ERROR = "レイアウトの自動調整に失敗しました。余白を手動で指定するか、図の大きさ・フォントサイズを小さくしてください。"
@@ -1331,8 +1333,16 @@ def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan, ctx: _PanelCtx |
         pp = ctx.panel
         own_x, own_y, own_y2 = pp.x_label, pp.y_label, pp.y2_label
         if pp.label:
-            bold = ', fontweight="bold"' if ctx.bold else ""
-            b.add(f"ax.set_title({literal(pp.label)}, loc=\"left\", fontsize=FONT_SIZE + 2{bold})  # パネルの記号")
+            if ctx.bold:
+                # 太字は matplotlib 同梱のフォントで書く。読み込む日本語・欧文フォントには太字が無く、
+                # fontweight だけでは標準の太さで描かれる（手元の Python ではヒラギノなどの太字になり、画面と食い違う）
+                family = BOLD_LABEL_FONTS["serif" if plot.latin_font == "tinos" else "sans"]
+                b.add(
+                    f"ax.set_title({literal(pp.label)}, loc=\"left\", fontsize=FONT_SIZE + 2, fontweight=\"bold\", "
+                    f"fontfamily={literal(family)})  # パネルの記号（太字。matplotlib 同梱の {family} Bold で書く）"
+                )
+            else:
+                b.add(f"ax.set_title({literal(pp.label)}, loc=\"left\", fontsize=FONT_SIZE + 2)  # パネルの記号")
         if pp.title:
             b.add(f"ax.set_title({literal(pp.title)}, fontsize=FONT_SIZE + 2)")
     if ctx is None or ctx.x_label:
