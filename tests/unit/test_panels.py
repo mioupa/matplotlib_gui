@@ -317,10 +317,44 @@ def test_bar_and_stacked_per_panel(tmp_path):
     assert panels[(0, 1)]["bars"]["stacked"] == 1 and panels[(0, 0)]["bars"]["stacked"] == 0
 
 
-def test_bar_panels_must_have_the_same_x_kind(tmp_path):
-    # 1系列の棒は数値の X、2系列以上の棒はカテゴリの X なので、そろえるよう案内する
-    e = user_error(lambda: plan(series_list=[series(1), series(2, panel=1), series(3, panel=1)], plot_type="bar", rows=1, cols=2))
-    assert e.field == "X列"
+@pytest.mark.parametrize("plot_type", ["bar", "barh"])
+def test_bar_panels_with_different_series_counts_draw(tmp_path, plot_type):
+    # パネルが2つ以上のときは、1系列の棒も位置の形（カテゴリ）で描くので、系列の数が違っても種類はそろう
+    b = build(tmp_path, [series(1), series(2), series(3, panel=1)], rows=2, cols=1, plot_type=plot_type)
+    assert b.plan.panels[0].plan.axes.x.kind == b.plan.panels[1].plan.axes.x.kind
+    key = "horizontal" if plot_type == "barh" else "vertical"
+    panels = axes_of(summary(b))
+    assert panels[(0, 0)]["bars"]["containers"] == [10, 10] and panels[(1, 0)]["bars"]["containers"] == [10]
+    assert panels[(1, 0)]["bars"][key] == 10
+    assert "positions + offset" in b.script.text and b.script.text.count("positions = np.arange") == 2
+
+
+def test_single_series_bar_panel_uses_category_form_with_error_bars(tmp_path):
+    err = {"y": {"mode": "fixed", "value": 1.0}}
+    b = build(tmp_path, [series(1, errorBars=err), series(2, panel=1)], rows=1, cols=2, plot_type="bar")
+    text = b.script.text
+    assert "width = 0.8 / 1" in text and "yerr=" in text and "set_xticks(positions[::tick_step])" in text
+    panels = axes_of(summary(b))
+    assert panels[(0, 0)]["bars"]["vertical"] == 10 and panels[(0, 0)]["xlim"][0] < 0  # 位置 0, 1, …（行番号ではなくカテゴリ）
+    b = build(tmp_path, [series(1, errorBars=err), series(2, panel=1)], rows=1, cols=2, plot_type="barh")
+    assert "xerr=" in b.script.text and summary(b)
+
+
+def test_single_series_bar_panel_annotation_x_is_a_category_index(tmp_path):
+    ann = [{"kind": "vline", "x": "2", "panel": 1}, {"kind": "text", "text": "T", "x": "1.5", "y": "5", "panel": 1}]
+    b = build(tmp_path, [series(1), series(2, panel=1)], rows=1, cols=2, plot_type="bar", annotations=ann)
+    p1 = b.plan.panels[1].plan
+    assert p1.axes.x.kind == "category" and [a.x for a in p1.annotations] == [2.0, 1.5]  # 何番目のカテゴリか
+    assert axes_of(summary(b))[(0, 1)]["annotations"]["vlines"] == 1
+    # 日時の X も、今までどおりカテゴリの文字列にする
+    df = pd.DataFrame({"d": pd.date_range("2026-01-01", periods=4, freq="D"), "v": [1.0, 2.0, 3.0, 4.0], "w": [4.0, 3.0, 2.0, 1.0]})
+    b = build(tmp_path, [series(1, x=0), series(2, x=0, panel=1)], rows=1, cols=2, plot_type="bar", df=df, mutate=lambda raw: raw["plot"].update(xColumn="__idx__0"))
+    assert axes_of(summary(b))[(0, 1)]["xticklabels"] == ["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04"]
+
+
+def test_single_panel_bar_is_unchanged(tmp_path):
+    b = Built(tmp_path, series_list=[series(1)], plot_type="bar")
+    assert not b.plan.bar_positions and "positions" not in b.script.text
 
 
 def test_heatmap_per_panel_with_colorbars(tmp_path):

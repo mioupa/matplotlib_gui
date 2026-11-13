@@ -238,7 +238,7 @@ def _panel_plans(plan: PlotPlan) -> list[PlotPlan]:
 
 def _positions_form(plan: PlotPlan) -> bool:
     """棒を位置（0, 1, 2, …）に置き、カテゴリのラベルを付ける形（複数系列の棒・横棒、積み上げ棒）。"""
-    return plan.plot_type in {"barStacked"} | BOX_TYPES or (plan.plot_type in {"bar", "barh"} and len(plan.series) > 1)
+    return plan.plot_type in {"barStacked"} | BOX_TYPES or (plan.plot_type in {"bar", "barh"} and (len(plan.series) > 1 or plan.bar_positions))
 
 
 def _scale(settings: Settings, plan: PlotPlan, name: str) -> str:
@@ -756,7 +756,7 @@ def _emit_bar_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
     func = "barh" if horizontal else "bar"
     size_arg = "height" if horizontal else "width"
     ax2 = _Axes2State()
-    if len(plan.series) == 1:
+    if not _positions_form(plan):
         s, p = settings.series[0], plan.series[0]
         b.add(_series_comment(p))
         with b.step(GENERIC_ERROR_MESSAGE):
