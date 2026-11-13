@@ -891,3 +891,104 @@ def test_5c_new_types_and_hidden_settings():
     with pytest.raises(UserError) as e:
         parse_settings(raw)
     assert e.value.field == "カラーマップ"
+
+
+# ---------------------------------------------------------------- Phase 5e: サブプロットのパネル（G9）の項目
+
+
+def _panel_raw(rows=2, cols=2, **plot):
+    raw = default_settings()
+    raw["plot"]["layout"].update(rows=rows, cols=cols)
+    raw["plot"].update(plot)
+    return raw
+
+
+def test_5e_defaults_and_parse():
+    d = default_settings()
+    assert d["plot"]["layout"] == {"rows": 1, "cols": 1, "shareX": False, "shareY": False, "labelStyle": "(a)", "labelBold": False}
+    assert d["plot"]["panels"] == [] and d["series"][0]["panel"] == 0
+    s = parse_settings(d)
+    assert (s.plot.layout.rows, s.plot.layout.cols, s.plot.layout.multi) == (1, 1, False)
+    assert s.plot.panels == () and s.series[0].panel == 0
+
+
+def test_5e_single_panel_does_not_validate_or_use_hidden_items():
+    raw = default_settings()
+    raw["plot"]["layout"].update(shareX="yes", labelStyle="zzz", labelBold=3)
+    raw["plot"]["panels"] = "bad"
+    raw["series"][0]["panel"] = 99
+    raw["annotations"] = [{"kind": "hline", "y": "1", "panel": "x"}]
+    s = parse_settings(raw)
+    assert s.plot.layout.share_x is False and s.plot.layout.label_style == "(a)" and s.plot.panels == ()
+    assert s.series[0].panel == 0 and s.annotations[0].panel == 0
+    raw["plot"]["layout"].update(rows=2, cols=1)  # 配置を戻すと、隠していた不正な値がエラーになる
+    with pytest.raises(UserError):
+        parse_settings(raw)
+
+
+@pytest.mark.parametrize("key,label", [("rows", "パネルの行数"), ("cols", "パネルの列数")])
+@pytest.mark.parametrize("bad", [0, 5, 1.5, "x", True])
+def test_5e_rows_and_cols_are_always_validated(key, label, bad):
+    raw = default_settings()
+    raw["plot"]["layout"][key] = bad
+    with pytest.raises(UserError) as e:
+        parse_settings(raw)
+    assert e.value.field == label
+
+
+def test_5e_multi_panel_items():
+    raw = _panel_raw(2, 2, panels=[{"title": " T ", "xLabel": "x", "yLabel": "y", "y2Label": "z"}])
+    raw["plot"]["layout"].update(shareX=True, labelStyle="A", labelBold=True)
+    s = parse_settings(raw).plot
+    assert s.layout.count == 4 and s.layout.share_x and s.layout.label_style == "A" and s.layout.label_bold
+    assert len(s.panels) == 4 and s.panels[0].title == "T" and s.panels[0].y2_label == "z"
+    assert s.panels[3].title == ""  # 足りない分は空
+    for layout in ({"labelStyle": "zzz"}, {"shareY": 1}):
+        bad = _panel_raw(2, 1)
+        bad["plot"]["layout"].update(layout)
+        with pytest.raises(UserError):
+            parse_settings(bad)
+    with pytest.raises(UserError):
+        parse_settings(_panel_raw(2, 1, panels="x"))
+    with pytest.raises(UserError) as e:
+        parse_settings(_panel_raw(2, 2, panels=[{}] * 17))
+    assert e.value.field == "パネル"
+    with pytest.raises(UserError):
+        parse_settings(_panel_raw(2, 2, panels=[{"title": 3}]))
+
+
+def test_5e_panel_out_of_range_errors():
+    raw = _panel_raw(2, 2)
+    raw["series"] = [{"y": "__idx__1"}, {"y": "__idx__1"}, {"y": "__idx__1", "panel": 4}]
+    with pytest.raises(UserError) as e:
+        parse_settings(raw)
+    assert e.value.message == "系列3のパネル（パネル5）は今の配置（2行×2列）にありません。パネルを選び直してください。"
+    assert e.value.field == "系列3のパネル"
+    raw["series"][2]["panel"] = 3
+    raw["annotations"] = [{"kind": "hline", "y": "1"}, {"kind": "hline", "y": "1", "panel": -1}]
+    with pytest.raises(UserError) as e:
+        parse_settings(raw)
+    assert e.value.field == "注釈2のパネル" and "注釈2のパネル" in e.value.message
+    raw["annotations"][1]["panel"] = "abc"
+    with pytest.raises(UserError) as e:
+        parse_settings(raw)
+    assert e.value.field == "注釈2のパネル"
+    raw["annotations"][1]["panel"] = "3"  # 数値文字列・整数に見える数値は受け付ける
+    assert [s.panel for s in parse_settings(raw).series] == [0, 0, 3]
+    assert parse_settings(raw).annotations[1].panel == 3
+
+
+def test_5e_heatmap_is_one_series_per_panel():
+    raw = default_settings()
+    raw["plot"]["type"] = "heatmap"
+    raw["series"] = [{"y": "__idx__1", "colorColumn": "__idx__2"}] * 2
+    with pytest.raises(UserError) as e:
+        parse_settings(raw)
+    assert e.value.message == "ヒートマップは系列1つで描きます。系列を1つにしてください。" and e.value.field == "系列"
+    raw["plot"]["layout"].update(rows=1, cols=2)
+    with pytest.raises(UserError) as e:  # 2つとも同じパネル（既定の 0）
+        parse_settings(raw)
+    assert e.value.message == "ヒートマップは1つのパネルに系列1つで描きます。パネル1の系列を1つにしてください。"
+    assert e.value.field == "系列"
+    raw["series"][1] = dict(raw["series"][1], panel=1)
+    assert [s.panel for s in parse_settings(raw).series] == [0, 1]

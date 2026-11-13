@@ -923,6 +923,8 @@ def _plan_figure(
 X_KIND_MISMATCH = "パネルによって X の種類（数値・文字列）が違います。X軸の目盛の設定は全パネル共通なので、X列の種類をそろえてください。"
 Y_KIND_MISMATCH = "パネルによって Y の種類（数値・文字列）が違います。Y軸の目盛の設定は全パネル共通なので、Y列の種類をそろえてください。"
 SHAREABLE_KINDS = {"number", "log", "datetime"}  # 軸を共有できる種類（カテゴリの軸はパネルごとに並びが違うので共有しない）
+NO_SHARE_X_TYPES = {"bar", "barStacked", "box", "violin"}  # X がカテゴリ（棒の位置・系列の名前）の種類。単一系列で X が数値でも共有しない
+NO_SHARE_Y_TYPES = {"barh"}  # Y がカテゴリの種類
 
 
 def panel_label(style: str, index: int) -> str:
@@ -986,8 +988,8 @@ def _plan_panels(
     lay = LayoutPlan(
         rows=layout.rows,
         cols=layout.cols,
-        share_x=layout.share_x and first.axes.x.kind in SHAREABLE_KINDS,
-        share_y=layout.share_y and first.axes.y.kind in SHAREABLE_KINDS,
+        share_x=layout.share_x and plot.type not in NO_SHARE_X_TYPES and first.axes.x.kind in SHAREABLE_KINDS,
+        share_y=layout.share_y and plot.type not in NO_SHARE_Y_TYPES and first.axes.y.kind in SHAREABLE_KINDS,
         label_style=layout.label_style,
         label_bold=layout.label_bold,
     )
