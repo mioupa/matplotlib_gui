@@ -114,13 +114,42 @@ def _is_colorbar_axes(ax) -> bool:
     return getattr(ax, "_colorbar", None) is not None
 
 
+def _colorbar_info(cb) -> dict:
+    return {"label": cb.ax.get_ylabel(), "cmap": cb.cmap.name, "vmin": float(cb.norm.vmin), "vmax": float(cb.norm.vmax)}
+
+
+def _spec_of(ax):
+    """Axes の位置（GridSpec の最上位の SubplotSpec）。カラーバー付きの Axes は、元のグリッドの中の位置になる。無ければ None。"""
+    try:
+        spec = ax.get_subplotspec()
+    except AttributeError:
+        return None
+    return spec.get_topmost_subplotspec() if spec is not None else None
+
+
 def _colorbar_summary(fig):
     """カラーバー（あれば1本目）の {label, cmap, vmin, vmax}。無ければ None。"""
     for ax in fig.axes:
         cb = getattr(ax, "_colorbar", None)
         if cb is not None:
-            return {"label": cb.ax.get_ylabel(), "cmap": cb.cmap.name, "vmin": float(cb.norm.vmin), "vmax": float(cb.norm.vmax)}
+            return _colorbar_info(cb)
     return None
+
+
+def _colorbars_by_panel(fig) -> tuple[dict, list]:
+    """カラーバーを、付いている Axes の位置（SubplotSpec）で引けるようにする。位置が分からないものは別に返す（先頭の Axes に付ける）。"""
+    by_spec: dict = {}
+    loose: list = []
+    for ax in fig.axes:
+        cb = getattr(ax, "_colorbar", None)
+        if cb is None:
+            continue
+        spec = _spec_of(ax)
+        if spec is None:
+            loose.append(_colorbar_info(cb))
+        else:
+            by_spec.setdefault(spec, _colorbar_info(cb))  # 1つのパネルに複数あれば、最初の1本
+    return by_spec, loose
 
 
 def _bar_summary(ax) -> dict:
@@ -202,13 +231,26 @@ def figure_summary(fig) -> list[dict]:
       箱ひげ図の線（ひげ・端・中央値・外れ値・平均）も `_box` なので、markers / alphas / drawstyles には数えない（lines には数える）
     - violins: バイオリン図の胴の数（ラベルが `_violin` の collection。中央値・端の線は LineCollection で collections に数える）
     - meshes: ヒートマップ（pcolormesh）の QuadMesh の数
+
+    Phase 5e（サブプロットのパネル）で足したキー（既存のキーの値は変えない。1行×1列でも出る）:
+    - panel: その Axes のパネルの位置 [行, 列]（0 始まり。第2Y軸は元のパネルと同じ。位置が分からなければ null）
+    - axison: 軸を表示しているか（使わないパネルは axis("off") で false）
+    - titleleft: 左のタイトル（パネルの記号。無ければ ""）
+    - suptitle: 図全体のタイトル。一覧の先頭の項目にだけ文字が入り、ほかは ""
+    - colorbar: カラーバーを付けた Axes の項目に出す（パネルごとのカラーバー。第2Y軸の項目には出さない）。
+      カラーバーの位置が分からないときだけ、先頭の Axes に付ける
     """
     out = []
-    colorbar = _colorbar_summary(fig)
+    by_spec, loose = _colorbars_by_panel(fig)
+    suptitle = fig.get_suptitle() if hasattr(fig, "get_suptitle") else ""
     for ax in fig.axes:
         if _is_colorbar_axes(ax):
             continue
         legend = ax.get_legend()
+        spec = _spec_of(ax)
+        colorbar = by_spec.pop(spec, None) if spec is not None else None
+        if colorbar is None and not out and loose:
+            colorbar = loose[0]
         out.append(
             {
                 "title": ax.get_title(),
@@ -238,7 +280,11 @@ def figure_summary(fig) -> list[dict]:
                 "errorbars": sum(1 for line in ax.lines if line.get_label() == "_errorbar")
                 + sum(1 for c in ax.containers if type(c).__name__ == "ErrorbarContainer"),
                 **_style_summary(ax),
-                "colorbar": colorbar if not out else None,
+                "colorbar": colorbar,
+                "panel": [int(spec.rowspan.start), int(spec.colspan.start)] if spec is not None else None,
+                "axison": bool(ax.axison),
+                "titleleft": ax.get_title(loc="left"),
+                "suptitle": suptitle if not out else "",
             }
         )
     return out
