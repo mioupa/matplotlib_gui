@@ -40,6 +40,7 @@ export const DEFAULT_SERIES = {
   alpha: 1,
   fill: { lower: "", upper: "", alpha: 0.25 },
   colorColumn: "",
+  panel: 0, // Phase 5e: 描くパネルの位置（0 始まり。パネルが2つ以上のときだけ使う）
 };
 
 // 注釈（annotations[]）1つの既定値。id は追加するときに a1, a2, ... を振る（削除しても再利用しない）
@@ -59,6 +60,7 @@ export const DEFAULT_ANNOTATION = {
   alpha: null,
   fontSize: null,
   label: "",
+  panel: 0, // Phase 5e: 置くパネルの位置（0 始まり）
 };
 
 // 近似曲線（fits[]）1つの既定値。id は f1, f2, ...。series は追加するときに系列1の id にする
@@ -98,6 +100,9 @@ export const DEFAULT_SETTINGS = {
     colorbarLabel: "",
     box: { fliers: true, means: false },
     violin: { medians: true, means: false },
+    // Phase 5e: パネルの配置（1行×1列は今と同じ図）と、パネルごとのタイトル・軸ラベル（配列の位置 = パネルの位置）
+    layout: { rows: 1, cols: 1, shareX: false, shareY: false, labelStyle: "(a)", labelBold: false },
+    panels: [],
   },
   axes: {
     x: { label: "", scale: "linear", min: null, max: null, dateFormat: "", ...defaultTicks(), majorStepUnit: "day", dateMin: "", dateMax: "" },

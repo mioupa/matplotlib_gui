@@ -112,6 +112,7 @@ _DEFAULT_ANNOTATION = {
     "alpha": None,
     "fontSize": None,
     "label": "",
+    "panel": 0,
 }
 _DEFAULT_COMPUTED = {"id": "", "source": "", "name": "", "expr": ""}
 _DEFAULT_FIT = {
@@ -135,6 +136,7 @@ _DEFAULT_SERIES = {
     "alpha": 1,
     "fill": copy.deepcopy(_DEFAULT_FILL),
     "colorColumn": "",
+    "panel": 0,
 }
 
 
@@ -186,6 +188,8 @@ def default_settings() -> dict:
             "colorbarLabel": "",
             "box": {"fliers": True, "means": False},
             "violin": {"medians": True, "means": False},
+            "layout": {"rows": 1, "cols": 1, "shareX": False, "shareY": False, "labelStyle": "(a)", "labelBold": False},
+            "panels": [],
         },
         "axes": {
             "x": {
