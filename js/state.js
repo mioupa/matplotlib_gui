@@ -251,4 +251,24 @@ export const removeComputed = (id) => {
   notify({ kind: "computed-list", origin: "user" });
 };
 
+// id（s1 など）の末尾の番号の最大値。連番の続きを決めるのに使う（settings-io.js にも同じものがある。state.js は純粋な依存を増やさない）
+const maxIdNumber = (items, prefix) =>
+  items.reduce((max, item) => {
+    const m = new RegExp(`^${prefix}(\\d+)$`).exec(item && typeof item.id === "string" ? item.id : "");
+    return m ? Math.max(max, Number(m[1])) : max;
+  }, 0);
+
+// 設定をまるごと入れ替える（設定ファイルの読込・初期設定に戻す・前回の設定の復元）。
+// id の連番は、入れ替えた設定の最大の番号から続ける（新しく足したものと重ならない）。直近のプリセットは忘れる。
+// extra は通知にそのまま添える（読込の付随情報）。画面を全部描き直すのは購読側（main.js）
+export const replaceSettings = (next, extra = {}) => {
+  settings = clone(next);
+  seriesCounter = maxIdNumber(settings.series, "s");
+  annotationCounter = maxIdNumber(settings.annotations, "a");
+  fitCounter = maxIdNumber(settings.fits, "f");
+  computedCounter = maxIdNumber(settings.computed, "c");
+  lastPreset = null;
+  notify({ kind: "settings-replaced", origin: "user", ...extra });
+};
+
 export const hasSecondaryAxis = () => usesY2(settings.plot.type) && settings.series.some((s) => s.secondaryAxis); // 第2Y軸を使わない種類では、値を残しても使わない
