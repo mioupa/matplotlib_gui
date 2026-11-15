@@ -47,6 +47,17 @@ CHANGE_JS = """
 """
 
 
+# R1 で、前回の設定を localStorage から復元するようになった。計測は同じコンテキストでページを開き直すので、
+# 前のページの設定が戻らないよう、ページを開くたびに控えを消す（計測の条件を R1 より前と同じにする）
+CLEAR_LAST_SETTINGS = "try { window.localStorage.removeItem('mplgui.lastSettings'); } catch (e) {}"
+
+
+def new_context(browser, **kw):
+    ctx = browser.new_context(**kw)
+    ctx.add_init_script(CLEAR_LAST_SETTINGS)
+    return ctx
+
+
 def stats(xs):
     return {"median": statistics.median(xs), "min": min(xs), "max": max(xs), "n": len(xs)}
 
@@ -75,7 +86,7 @@ def setup_series(page):
 def bench_startup(browser, url, reps):
     cold, warm = [], []
     for _ in range(reps):
-        ctx = browser.new_context()  # 空のHTTPキャッシュ
+        ctx = new_context(browser)  # 空のHTTPキャッシュ
         page = ctx.new_page()
         t = time.perf_counter()
         page.goto(url, timeout=TIMEOUT)
@@ -83,7 +94,7 @@ def bench_startup(browser, url, reps):
         cold.append((time.perf_counter() - t) * 1000)
         ctx.close()
     # ウォーム: 同一コンテキストで1回目(捨てる)の後、新規ページで再ナビゲート（HTTPキャッシュ有効）
-    ctx = browser.new_context()
+    ctx = new_context(browser)
     p0 = ctx.new_page()
     p0.goto(url, timeout=TIMEOUT)
     wait_app_ready(p0, TIMEOUT)
@@ -101,7 +112,7 @@ def bench_startup(browser, url, reps):
 
 def bench_render(browser, url, reps, csv_path):
     first_plot, change, save, edit_run = [], [], [], []
-    ctx = browser.new_context()
+    ctx = new_context(browser)
     # フォント等をHTTPキャッシュに載せるための捨て試行
     p0 = ctx.new_page()
     p0.goto(url, timeout=TIMEOUT)
@@ -155,7 +166,7 @@ def bench_render(browser, url, reps, csv_path):
 def bench_xlsx(browser, url, reps, xlsx_path):
     """初回の .xlsx 読込 → 最初のプロット（Excel 用 wheel の遅延取得を含む。HTTP キャッシュは温めた状態）。"""
     out = []
-    ctx = browser.new_context()
+    ctx = new_context(browser)
     p0 = ctx.new_page()
     p0.goto(url, timeout=TIMEOUT)
     wait_app_ready(p0, TIMEOUT)
@@ -193,7 +204,7 @@ def _prepared_page(ctx, url, csv_path):
 
 def _warm_context(browser, url, csv_path, **kw):
     """HTTP キャッシュ・Cache Storage（日本語フォント）を温めたコンテキスト。"""
-    ctx = browser.new_context(**kw)
+    ctx = new_context(browser, **kw)
     _prepared_page(ctx, url, csv_path).close()
     return ctx
 
@@ -242,7 +253,7 @@ def bench_latin_font(browser, url, reps, csv_path):
     (b) 2回目以降: Cache Storage に Arimo がある状態（同一コンテキストで1回選んで保存済み）。"""
     first, cached, first_fetch = [], [], []
     for _ in range(reps):
-        ctx = browser.new_context()
+        ctx = new_context(browser)
         page = _prepared_page(ctx, url, csv_path)
         page.wait_for_timeout(1500)
         # 参考: 選択から data-latin-font-state が ready になるまで（取得 + 登録。デバウンスと並行して進む）
@@ -259,7 +270,7 @@ def bench_latin_font(browser, url, reps, csv_path):
         first.append(page.evaluate(CHANGE_JS, ["#latinFont", "arimo"]))
         first_fetch.append(page.evaluate("window.__latinReady"))
         ctx.close()
-    ctx = browser.new_context()
+    ctx = new_context(browser)
     page = _prepared_page(ctx, url, csv_path)
     page.evaluate(CHANGE_JS, ["#latinFont", "arimo"])
     wait_latin_state(page, "ready", TIMEOUT)
@@ -279,7 +290,7 @@ def bench_japanese_font(browser, url, reps):
     および Python 準備完了（app ready）からの追加待ち時間。"""
     total, after_ready = [], []
     for _ in range(reps):
-        ctx = browser.new_context()
+        ctx = new_context(browser)
         page = ctx.new_page()
         page.set_default_timeout(TIMEOUT)
         t = time.perf_counter()
@@ -337,7 +348,7 @@ def make_datetime_csv(path, rows=10_000):
 def bench_paste(browser, url, reps, big_text, small_text):
     """貼り付け（ClipboardEvent を #pasteArea へ）→ 最初のプロット。終了条件は「初回ファイル読込」と同じ。"""
     out = {}
-    ctx = browser.new_context()
+    ctx = new_context(browser)
     p0 = ctx.new_page()
     p0.goto(url, timeout=TIMEOUT)
     wait_app_ready(p0, TIMEOUT)
@@ -366,7 +377,7 @@ def bench_sheet_switch(browser, url, reps, xlsx_path):
     """2 シート × 10,000 行の xlsx。(a) 初回読込 → 最初のプロット（Excel 用 wheel 取得込み、HTTP キャッシュは温めた状態）、
     (b) 系列5本を設定した後、#sheetSelect で 2 枚目へ → 新しい画像（change イベントから。読み直し + 描画）。"""
     first, switch = [], []
-    ctx = browser.new_context()
+    ctx = new_context(browser)
     p0 = ctx.new_page()
     p0.goto(url, timeout=TIMEOUT)
     wait_app_ready(p0, TIMEOUT)
@@ -417,7 +428,7 @@ def bench_two_files(browser, url, reps, path1, path2):
     """2つの 10,000 行 CSV を #fileInput（multiple）で同時に選ぶ → 最初のプロット。
     設定変更: 系列1 はファイル1、系列2 はファイル2 の 2 系列でタイトルを変える。"""
     first, change = [], []
-    ctx = browser.new_context()
+    ctx = new_context(browser)
     p0 = ctx.new_page()
     p0.goto(url, timeout=TIMEOUT)
     wait_app_ready(p0, TIMEOUT)
@@ -659,7 +670,7 @@ def bench_heatmap_change(browser, url, reps, heat_path):
     """ヒートマップ: 100×100 の縦持ちデータ（10,000 行）、1 系列（X = 列0、Y = 列1、値の列 = 列2）で meshes == 1 とカラーバーが出るまで待ってから、「設定変更」を測る。
     系列は1本だけ（_prepared_page は5系列にするので使わず、ここで読み込む）。"""
     out = []
-    ctx = browser.new_context()
+    ctx = new_context(browser)
     # 温め（HTTP キャッシュ・Cache Storage の日本語フォント）
     w = ctx.new_page()
     w.set_default_timeout(TIMEOUT)
@@ -795,7 +806,7 @@ def bench_p5e_2x2_change(browser, url, reps, csv_path):
 def bench_p5e_4x4_change(browser, url, reps, panel_path):
     """4×4: line 16 系列（1パネル1系列）、X を共有。Axes 16 個の図が出るまで待って、「設定変更」を測る。"""
     out = []
-    ctx = browser.new_context()
+    ctx = new_context(browser)
     w = ctx.new_page()
     w.set_default_timeout(TIMEOUT)
     w.goto(url)
