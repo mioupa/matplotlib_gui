@@ -741,6 +741,106 @@ def bench_scipy_first_load(browser, url, reps, csv_path):
     return out
 
 
+# --- Phase 5e: サブプロット（パネル） ---
+def make_panel_csv(path, rows=10_000, ys=16):
+    """X + Y {ys} 列の合成データ。"""
+    import math
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["x"] + [f"y{k + 1}" for k in range(ys)])
+        for i in range(rows):
+            x = i * 0.01
+            w.writerow([round(x, 4)] + [round(math.sin(x * (k + 1)) + 0.1 * k, 5) for k in range(ys)])
+
+
+def _wait_axes(page, n, cond="true"):
+    """data-summary の Axes が n 個以上で、cond（JS の式。a が Axes の要約の配列）を満たすまで待つ。"""
+    page.wait_for_function(
+        """([n, cond]) => { const d = document.querySelector('#plotArea img'); if (!d || !d.dataset.summary) return false;
+          try { const a = JSON.parse(d.dataset.summary); return a.length >= n && Function('a', 'return ' + cond)(a); } catch (e) { return false; } }""",
+        arg=[n, cond], timeout=TIMEOUT)
+
+
+def _set_layout(page, rows, cols, share_x=False):
+    page.select_option("#layoutRows", str(rows))
+    page.select_option("#layoutCols", str(cols))
+    if share_x:
+        page.check("#layoutShareX")
+
+
+def _measure(page, i):
+    page.wait_for_timeout(3000)
+    return page.evaluate(CHANGE_JS, ["#title", f"bench title {i}"])
+
+
+def bench_p5e_2x2_change(browser, url, reps, csv_path):
+    """2×2: line 5 系列（パネル 0,0,1,2,3）、系列2を第2Y軸（パネル1）、パネル2の系列に近似曲線（1次式、図の中）。Axes 5 個（第2Y軸の分）の図が出るまで待って、「設定変更」を測る。"""
+    out = []
+    ctx = _warm_context(browser, url, csv_path)
+    for i in range(reps):
+        page = _prepared_page(ctx, url, csv_path)
+        _set_layout(page, 2, 2)
+        ids = series_ids(page)
+        for sid, panel in zip(ids, [0, 0, 1, 2, 3]):
+            page.select_option(f"#series-{sid}-panel", str(panel))
+        page.check(f"#series-{ids[1]}-use-y2")
+        add_fit(page, series=ids[3], model="linear", show="text")
+        _wait_axes(page, 5, "a.some((s) => s.fittexts >= 1)")
+        out.append(_measure(page, i))
+        page.close()
+    ctx.close()
+    return out
+
+
+def bench_p5e_4x4_change(browser, url, reps, panel_path):
+    """4×4: line 16 系列（1パネル1系列）、X を共有。Axes 16 個の図が出るまで待って、「設定変更」を測る。"""
+    out = []
+    ctx = browser.new_context()
+    w = ctx.new_page()
+    w.set_default_timeout(TIMEOUT)
+    w.goto(url)
+    wait_app_ready(w, TIMEOUT)
+    w.close()
+    for i in range(reps):
+        page = ctx.new_page()
+        page.set_default_timeout(TIMEOUT)
+        page.goto(url)
+        wait_app_ready(page, TIMEOUT)
+        page.set_input_files("#fileInput", str(panel_path))
+        wait_data_ready(page, TIMEOUT)
+        wait_plot_changed(page, "", TIMEOUT)
+        for _ in range(15):
+            page.click("#addSeriesBtn")
+        _set_layout(page, 4, 4, share_x=True)
+        for k, sid in enumerate(series_ids(page)):
+            page.select_option(f"#series-{sid}-x", "__idx__0")
+            page.select_option(f"#series-{sid}-y", f"__idx__{k + 1}")
+            page.select_option(f"#series-{sid}-panel", str(k))
+        _wait_axes(page, 16)
+        out.append(_measure(page, i))
+        page.close()
+    ctx.close()
+    return out
+
+
+def bench_p5e_scatter_color_change(browser, url, reps, color_path):
+    """2×2 の色分け散布図: 5 系列（パネル 0,0,1,2,3。Y 列1-5、色分けの列 6-10）。カラーバーが出るまで待って、「設定変更」を測る。"""
+    out = []
+    ctx = _warm_context(browser, url, color_path)
+    for i in range(reps):
+        page = _prepared_page(ctx, url, color_path)
+        page.select_option("#plotType", "scatterColor")
+        _set_layout(page, 2, 2)
+        for k, sid in enumerate(series_ids(page)):
+            page.select_option(f"#series-{sid}-color-column", f"__idx__{k + 6}")
+            page.select_option(f"#series-{sid}-panel", str([0, 0, 1, 2, 3][k]))
+        _wait_axes(page, 4, "a.filter((s) => !!s.colorbar).length >= 4")
+        out.append(_measure(page, i))
+        page.close()
+    ctx.close()
+    return out
+
+
 def fmt(name, xs):
     s = stats(xs)
     return f"{name:<44} median {s['median']:9.0f}  min {s['min']:9.0f}  max {s['max']:9.0f}  (ms, n={s['n']})"
@@ -751,7 +851,7 @@ def main():
     ap.add_argument("--reps", type=int, default=5)
     ap.add_argument("--headed", action="store_true")
     ap.add_argument("--json")
-    ap.add_argument("--only", choices=["old", "new", "p5a", "p5b", "p5c", "p5d"], help="old: Phase 3 までの項目だけ / new: Phase 4 の項目だけ / p5a: Phase 5a の項目だけ / p5b: Phase 5b の項目だけ / p5c: Phase 5c の項目だけ / p5d: Phase 5d の項目だけ（省略時は全部）")
+    ap.add_argument("--only", choices=["old", "new", "p5a", "p5b", "p5c", "p5d", "p5e"], help="old: Phase 3 までの項目だけ / new: Phase 4 の項目だけ / p5a: Phase 5a の項目だけ / p5b: Phase 5b の項目だけ / p5c: Phase 5c の項目だけ / p5d: Phase 5d の項目だけ / p5e: Phase 5e の項目だけ（省略時は全部）")
     a = ap.parse_args()
     serve = Path(os.environ.get("E2E_SERVE_DIR") or REPO)
     srv, url = start_server(serve)
@@ -772,6 +872,8 @@ def main():
     make_color_csv(color_path)
     heat_path = tmp / "bench_heatmap_10000x3.csv"
     make_heatmap_csv(heat_path)
+    panel_path = tmp / "bench_panels_10000x17.csv"
+    make_panel_csv(panel_path)
     big_tsv = make_tsv()
     small_tsv = make_tsv(rows=30, ys=2)
     with sync_playwright() as p:
@@ -868,6 +970,19 @@ def main():
                 "custom_fit_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in cfit_change],
                 # 参考値: scipy の初回読み込み（約 14 MB の取得と import を含む。ネットワークに依存）
                 "scipy_first_load_to_plot_ms": scipy_first,
+            })
+        if a.only in (None, "p5e"):
+            p22 = bench_p5e_2x2_change(browser, url, a.reps, csv_path)
+            p44 = bench_p5e_4x4_change(browser, url, a.reps, panel_path)
+            p_sc = bench_p5e_scatter_color_change(browser, url, a.reps, color_path)
+            res.update({
+                # Phase 5e で追加（サブプロット。デバウンス込みと、250 ms を除いた値）
+                "panels_2x2_line5_change_to_plot_ms": p22,
+                "panels_2x2_line5_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in p22],
+                "panels_4x4_line16_change_to_plot_ms": p44,
+                "panels_4x4_line16_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in p44],
+                "panels_2x2_scatter_color_change_to_plot_ms": p_sc,
+                "panels_2x2_scatter_color_change_to_plot_minus_debounce_ms": [c - DEBOUNCE_MS for c in p_sc],
             })
         browser.close()
     for k, v in res.items():

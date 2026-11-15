@@ -209,6 +209,49 @@
             </div>
           </div>
 
+          <div id="layoutGroup" class="group">
+            <div class="row">
+              <div>
+                <label for="layoutRows">パネルの配置（行）</label>
+                <select id="layoutRows">
+                  <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+                </select>
+              </div>
+              <div>
+                <label for="layoutCols">パネルの配置（列）</label>
+                <select id="layoutCols">
+                  <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+                </select>
+              </div>
+            </div>
+            <div class="help-text">行×列が2以上のとき、系列と注釈ごとに描くパネルを選べます。</div>
+            <div id="layoutOptionsGroup" hidden>
+              <div class="group inline">
+                <input id="layoutShareX" type="checkbox" />
+                <label for="layoutShareX">X軸を共有</label>
+              </div>
+              <div class="group inline">
+                <input id="layoutShareY" type="checkbox" />
+                <label for="layoutShareY">Y軸を共有</label>
+              </div>
+              <div id="layoutShareHelp" class="help-text" hidden>カテゴリの軸は共有できません。</div>
+              <div class="group">
+                <label for="panelLabelStyle">パネルの見出し</label>
+                <select id="panelLabelStyle">
+                  <option value="(a)">(a) (b) (c)</option>
+                  <option value="a">a b c</option>
+                  <option value="A">A B C</option>
+                  <option value="(A)">(A) (B) (C)</option>
+                  <option value="none">なし</option>
+                </select>
+              </div>
+              <div class="group inline">
+                <input id="panelLabelBold" type="checkbox" />
+                <label for="panelLabelBold">見出しを太字にする</label>
+              </div>
+            </div>
+          </div>
+
           <div class="group">
             <label for="skipRows">描画から除外する先頭行数</label>
             <input id="skipRows" type="number" min="0" step="1" value="0" />
@@ -241,6 +284,7 @@
           <div class="group">
             <label for="title">タイトル</label>
             <input id="title" placeholder="タイトルなし" />
+            <div id="titlePanelHelp" class="help-text" hidden>パネルが2つ以上のときは、図全体の上に出します。</div>
           </div>
 
           <div class="row group">
@@ -258,6 +302,11 @@
             <label for="y2Label">第2Y軸ラベル</label>
             <input id="y2Label" placeholder="第2軸を使う系列があるときに有効" />
           </div>
+
+          <details id="panelLabelsGroup" class="group" hidden>
+            <summary>パネルごとのタイトル・軸ラベル</summary>
+            <div id="panelLabelsList"></div>
+          </details>
 
           <div id="mathtextHelp" class="help-text group">
             タイトル・軸ラベル・凡例名では、$ で囲んだ部分が数式になります。例: m$^2$（上付き）、H$_2$O（下付き）、$\alpha$（ギリシャ文字）。$ を文字として書くときは \$ とします。

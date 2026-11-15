@@ -9,6 +9,7 @@ import {
   isBoxLike,
   isHeatmap,
   isLineLike,
+  panelCount,
   usesBox,
   usesColor,
   usesColorColumn,
@@ -69,7 +70,7 @@ export const usesDatetimeX = () => {
 // 棒グラフのカテゴリ側の軸の種類。系列が複数、または X 列が数値でない（日時を含む）ならカテゴリ。X 列なし・数値なら numeric
 const barCategoryKind = (numeric) => {
   const { plot, series } = getSettings();
-  if (series.length > 1) return "category";
+  if (series.length > 1 || panelCount(plot.layout) > 1) return "category"; // Phase 5e: パネルが2つ以上のときは、1系列でも位置の形（カテゴリ）
   const col = series[0] && plot.xColumn ? columnsOf(series[0]).find((c) => c.value === plot.xColumn) : undefined;
   return col && col.kind !== "number" ? "category" : numeric;
 };
@@ -281,6 +282,10 @@ const cardHtml = (series, plotType) => {
     <div class="group series-color-column-wrap" hidden>
       <label for="${id("color-column")}" class="series-color-column-label">色分けの列</label>
       <select id="${id("color-column")}" class="series-color-column"></select>
+    </div>
+    <div class="group series-panel-wrap" hidden>
+      <label for="${id("panel")}">パネル</label>
+      <select id="${id("panel")}" class="series-panel"></select>
     </div>
     <div class="group series-y2-wrap">
       <label class="inline check-label">
@@ -625,6 +630,7 @@ const FIELD_BY_CLASS = [
   ["series-color-column", "colorColumn", "text"],
   ["series-legend-name", "label", "text"],
   ["series-use-y2", "secondaryAxis", "checkbox"],
+  ["series-panel", "panel", "number"],
 ];
 
 // データ元を替えたら、X / Y は自動に戻す（別のファイルの列番号は意味が変わる）。系列1なら棒グラフの X列も戻す

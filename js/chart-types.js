@@ -37,3 +37,19 @@ export const isHeatmap = (type) => type === "heatmap";
 export const usesColor = (type) => type !== "heatmap";
 export const usesLineWidth = (type) => type !== "heatmap";
 export const usesLineStyle = (type) => type !== "heatmap" && !BOX_TYPES.includes(type);
+
+// ---- Phase 5e: サブプロットのパネル（純粋な関数。DOM にも state にも触れない） ----
+export const panelCount = (layout) => Math.max(1, (Number(layout && layout.rows) || 1) * (Number(layout && layout.cols) || 1));
+
+// パネルの位置 panel（0 始まり）を、パネルが n 個に減ったときの位置にする（範囲外は最後のパネル）。n が 1 以下なら変えない
+export const remapPanelIndex = (panel, n) => (n > 1 && Number(panel) >= n ? n - 1 : panel);
+
+// 系列・注釈のパネルの付け替え計画。{series: [{id, index, from, to}], annotations: [...]}（index は一覧の位置、0 始まり）
+export const planPanelRemap = (series, annotations, n) => {
+  const plan = (items) =>
+    items.flatMap((item, index) => {
+      const to = remapPanelIndex(item.panel, n);
+      return to === item.panel ? [] : [{ id: item.id, index, from: item.panel, to }];
+    });
+  return { series: plan(series), annotations: plan(annotations) };
+};

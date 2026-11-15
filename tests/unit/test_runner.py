@@ -486,3 +486,74 @@ def test_figure_summary_has_5b_keys_with_neutral_defaults():
     assert summary["annotations"] == {"texts": 0, "hlines": 0, "vlines": 0, "hspans": 0, "vspans": 0}
     assert summary["markers"] == ["None"] and summary["alphas"] == [None]
     assert summary["lines"] == 1 and summary["errorbars"] == 0
+
+
+# ---------------------------------------------------------------- Phase 5e: パネルの要約
+
+
+def test_figure_summary_5e_keys_for_a_single_axes():
+    from mplgui.runner import figure_summary
+
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1])
+    try:
+        s = figure_summary(fig)[0]
+    finally:
+        plt.close(fig)
+    assert (s["panel"], s["axison"], s["titleleft"], s["suptitle"], s["colorbar"]) == ([0, 0], True, "", "", None)
+
+
+def test_figure_summary_panels_titles_and_off_axes():
+    from mplgui.runner import figure_summary
+
+    fig, axs = plt.subplots(2, 2, squeeze=False)
+    fig.suptitle("全体")
+    axs[0, 1].set_title("(b)", loc="left")
+    axs[0, 1].set_title("中央")
+    axs[1, 0].axis("off")
+    twin = axs[0, 0].twinx()
+    twin.plot([0, 1], [0, 1])
+    try:
+        out = figure_summary(fig)
+    finally:
+        plt.close(fig)
+    assert [s["panel"] for s in out] == [[0, 0], [0, 1], [1, 0], [1, 1], [0, 0]]  # 第2Y軸は元のパネルの位置
+    assert [s["axison"] for s in out] == [True, True, False, True, True]
+    assert [s["titleleft"] for s in out] == ["", "(b)", "", "", ""]
+    assert [s["title"] for s in out][1] == "中央"
+    assert [s["suptitle"] for s in out] == ["全体", "", "", "", ""]  # 図のタイトルは先頭の項目だけ
+
+
+def test_figure_summary_colorbar_belongs_to_the_axes_that_has_it():
+    import numpy as np
+
+    from mplgui.runner import figure_summary
+
+    fig, axs = plt.subplots(1, 3, squeeze=False)
+    data = np.arange(4.0).reshape(2, 2)
+    fig.colorbar(axs[0, 1].pcolormesh(data, vmin=0, vmax=3), ax=axs[0, 1]).set_label("B")
+    fig.colorbar(axs[0, 2].pcolormesh(data * 2, vmin=0, vmax=6), ax=axs[0, 2]).set_label("C")
+    fig.tight_layout()
+    try:
+        out = figure_summary(fig)
+    finally:
+        plt.close(fig)
+    assert len(out) == 3 and out[0]["colorbar"] is None  # カラーバーの Axes は一覧に入れない
+    assert [(s["colorbar"]["label"], s["colorbar"]["vmax"]) for s in out[1:]] == [("B", 3.0), ("C", 6.0)]
+    assert [s["panel"] for s in out] == [[0, 0], [0, 1], [0, 2]]
+
+
+def test_figure_summary_colorbar_of_a_single_axes_stays_on_the_first_entry():
+    import numpy as np
+
+    from mplgui.runner import figure_summary
+
+    fig, ax = plt.subplots()
+    fig.colorbar(ax.pcolormesh(np.arange(4.0).reshape(2, 2)), ax=ax)
+    twin = ax.twinx()
+    twin.plot([0, 1], [0, 1])
+    try:
+        out = figure_summary(fig)
+    finally:
+        plt.close(fig)
+    assert out[0]["colorbar"] is not None and out[1]["colorbar"] is None

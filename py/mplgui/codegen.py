@@ -10,11 +10,11 @@ GUI の描画は、このスクリプトの「データ読込」と「保存・�
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 from . import expr as expr_module
-from .dataprep import AnnotationPlan, AxisPlan, ErrorPlan, FitPlan, PlotPlan, SeriesPlan
+from .dataprep import AnnotationPlan, AxisPlan, ErrorPlan, FitPlan, PanelPlan, PlotPlan, SeriesPlan
 from .fonts import LATIN_FONTS, SANS_SERIF_PRIORITY
 from .formats import FORMATS, build_filename, savefig_kwargs, savefig_rc
 from .loader import DatetimeColumn, SourceInfo
@@ -26,6 +26,8 @@ LINE_ONLY_MARKERS = {"x", "+"}  # 線だけでできた点の形（縁を描か�
 XY_TYPES = {"line", "step", "scatter", "scatterColor"}  # X と Y の組で描く種類（X が日時なら日時の軸、エラーバー・帯・近似曲線を使える）
 BOX_TYPES = {"box", "violin"}  # 系列ごとに1つの箱・胴を描く種類（横軸は系列の名前）
 NO_SERIES_LEGEND_TYPES = {"box", "violin", "heatmap"}  # 系列を凡例に出さない種類（名前は目盛に出る・カラーバーで読む）
+# パネルの記号を太字にするときのフォント（matplotlib 同梱。読み込む日本語・欧文フォントには太字が無いため）
+BOLD_LABEL_FONTS = {"sans": "DejaVu Sans", "serif": "DejaVu Serif"}
 
 GENERIC_ERROR_MESSAGE = "グラフを描画できませんでした。X列・Y列に指定した列の値の形式（数値と文字列の混在など）や、設定の値を確認してください。"
 TIGHT_LAYOUT_ERROR = "レイアウトの自動調整に失敗しました。余白を手動で指定するか、図の大きさ・フォントサイズを小さくしてください。"
@@ -120,6 +122,7 @@ class _Builder:
         self.load_lines = (0, -1)
         self.output_lines = (0, -1)
         self._section_count = 0
+        self.panel_mode = False  # パネルの節の中: 小見出しは番号なしの `# --- 見出し ---`
 
     def add(self, *lines: str) -> None:
         self.lines.extend(lines)
@@ -128,7 +131,11 @@ class _Builder:
         self.lines.append("")
 
     def section(self, title: str) -> int:
-        """区切りの見出し（番号は呼んだ順に自動で振る）を書き、その行番号（1 始まり）を返す。"""
+        """区切りの見出し（番号は呼んだ順に自動で振る）を書き、その行番号（1 始まり）を返す。
+        パネルの節の中（panel_mode）では、番号なしの小見出し `# --- 見出し ---`。"""
+        if self.panel_mode:
+            self.lines.append(f"# --- {title} ---")
+            return len(self.lines)
         if self.lines:
             self.blank()
         self._section_count += 1
@@ -224,9 +231,16 @@ def _emit_header(
             b.add(f'plt.rcParams["mathtext.fontset"] = {literal(latin.mathtext_fontset)}  # 数式（$...$）も Times 系の字形にする（STIX は matplotlib に同梱）')
 
 
+def _panel_plans(plan: PlotPlan) -> list[PlotPlan]:
+    """描くパネルごとの計画（1行×1列は、図の計画そのもの1つ）。"""
+    if not plan.layout.multi:
+        return [plan]
+    return [pp.plan for pp in plan.panels if pp.plan is not None]
+
+
 def _positions_form(plan: PlotPlan) -> bool:
     """棒を位置（0, 1, 2, …）に置き、カテゴリのラベルを付ける形（複数系列の棒・横棒、積み上げ棒）。"""
-    return plan.plot_type in {"barStacked"} | BOX_TYPES or (plan.plot_type in {"bar", "barh"} and len(plan.series) > 1)
+    return plan.plot_type in {"barStacked"} | BOX_TYPES or (plan.plot_type in {"bar", "barh"} and (len(plan.series) > 1 or plan.bar_positions))
 
 
 def _scale(settings: Settings, plan: PlotPlan, name: str) -> str:
@@ -241,7 +255,7 @@ def _scale(settings: Settings, plan: PlotPlan, name: str) -> str:
 
 
 def _uses_date_axis(plan: PlotPlan) -> bool:
-    return plan.datetime_x and plan.plot_type in XY_TYPES
+    return any(p.datetime_x and p.plot_type in XY_TYPES for p in _panel_plans(plan))
 
 
 def _font_list_literal() -> str:
@@ -359,8 +373,31 @@ def _emit_computed(b: _Builder, plan: PlotPlan) -> None:
             )
 
 
-def _emit_figure(b: _Builder, settings: Settings) -> None:
+def _emit_multi_figure(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
+    """パネルが2つ以上: plt.subplots でパネルの Axes を作る（axs[行, 列]）。タイトルは図全体の上（suptitle）。"""
+    fig = settings.plot.figure
+    lay = plan.layout
+    w, h = literal(fig.width), literal(fig.height)
+    share = (", sharex=True" if lay.share_x else "") + (", sharey=True" if lay.share_y else "")
+    b.add(f"# {lay.rows}行 × {lay.cols}列のパネル（axs[行, 列]。左上が axs[0, 0]）")
+    if fig.unit == "in":
+        size, note = f"({w}, {h})", f"幅 {comment_text(w)} × 高さ {comment_text(h)} インチ"
+    else:
+        const, per_inch = ("CM_PER_INCH", "2.54") if fig.unit == "cm" else ("MM_PER_INCH", "25.4")
+        b.add(f"{const} = {per_inch}  # 1 インチ = {per_inch} {fig.unit}（figsize はインチで指定するので、{fig.unit} の値をこれで割る）")
+        size, note = f"({w} / {const}, {h} / {const})", f"幅 {comment_text(w)} {fig.unit} × 高さ {comment_text(h)} {fig.unit}"
+    b.add(f"fig, axs = plt.subplots({lay.rows}, {lay.cols}, figsize={size}, dpi=100, squeeze=False{share})  # {note}")
+    if share:
+        b.add("# 軸の共有: 範囲・目盛がそろい、内側のパネルの目盛の数字は消える")
+    if settings.plot.title:
+        b.add(f"fig.suptitle({literal(settings.plot.title)}, fontsize=FONT_SIZE + 2)  # 図全体のタイトル")
+
+
+def _emit_figure(b: _Builder, settings: Settings, plan: PlotPlan | None = None) -> None:
     b.section("図と軸")
+    if plan is not None and plan.layout.multi:
+        _emit_multi_figure(b, settings, plan)
+        return
     fig = settings.plot.figure
     w, h = literal(fig.width), literal(fig.height)
     if fig.unit == "in":
@@ -721,7 +758,7 @@ def _emit_bar_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
     func = "barh" if horizontal else "bar"
     size_arg = "height" if horizontal else "width"
     ax2 = _Axes2State()
-    if len(plan.series) == 1:
+    if not _positions_form(plan):
         s, p = settings.series[0], plan.series[0]
         b.add(_series_comment(p))
         with b.step(GENERIC_ERROR_MESSAGE):
@@ -927,8 +964,7 @@ def _emit_box_series(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
         f"positions = np.arange({n})  # {'胴' if violin else '箱'}の位置（系列の順に 0, 1, 2, …）",
         f"x_labels = [{labels}]  # 目盛のラベル（系列の凡例名）",
     )
-    for s, p in zip(settings.series, plan.series):
-        i = p.number - 1
+    for i, (s, p) in enumerate(zip(settings.series, plan.series)):  # 位置は、このパネルの中の系列の順
         b.blank()
         b.add(f"# 系列{p.number}{'' if p.data_var == 'df' else f'（{p.data_var}）'}: Y = {_column_comment(p, 'y')}")
         if not p.has_points:
@@ -975,8 +1011,8 @@ def _emit_heatmap_series(b: _Builder, settings: Settings, plan: PlotPlan) -> Non
     p, hm, colorbar = plan.series[0], plan.heatmap, plan.colorbar
     assert hm is not None and colorbar is not None
     cmap = literal(colorbar.colormap)
-    b.add(f"# 系列1: X = {_column_comment(p, 'x')}、Y = {_column_comment(p, 'y')}、値 = {comment_text(p.color_label)}")
-    with b.step("ヒートマップの格子を作れませんでした。X・Y・値の列を確認してください。", "系列1の値の列"):
+    b.add(f"# 系列{p.number}: X = {_column_comment(p, 'x')}、Y = {_column_comment(p, 'y')}、値 = {comment_text(p.color_label)}")
+    with b.step("ヒートマップの格子を作れませんでした。X・Y・値の列を確認してください。", f"系列{p.number}の値の列"):
         _emit_x_data(b, p)
         if hm.y_convert:
             b.add(f'y = pd.to_numeric({p.data_var}.iloc[:, {p.y_index}], errors="coerce")  # 数値にできない値は NaN にする')
@@ -1122,15 +1158,16 @@ class _AxisBlock:
     label: str  # X / Y / 第2Y
     axis: AxisSettings
     plan: AxisPlan
+    multi: bool = False  # パネルが2つ以上（軸を共有しているとき invert_xaxis() は二重にかかるので、set_inverted(True) を使う）
 
 
-def _axis_blocks(settings: Settings, plan: PlotPlan) -> list[_AxisBlock]:
+def _axis_blocks(settings: Settings, plan: PlotPlan, multi: bool = False) -> list[_AxisBlock]:
     blocks = [
-        _AxisBlock("ax", "x", "x", "X", settings.axes.x, plan.axes.x),
-        _AxisBlock("ax", "y", "y", "Y", settings.axes.y, plan.axes.y),
+        _AxisBlock("ax", "x", "x", "X", settings.axes.x, plan.axes.x, multi),
+        _AxisBlock("ax", "y", "y", "Y", settings.axes.y, plan.axes.y, multi),
     ]
     if plan.uses_secondary and plan.axes.y2 is not None:
-        blocks.append(_AxisBlock("ax2", "y", "y2", "第2Y", settings.axes.y2, plan.axes.y2))
+        blocks.append(_AxisBlock("ax2", "y", "y2", "第2Y", settings.axes.y2, plan.axes.y2, multi))
     return blocks
 
 
@@ -1140,7 +1177,9 @@ def _per_axis_minor(plan: PlotPlan) -> bool:
 
 
 def _uses_ticker(settings: Settings, plan: PlotPlan) -> bool:
-    return any("ticker." in line for blk in _axis_blocks(settings, plan) for line in _axis_tick_lines(blk, settings, plan))
+    return any(
+        "ticker." in line for p in _panel_plans(plan) for blk in _axis_blocks(settings, p) for line in _axis_tick_lines(blk, settings, p)
+    )
 
 
 def _scale_lines(blk: _AxisBlock, settings: Settings, plan: PlotPlan) -> list[str]:
@@ -1233,7 +1272,10 @@ def _axis_tick_lines(blk: _AxisBlock, settings: Settings, plan: PlotPlan) -> lis
     if _per_axis_minor(plan):
         lines += _minor_lines(blk, settings.plot.grid_minor)
     if blk.plan.inverted:
-        lines.append(f"{blk.var}.invert_{blk.which}axis()  # {blk.label}軸を反転する（{_INVERT_NOTES[blk.name]}）")
+        if blk.multi:
+            lines.append(f"{blk.var}.{blk.which}axis.set_inverted(True)  # {blk.label}軸を反転する（{_INVERT_NOTES[blk.name]}。軸を共有していても1回だけ反転する）")
+        else:
+            lines.append(f"{blk.var}.invert_{blk.which}axis()  # {blk.label}軸を反転する（{_INVERT_NOTES[blk.name]}）")
     return lines
 
 
@@ -1251,18 +1293,67 @@ def _position_word(plan: PlotPlan) -> str:
     return {"box": "箱", "violin": "胴"}.get(plan.plot_type, "棒")
 
 
-def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
+@dataclass(frozen=True)
+class _PanelCtx:
+    """パネルが2つ以上のときの、1つのパネルの書き方（タイトル・記号・軸ラベルと目盛の数字の出し分け）。"""
+
+    panel: PanelPlan
+    bold: bool
+    x_label: bool  # X軸ラベルを書くか（共有した X は、各列の一番下の描くパネルだけ）
+    y_label: bool  # Y軸ラベルを書くか（共有した Y は、各行の一番左の描くパネルだけ）
+    x_ticks: bool  # 共有した X の目盛の数字を出し直すか（下のパネルを使わないとき）
+    y_ticks: bool
+
+
+def _panel_ctx(plan: PlotPlan, pp: PanelPlan) -> _PanelCtx:
+    lay = plan.layout
+    drawn = [q for q in plan.panels if q.drawn]
+    lowest = max(q.row for q in drawn if q.col == pp.col)  # この列で、描く一番下のパネルの行
+    leftmost = min(q.col for q in drawn if q.row == pp.row)  # この行で、描く一番左のパネルの列
+    bottom_here = lay.share_x and pp.row == lowest
+    left_here = lay.share_y and pp.col == leftmost
+    return _PanelCtx(
+        panel=pp,
+        bold=lay.label_bold,
+        x_label=(not lay.share_x) or pp.row == lowest,
+        y_label=(not lay.share_y) or pp.col == leftmost,
+        x_ticks=bottom_here and pp.row != lay.rows - 1,
+        y_ticks=left_here and pp.col != 0,
+    )
+
+
+def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan, ctx: _PanelCtx | None = None) -> None:
     b.section("軸（ラベル・スケール・範囲・目盛）")
     plot, axes = settings.plot, settings.axes
-    if plot.title:
-        b.add(f"ax.set_title({literal(plot.title)}, fontsize=FONT_SIZE + 2)")
-    b.add(f"ax.set_xlabel({literal(axes.x.label or plan.x_label)}, fontsize=FONT_SIZE)")
-    b.add(f"ax.set_ylabel({literal(axes.y.label or plan.y_label)}, fontsize=FONT_SIZE)")
+    own_x = own_y = own_y2 = ""
+    if ctx is None:
+        if plot.title:
+            b.add(f"ax.set_title({literal(plot.title)}, fontsize=FONT_SIZE + 2)")
+    else:  # 図のタイトルは図全体の上（suptitle）。パネルには、記号（左上）とパネルのタイトルを出す
+        pp = ctx.panel
+        own_x, own_y, own_y2 = pp.x_label, pp.y_label, pp.y2_label
+        if pp.label:
+            if ctx.bold:
+                # 太字は matplotlib 同梱のフォントで書く。読み込む日本語・欧文フォントには太字が無く、
+                # fontweight だけでは標準の太さで描かれる（手元の Python ではヒラギノなどの太字になり、画面と食い違う）
+                family = BOLD_LABEL_FONTS["serif" if plot.latin_font == "tinos" else "sans"]
+                b.add(
+                    f"ax.set_title({literal(pp.label)}, loc=\"left\", fontsize=FONT_SIZE + 2, fontweight=\"bold\", "
+                    f"fontfamily={literal(family)})  # パネルの記号（太字。matplotlib 同梱の {family} Bold で書く）"
+                )
+            else:
+                b.add(f"ax.set_title({literal(pp.label)}, loc=\"left\", fontsize=FONT_SIZE + 2)  # パネルの記号")
+        if pp.title:
+            b.add(f"ax.set_title({literal(pp.title)}, fontsize=FONT_SIZE + 2)")
+    if ctx is None or ctx.x_label:
+        b.add(f"ax.set_xlabel({literal(own_x or axes.x.label or plan.x_label)}, fontsize=FONT_SIZE)")
+    if ctx is None or ctx.y_label:
+        b.add(f"ax.set_ylabel({literal(own_y or axes.y.label or plan.y_label)}, fontsize=FONT_SIZE)")
     if plan.uses_secondary:
-        b.add(f"ax2.set_ylabel({literal(axes.y2.label or plan.y2_label)}, fontsize=FONT_SIZE)")
+        b.add(f"ax2.set_ylabel({literal(own_y2 or axes.y2.label or plan.y2_label)}, fontsize=FONT_SIZE)")
 
     # 軸ごとに: スケール → 範囲 → 主目盛・書式 → 副目盛 → 反転（スケールを変えると目盛の設定が戻るので、この順）
-    for blk in _axis_blocks(settings, plan):
+    for blk in _axis_blocks(settings, plan, ctx is not None):
         lines = _scale_lines(blk, settings, plan)
         if lines:
             with b.step(axis_error_message(blk.label), f"{blk.label}軸の範囲"):
@@ -1301,6 +1392,10 @@ def _emit_axes(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
     b.add("# 目盛は内向きにする", f'ax.tick_params(which="both", direction="in", labelsize={size})')
     if plan.uses_secondary:
         b.add(f'ax2.tick_params(which="both", direction="in", labelsize={size})')
+    if ctx is not None and ctx.x_ticks:
+        b.add('ax.tick_params(axis="x", labelbottom=True)  # 軸を共有しているので、下のパネルを使わないこの列では、このパネルに目盛の数字を出す')
+    if ctx is not None and ctx.y_ticks:
+        b.add('ax.tick_params(axis="y", labelleft=True)  # 軸を共有しているので、左のパネルを使わないこの行では、このパネルに目盛の数字を出す')
 
     if not plot.grid_minor and not _per_axis_minor(plan):
         if _scale(settings, plan, "x") == "log" or _scale(settings, plan, "y") == "log":
@@ -1341,20 +1436,34 @@ def _emit_grid_and_legend(b: _Builder, settings: Settings, plan: PlotPlan) -> No
         return
     size = _label_size_expr(plot.font_size)
     loc = literal(plot.legend_location)
+    # パネルが2つ以上のときは、凡例を余白の自動調整（tight_layout）の計算から外す。凡例は常に軸の内側にあるので配置は
+    # 変わらず、位置「best」の探索（点が多いと重い）が1回減る。1行×1列は今までと同じコードにする（ゴールデンテスト）
+    tail = ".set_in_layout(False)" if b.panel_mode else ""
+    if b.panel_mode:
+        b.add("# 凡例は軸の内側にあるので、余白の自動調整（tight_layout）の計算から外す（位置の探索を1回減らす）")
     if plan.uses_secondary:
         b.add(
             "# 第1・第2Y軸の系列をまとめて凡例にする",
             "handles, labels = ax.get_legend_handles_labels()",
             "handles2, labels2 = ax2.get_legend_handles_labels()",
-            f'ax.legend(handles + handles2, labels + labels2, loc={loc}, fontsize={size}, edgecolor="black")',
+            f'ax.legend(handles + handles2, labels + labels2, loc={loc}, fontsize={size}, edgecolor="black"){tail}',
         )
     else:
-        b.add(f'ax.legend(loc={loc}, fontsize={size}, edgecolor="black")')
+        b.add(f'ax.legend(loc={loc}, fontsize={size}, edgecolor="black"){tail}')
 
 
-def _emit_margins(b: _Builder, settings: Settings) -> None:
+def _emit_margins(b: _Builder, settings: Settings, multi: bool = False) -> None:
     b.section("余白")
     provided = settings.plot.margins.provided()
+    if multi:  # 4辺とも指定しても、先にパネルの間隔を決める（既定の間隔のままだと、隣のパネルの目盛の数字と重なる）
+        b.add("# パネルの間隔は自動で調整する" + ("（そのあと、指定された辺だけ上書きする）" if provided else ""))
+        with b.step(TIGHT_LAYOUT_ERROR, "余白"):
+            b.add("fig.tight_layout()")
+        if provided:
+            args = ", ".join(f"{k}={literal(v)}" for k, v in provided.items())
+            with b.step(MARGIN_ERROR, "余白"):
+                b.add(f"fig.subplots_adjust({args})")
+        return
     if len(provided) < 4:
         b.add("# 余白は自動で調整する")
         with b.step(TIGHT_LAYOUT_ERROR, "余白"):
@@ -1398,6 +1507,34 @@ def _emit_output(b: _Builder, settings: Settings) -> None:
     b.output_lines = (start, len(b.lines))
 
 
+# ---------------------------------------------------------------- panels (G9)
+
+
+def _emit_panels(b: _Builder, settings: Settings, plan: PlotPlan) -> None:
+    """パネルごとの節（ax を axs[行, 列] に置き直し、そのパネルの系列・注釈・軸・グリッドと凡例を書く）と、使わないパネルの節。"""
+    for pp in plan.panels:
+        if pp.plan is None:
+            continue
+        head = f"パネル{pp.number}" + (f" {comment_text(pp.label)}" if pp.label else "") + f"（{pp.row + 1}行目・{pp.col + 1}列目）"
+        b.section(head)
+        b.add(f"ax = axs[{pp.row}, {pp.col}]")
+        view = replace(settings, series=tuple(settings.series[i] for i in pp.series_indices))
+        b.panel_mode = True
+        try:
+            _emit_series(b, view, pp.plan)
+            if pp.plan.annotations:
+                _emit_annotations(b, pp.plan)
+            _emit_axes(b, view, pp.plan, _panel_ctx(plan, pp))
+            _emit_grid_and_legend(b, view, pp.plan)
+        finally:
+            b.panel_mode = False
+    unused = [pp for pp in plan.panels if pp.plan is None]
+    if unused:
+        b.section("使わないパネル")
+        for pp in unused:
+            b.add(f"axs[{pp.row}, {pp.col}].axis(\"off\")  # パネル{pp.number}: 系列が無い")
+
+
 # ---------------------------------------------------------------- entry
 
 
@@ -1421,13 +1558,16 @@ def generate_script(settings: Settings, source, plan: PlotPlan) -> GeneratedScri
     _emit_skip_rows(b, plan)
     if plan.computed:
         _emit_computed(b, plan)
-    _emit_figure(b, settings)
-    _emit_series(b, settings, plan)
-    if plan.annotations:
-        _emit_annotations(b, plan)
-    _emit_axes(b, settings, plan)
-    _emit_grid_and_legend(b, settings, plan)
-    _emit_margins(b, settings)
+    _emit_figure(b, settings, plan)
+    if plan.layout.multi:
+        _emit_panels(b, settings, plan)
+    else:
+        _emit_series(b, settings, plan)
+        if plan.annotations:
+            _emit_annotations(b, plan)
+        _emit_axes(b, settings, plan)
+        _emit_grid_and_legend(b, settings, plan)
+    _emit_margins(b, settings, plan.layout.multi)
     _emit_output(b, settings)
     return GeneratedScript(
         text="\n".join(b.lines) + "\n",
