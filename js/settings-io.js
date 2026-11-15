@@ -102,17 +102,24 @@ const numericSuffix = (id, prefix) => {
 
 export const maxIdNumber = (items, prefix) => items.reduce((max, item) => Math.max(max, numericSuffix(item && item.id, prefix)), 0);
 
-// id が空・重複している要素に新しい id（prefix + 連番。既存の最大の番号から続ける）を振る
+// id が「prefix + 数字」の形でない・重複している要素に、新しい id（prefix + 連番。既存の最大の番号から続ける）を振る。
+// id は画面の要素の id と HTML にそのまま入るので、形を限る（手で書いた設定ファイルの値で HTML を壊させない）。
+// 振り直した id の対応（最初に出てきた元の id → 新しい id）を返す（近似曲線の系列の参照を直すのに使う）
 const assignIds = (items, prefix) => {
   let max = maxIdNumber(items, prefix);
   const seen = new Set();
+  const pattern = new RegExp(`^${prefix}\\d+$`);
+  const renamed = new Map();
   for (const item of items) {
-    if (typeof item.id !== "string" || item.id === "" || seen.has(item.id)) {
+    if (typeof item.id !== "string" || !pattern.test(item.id) || seen.has(item.id)) {
+      const old = item.id;
       max += 1;
       item.id = `${prefix}${max}`;
+      if (typeof old === "string" && old !== "" && !pattern.test(old) && !renamed.has(old)) renamed.set(old, item.id);
     }
     seen.add(item.id);
   }
+  return renamed;
 };
 
 const normalizeSettings = (raw) => {
@@ -122,7 +129,10 @@ const normalizeSettings = (raw) => {
     out[key] = key === "version" ? SCHEMA_VERSION : fillFrom(DEFAULT_SETTINGS[key], migrated[key], key);
   }
   if (out.series.length === 0) out.series = [clone(DEFAULT_SERIES)];
-  for (const [key, prefix] of Object.entries(ID_PREFIX)) assignIds(out[key], prefix);
+  const renamed = {};
+  for (const [key, prefix] of Object.entries(ID_PREFIX)) renamed[key] = assignIds(out[key], prefix);
+  // 形の違う系列の id を振り直したら、その系列を指す近似曲線も新しい id にする
+  for (const f of out.fits) if (renamed.series.has(f.series)) f.series = renamed.series.get(f.series);
   return out;
 };
 

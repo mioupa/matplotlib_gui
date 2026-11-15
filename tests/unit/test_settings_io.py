@@ -173,6 +173,29 @@ def test_normalization(tmp_path):
 
 
 @needs_node
+def test_ids_are_limited_to_safe_form(tmp_path):
+    # id は画面の要素の id と HTML に入るので、「prefix + 数字」以外は振り直す。近似曲線の系列の参照も追従する
+    res = node_io(
+        tmp_path,
+        """
+        const evil = '"><img src=x onerror=alert(1)>';
+        const s = io.parseSettingsFile(JSON.stringify({
+          series: [{id: "s3"}, {id: evil}, {id: "series 1"}, {id: 7}],
+          annotations: [{id: evil}, {id: "a2"}],
+          fits: [{id: evil, series: evil}, {id: "f1", series: "series 1"}, {id: "f2", series: "s3"}],
+          computed: [{id: "c1x", expr: "[0]"}],
+        })).settings;
+        console.log(JSON.stringify(s));
+        """,
+    )
+    assert [x["id"] for x in res["series"]] == ["s3", "s4", "s5", "s6"]
+    assert [x["id"] for x in res["annotations"]] == ["a3", "a2"]
+    assert [x["id"] for x in res["fits"]] == ["f3", "f1", "f2"]
+    assert [x["series"] for x in res["fits"]] == ["s4", "s5", "s3"]
+    assert [x["id"] for x in res["computed"]] == ["c1"]
+
+
+@needs_node
 def test_migration_rules(tmp_path):
     res = node_io(
         tmp_path,

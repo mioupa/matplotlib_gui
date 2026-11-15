@@ -63,11 +63,19 @@ const resetSettings = () => {
 };
 
 // ---- 前回の設定の自動保存と復元（localStorage）----
+// 既定の設定（ファイルの情報を除く）。控える設定がこれと同じなら、控えを消す（初期設定に戻したあと、次に開いたときに
+// 「前回の設定を復元しました」と出さないため）
+const defaultSnapshot = () => JSON.stringify(serializeSettings(DEFAULT_SETTINGS, [], { names: false, savedAt: "" }).settings);
+
 const writeLast = () => {
   try {
     const loaded = getFilesInfo();
     const info = loaded.length > 0 ? loaded : getPendingColumnCounts().map((columns) => ({ columns }));
     const wrapper = serializeSettings(getSettings(), info, { names: false }); // ファイル名は控えない
+    if (JSON.stringify(wrapper.settings) === defaultSnapshot()) {
+      window.localStorage.removeItem(LAST_KEY);
+      return;
+    }
     window.localStorage.setItem(LAST_KEY, JSON.stringify(wrapper));
   } catch (_) {
     // 控えられなくても動作には影響しない
