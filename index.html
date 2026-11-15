@@ -748,6 +748,17 @@
             <button id="savePlotBtn" class="secondary" type="button">保存する</button>
             <button id="copyPlotBtn" class="secondary" type="button">クリップボードにコピー</button>
           </div>
+
+          <div id="settingsGroup" class="group">
+            <div class="settings-title" id="settingsLabel">設定</div>
+            <div class="settings-actions" role="group" aria-labelledby="settingsLabel">
+              <button id="saveSettingsBtn" class="secondary" type="button">設定を保存（.json）</button>
+              <button id="loadSettingsBtn" class="secondary" type="button">設定を読み込む…</button>
+              <button id="resetSettingsBtn" class="secondary" type="button">初期設定に戻す</button>
+              <input id="loadSettingsInput" type="file" accept=".json,application/json" hidden />
+            </div>
+            <div id="settingsHelp" class="help-text">図の設定を JSON ファイルに保存し、あとで読み込めます。データは含みません。設定はこのブラウザにも控えておき、次に開いたときに戻します。</div>
+          </div>
           </div>
         </details>
 

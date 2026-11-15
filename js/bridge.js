@@ -5,14 +5,15 @@
 // - Python の起動前に選んだファイル・変えた設定は保持され、起動後に最新の内容で1回読込・描画する。
 // - Pythonコードタブのモード（code-state.js）: sync は GUI の設定から生成したコードで描く。edit は利用者が編集したコードを
 //   「実行」したときだけ描き、GUI の変更では再描画しない（読込は行うが自動実行しない）。
-import { subscribe, toJson, getSettings, setFileSheet, setPath, updateSeries } from "./state.js";
+import { subscribe, toJson, getSettings, replaceSettings, setFileSheet, setPath, updateComputed, updateSeries } from "./state.js";
 import { addStickyWarning, removeStickyWarning, setStatus, warningTexts } from "./ui/notify.js";
 import { clearPlot, showPlot } from "./ui/plotView.js";
 import { showCodeOutput } from "./ui/codeOutput.js";
 import { getGeneratedCode, getGeneratedGeneration, isEditMode, setCodeMode, setCodeStale, setGeneratedCode } from "./code-state.js";
 import { applySkipRows, clearPreview, showPreview } from "./ui/dataPreview.js";
 import { releaseComputedSources } from "./computed-refs.js";
-import { dropSourceColumns, reconcileColumns, refreshSources, setSourceColumns } from "./ui/series.js";
+import { clearColumnSeeds, dropSourceColumns, fileColumnCount, reconcileColumns, refreshSources, seedColumnCount, setSourceColumns } from "./ui/series.js";
+import { clearedColumnsPatch, mapPositionalSources } from "./settings-io.js";
 import { encodingDisplayName, showEncoding, showFileName, showPastedSave } from "./ui/fileInfo.js";
 import { showSheets } from "./ui/loadSection.js";
 import { renderFileList, renderPreviewSource } from "./ui/fileList.js";
@@ -31,6 +32,7 @@ const LATIN_LOADING_MESSAGE = "欧文フォントを取得中…";
 const LATIN_NAMES = { arimo: "Arimo", tinos: "Tinos" };
 const latinFailedMessage = (kind) => `欧文フォント ${LATIN_NAMES[kind]} を取得できなかったため、標準のフォントで描画しています。`;
 const SCRIPT_REFRESH_DELAY_MS = 250;
+const SETTINGS_LOADED_MESSAGE = "設定を読み込みました。ファイルを読み込むと、この設定で描きます。";
 
 const root = document.documentElement;
 let api = null; // window.mplgui（Python 側が登録）
@@ -66,6 +68,7 @@ const latinTasks = new Map(); // 欧文フォントの種類 → {state: loading
 let scriptTimer = null; // 保存設定の変更に伴う、コードだけの更新（画像は変えない）
 let scriptRefreshAfterRender = false;
 let scriptRefreshFailed = false;
+let pendingColumnCounts = []; // R1: ファイル未読込のまま読み込んだ設定の、保存時のファイルの列数（位置ごと）。最初にファイルを選んだときに id へ付ける
 let lastRenderStatus = null; // 直近の描画成功のステータス（コード更新のエラーから復帰したときに戻す）
 
 // data-data-state: 読込中が1つでもあれば loading、なければ（一覧に）失敗が1つでもあれば error、すべて成功なら ready、ファイルなしは none。
@@ -523,6 +526,24 @@ const resetToInitialState = () => {
   setStatus("");
 };
 
+// 一覧に無いファイル id を指すデータ元（読み込んだ設定の dN が、選んだファイルの数を超えたとき）は、データ1に戻す（R1）
+const resetDanglingSources = (ids) => {
+  const known = new Set(ids);
+  const dangling = (source) => source !== "" && !known.has(source);
+  const label = (source) => (/^d\d+$/.test(source) ? `データ${Number(source.slice(1))}` : "データ元");
+  getSettings().series.forEach((s, i) => {
+    if (!dangling(s.source)) return;
+    addNote(`系列${i + 1}: 設定の${label(s.source)}に当たるファイルが無いため、データ元をデータ1に戻し、列を自動に戻しました。`);
+    updateSeries(s.id, clearedColumnsPatch(s), "reconcile");
+    if (i === 0 && getSettings().plot.xColumn) setPath("plot.xColumn", "", "reconcile");
+  });
+  getSettings().computed.forEach((c, i) => {
+    if (!dangling(c.source)) return;
+    addNote(`計算した列${i + 1}: 設定の${label(c.source)}に当たるファイルが無いため、データ元を先頭のファイルに戻しました。`);
+    updateComputed(c.id, { source: "" }, "reconcile");
+  });
+};
+
 // 読込が一通り終わったとき（待っている読込が無いとき）の後処理: 列の選択肢・表示の更新、描画または失敗の報告
 const finalizeLoad = ({ counted = true } = {}) => {
   const list = files();
@@ -531,6 +552,7 @@ const finalizeLoad = ({ counted = true } = {}) => {
     if (src && src.state === "ready") setSourceColumns(f.id, src.result.columns);
   }
   dropSourceColumns(list.map((f) => f.id));
+  resetDanglingSources(list.map((f) => f.id));
   reconcileColumns();
   updateFilesView();
   refreshDataState();
@@ -662,6 +684,7 @@ export const selectFiles = (fileList, options = {}) => {
   const mode = options.mode === "add" ? "add" : "replace";
   const pasted = options.pasted === true;
   const nextNotes = Array.isArray(options.notes) ? [...options.notes] : [];
+  const wasEmpty = files().length === 0; // 設定だけ先に読み込んでいたとき（R1）、データ元の dN は新しい一覧の id と位置で対応する
   let entries = mode === "add" ? files().map((f) => ({ ...f })) : [];
   const accepted = [];
   let skipped = 0;
@@ -694,13 +717,20 @@ export const selectFiles = (fileList, options = {}) => {
     sources.clear();
     pendingLoad.clear();
     if (api) callPython("clearSources");
-    for (const s of getSettings().series) if (s.source !== "") updateSeries(s.id, { source: "" }, "reconcile");
+    for (const s of getSettings().series) {
+      if (s.source !== "" && !(wasEmpty && entries.some((e) => e.id === s.source))) updateSeries(s.id, { source: "" }, "reconcile");
+    }
     nextNotes.push(...releaseComputedSources((src) => src !== "" && !entries.some((e) => e.id === src))); // 無くなった id をデータ元にしていた計算した列
     previewId = null;
   }
   for (const [id, file] of staged) {
     const old = sources.get(id);
     sources.set(id, { id, file, bytes: null, pasted, state: "loading", result: old ? old.result : null, error: "", errorInfo: null });
+  }
+  if (wasEmpty) {
+    // 設定ファイルの保存時の列数を、新しいファイルの id に付ける（計算した列の番号の付け替えの基準）
+    entries.forEach((e, k) => seedColumnCount(e.id, pendingColumnCounts[k]));
+    pendingColumnCounts = [];
   }
   notes = nextNotes;
   setPath("load.files", entries, "reconcile"); // 再読込は下で予約する
@@ -886,8 +916,47 @@ const handlePythonReady = () => {
   scheduleLoad(LOAD_DELAY_MS.file, "all"); // 起動前に選ばれたファイルがあれば、最新の設定で読み込んで1回描画する
 };
 
+// 設定の保存用: 読み込み中のファイルごとの名前・シート・ファイルの列数（不明は null）と、未読込のまま持っている保存時の列数
+export const getFilesInfo = () => files().map((f) => ({ name: f.name, sheet: f.sheet, columns: fileColumnCount(f.id) ?? null }));
+export const getPendingColumnCounts = () => pendingColumnCounts.slice();
+
+// 読み込んだ設定（settings-io.js の parseSettingsFile の結果）を、今のデータに合わせて state に入れ替える（R1）。
+// データ元 dN は、ファイルを読み込んでいれば今の N 番目のファイルに付け替え（無ければデータ1に戻して注意を出す）、
+// 読み込んでいなければ dN のまま残す。読込中のファイル一覧（load.files）は変えない。
+export const applyParsedSettings = (parsed) => {
+  const list = files();
+  const { settings: mapped, notes: mapNotes } = mapPositionalSources(parsed.settings, list.map((f) => f.id));
+  mapped.load.files = list.map((f) => ({ ...f }));
+  // 計算した列の番号は、保存したときのファイルの列数が基準。読み直したあとの列数との差で付け替える
+  clearColumnSeeds();
+  if (list.length > 0) {
+    list.forEach((f, i) => seedColumnCount(f.id, parsed.files[i] ? parsed.files[i].columns : null));
+    pendingColumnCounts = [];
+  } else {
+    pendingColumnCounts = parsed.files.map((f) => f.columns);
+  }
+  for (const note of mapNotes) addNote(note);
+  replaceSettings(mapped);
+};
+
+// 設定をまるごと入れ替えたとき: 読込設定が変わるので、ファイルがあれば全部を読み直す（そのあと今までどおり描く）
+const onSettingsReplaced = () => {
+  startLatinFont(selectedLatin()); // 欧文フォントを選んでいれば取得する（取得済みなら何もしない）
+  refreshLatinState();
+  if (files().length > 0) {
+    scheduleLoad(LOAD_DELAY_MS.file, "all");
+    return;
+  }
+  if (isEditMode()) setStatus(EDIT_MODE_MESSAGE, "warning");
+  else setStatus(SETTINGS_LOADED_MESSAGE, "ok");
+};
+
 // 設定の変更を、読込・再描画・表示更新・無視のどれにするか振り分ける
 const routeChange = (_settings, change) => {
+  if (change.kind === "settings-replaced") {
+    onSettingsReplaced();
+    return;
+  }
   if (change.origin !== "user") return;
   const path = change.kind === "path" ? change.path : "series";
   if (path === "plot.skipRows") applySkipRows(getSettings().plot.skipRows); // 表の灰色表示は Python を呼ばず即時更新

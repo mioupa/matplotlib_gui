@@ -8,15 +8,16 @@ import { applyStateToForm, bindForms } from "./ui/forms.js";
 import { bindSaveFormatEvents, syncSaveFormatOptions } from "./ui/saveFormat.js";
 import { bindDropPaste } from "./ui/dropPaste.js";
 import { bindLoadSection } from "./ui/loadSection.js";
-import { bindSaveSection } from "./ui/saveSection.js";
-import { bindDateFormat } from "./ui/dateFormat.js";
+import { bindSaveSection, syncSaveDpiView } from "./ui/saveSection.js";
+import { bindDateFormat, syncDateFormatView } from "./ui/dateFormat.js";
 import { bindClipboard } from "./ui/clipboard.js";
 import { addVisibilityHook, bindSeriesEvents, refreshSources, renderSeriesList, syncMarkerSizeDisplay, syncVisibility } from "./ui/series.js";
 import { bindAnnotations, renderAnnotationList, syncAnnotations } from "./ui/annotations.js";
 import { bindComputed, renderComputedList, syncComputed } from "./ui/computed.js";
 import { bindFits, renderFitList, syncFits } from "./ui/fits.js";
 import { bindPanels, syncPanels } from "./ui/panels.js";
-import { bindStyleSection } from "./ui/styleSection.js";
+import { bindStyleSection, syncStyleView } from "./ui/styleSection.js";
+import { bindSettingsSection, restoreLastSettings } from "./ui/settingsSection.js";
 import { initPanelSections } from "./ui/panelSections.js";
 import { bindTabs } from "./ui/tabs.js";
 
@@ -58,9 +59,28 @@ bindCodeTab();
 bindColorPanelOutsideClick();
 bindStyleSection();
 
+// 設定をまるごと入れ替えたとき（設定ファイルの読込・初期設定に戻す・前回の設定の復元）: 画面を state から全部描き直す。
+// 入力欄、系列・注釈・近似曲線・計算した列のカード、図の単位・パレット・DPI・日時の書式、表示の出し分け
+const redrawAll = () => {
+  applyStateToForm();
+  renderSeriesList();
+  renderAnnotationList();
+  renderFitList();
+  renderComputedList();
+  refreshSources();
+  syncSaveFormatOptions();
+  syncStyleView();
+  syncSaveDpiView();
+  syncDateFormatView();
+  syncVisibility(); // パネルの配置の欄も、表示の同期（syncPanels）が合わせる
+  syncMarkerSizeDisplay();
+};
+
 // state の変更に応じた画面の更新（再描画・読込の予約は bridge.js が購読して行う）
 subscribe((_settings, change) => {
-  if (change.kind === "series-list") {
+  if (change.kind === "settings-replaced") {
+    redrawAll();
+  } else if (change.kind === "series-list") {
     renderSeriesList();
   } else if (change.kind === "annotation-list") {
     renderAnnotationList();
@@ -80,6 +100,8 @@ subscribe((_settings, change) => {
   }
 });
 
+restoreLastSettings(); // 前回の設定があれば戻す（画面を描く前）。データは戻さない
+bindSettingsSection(); // 復元のあとで購読する（復元そのものを「変更」として控え直さない）
 applyStateToForm();
 refreshSources();
 syncSaveFormatOptions();
