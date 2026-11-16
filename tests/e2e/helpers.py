@@ -655,3 +655,79 @@ def panel_state(page) -> dict:
 
 def is_disabled(page, element_id) -> bool:
     return page.evaluate("(id) => document.getElementById(id).disabled", element_id)
+
+
+# ---- R1: 設定の保存・読込・復元
+LAST_SETTINGS_KEY = "mplgui.lastSettings"
+
+
+def app_state(page) -> dict:
+    """state の設定オブジェクト全体（JSON 化できる形）。"""
+    return page.evaluate("import(new URL('js/state.js', document.baseURI)).then((m) => JSON.parse(JSON.stringify(m.getSettings())))")
+
+
+def settings_applied(page) -> int:
+    """<html data-settings-applied>: 設定を入れ替えた回数（復元・読込・初期設定に戻す）。"""
+    return int(page.evaluate("document.documentElement.dataset.settingsApplied || '0'"))
+
+
+def wait_settings_applied(page, n, timeout=60_000):
+    page.wait_for_function(f"Number(document.documentElement.dataset.settingsApplied) >= {int(n)}", timeout=timeout)
+
+
+def save_settings_file(page):
+    """「設定を保存（.json）」を押し、(ダウンロードのファイル名, 中身の dict) を返す。"""
+    import json
+
+    with page.expect_download() as dl:
+        page.click("#saveSettingsBtn")
+    download = dl.value
+    with open(download.path(), encoding="utf-8") as f:
+        return download.suggested_filename, json.load(f)
+
+
+def load_settings_file(page, path, *, wait="settled"):
+    """設定ファイルを読み込む。wait: "settled"（入れ替わりと読み直し・描画の終了まで待つ）/ "applied"（入れ替わりだけ）/ None（待たない）。"""
+    before = settings_applied(page)
+    loads = load_count(page)
+    has_files = page.evaluate("document.documentElement.dataset.dataState") != "none"
+    page.set_input_files("#loadSettingsInput", str(path))
+    if wait is None:
+        return
+    wait_settings_applied(page, before + 1)
+    if wait == "settled":
+        if has_files and code_mode(page) == "sync":
+            wait_load_count(page, loads + 1)
+        wait_settled(page)
+
+
+def reset_settings(page, *, accept=True) -> str:
+    """「初期設定に戻す」を押し、確認ダイアログを accept / dismiss する。ダイアログの文言を返す。"""
+    messages = []
+
+    def on_dialog(dialog):
+        messages.append(dialog.message)
+        dialog.accept() if accept else dialog.dismiss()
+
+    page.once("dialog", on_dialog)
+    page.click("#resetSettingsBtn")
+    page.wait_for_function("true")  # ダイアログ処理を1周させる
+    return messages[0] if messages else ""
+
+
+def last_settings_raw(page):
+    """localStorage の控え（文字列。無ければ None）。"""
+    return page.evaluate(f"localStorage.getItem('{LAST_SETTINGS_KEY}')")
+
+
+def wait_last_settings(page, contains="", timeout=30_000):
+    """控えが書かれる（contains を含む）まで待つ。"""
+    page.wait_for_function(
+        "([k, s]) => { const v = localStorage.getItem(k); return v !== null && v.includes(s); }",
+        arg=[LAST_SETTINGS_KEY, contains],
+        timeout=timeout,
+    )
+
+
+def wait_last_settings_removed(page, timeout=30_000):
+    page.wait_for_function("(k) => localStorage.getItem(k) === null", arg=LAST_SETTINGS_KEY, timeout=timeout)

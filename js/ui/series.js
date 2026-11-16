@@ -563,11 +563,21 @@ export const refreshSources = () => {
 };
 
 // 1つのデータ元の列の選択肢を更新する（読込のたびに呼ぶ）。
+// 設定ファイルを読み込んだとき、計算した列の番号の基準になっている「保存したときのファイルの列数」（R1）。
+// 次の setSourceColumns で「前回の列数」として使い、使ったら捨てる
+const seededColumnCounts = new Map();
+export const seedColumnCount = (id, count) => {
+  if (Number.isInteger(count) && count >= 0) seededColumnCounts.set(id, count);
+};
+export const clearColumnSeeds = () => seededColumnCounts.clear();
+
 export const setSourceColumns = (id, newColumns) => {
   const old = columnsById.get(id);
   columnsById.set(id, newColumns);
+  const oldCount = seededColumnCounts.has(id) ? seededColumnCounts.get(id) : old ? old.length : undefined;
+  seededColumnCounts.delete(id);
   // ファイルの列数が変わったら、計算した列を指す参照を同じだけずらす（reconcileColumns より前）
-  if (old && old.length !== newColumns.length) shiftForFileColumnChange(id, old.length, newColumns.length);
+  if (oldCount !== undefined && oldCount !== newColumns.length) shiftForFileColumnChange(id, oldCount, newColumns.length);
 };
 
 export const dropSourceColumns = (keepIds) => {

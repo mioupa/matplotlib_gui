@@ -911,6 +911,24 @@ button.series-color-chip.active {
   white-space: nowrap;
 }
 
+/* 設定の保存・読込（R1） */
+.settings-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.settings-actions button {
+  flex: 1 1 auto;
+  padding-left: 6px;
+  padding-right: 6px;
+  font-size: 13px;
+}
+
 /* 表の貼り付け欄とファイルのドロップ */
 .paste-area {
   width: 100%;

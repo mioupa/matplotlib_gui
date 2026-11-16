@@ -24,6 +24,13 @@ export const syncFigureUnitView = () => {
   if (hl) hl.textContent = `図高さ(${name})`;
 };
 
+// 設定をまるごと入れ替えたとき（R1）: 図の単位のラベル・step とパレットの選択を state に合わせる
+export const syncStyleView = () => {
+  syncFigureUnitView();
+  const palette = byId("colorPalette");
+  if (palette) palette.value = getSettings().plot.palette;
+};
+
 const onUnitChange = () => {
   const select = byId("figUnit");
   const { figure } = getSettings().plot;
